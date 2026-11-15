@@ -1,98 +1,75 @@
-# Video Factory — what's built, and the steps only you can do
+# Video Factory — setup status and the steps only you can do
 
-All code for Phases 1–9 is in this repo and tested offline (fake RunPod / Drive). Everything below needs
-your accounts, a browser click, a secret, or real money, so it is yours. Do the steps in order; each ends
-with the guide's **Done when** check.
+**Live control plane:** https://video-factory.lakshmansai121.workers.dev (`URL` below).
 
-Values to have ready (Phase 0): RunPod API key, RunPod registry-auth id, Docker Hub username + `gha-push`
-token, Google OAuth Desktop client (`client_secret.json`), Telegram bot token + chat id.
+## Already done
 
-## 1. Push the repo to GitHub
+| Step | Status |
+|---|---|
+| Repo | Private GitHub repo `Pala-LakshmanSai/video-factory`, CI green (control-plane + renderer tests, image build + smoke, golden refs) |
+| Cloudflare | KV `OAUTH_KV`, D1 `video-factory` (schema applied), Worker deployed with crons; `CP_URL`/`MCP_RESOURCE` set |
+| Secrets | `COOKIE_ENCRYPTION_KEY` generated and set. Every other secret holds the placeholder `UNSET` until you replace it below |
+| Renderer image | Builds in CI (6.2 GB): ffmpeg has h264_nvenc + libx264, `--selftest` works as non-root, Kokoro TTS works offline |
 
-```bash
-gh repo create video-factory --private --source . --push
-```
+Until the secrets are real, GitHub sign-in to `/mcp` and `/admin` fails and the 5-min reaper logs RunPod 401s. Harmless.
 
-## 2. Drive token + folder (Phase 2)
+## 1. Drive token + folder (Phase 2)
 
+Google Cloud: Drive API on, OAuth consent screen **In production**, scope `drive.file`, OAuth client type
+**Desktop app**. Save its JSON as `scripts/client_secret.json` (git-ignored), then:
 ```bash
 pip3 install google-auth-oauthlib requests
 ```
-Put the Desktop client file at `scripts/client_secret.json` (git-ignored), then:
 ```bash
 python3 scripts/google_oauth.py auth
 ```
 ```bash
 python3 scripts/google_oauth.py smoketest --refresh-token <TOKEN>
 ```
-Done when every step prints PASS and the link opens in a private window. Keep `GOOGLE_REFRESH_TOKEN`
-and `DRIVE_FOLDER_ID`.
+Done when every step prints PASS and the link opens in a private window. Keep the refresh token and `DRIVE_FOLDER_ID`.
 
-## 3. Cloudflare Worker + D1 (Phase 3)
+## 2. GitHub OAuth App (for the connector sign-in)
+
+GitHub → Settings → Developer settings → OAuth Apps → New: homepage `URL`, callback `URL/callback`.
+Keep its client id and a new client secret.
+
+## 3. Put the real secrets in (one prompt each)
 
 ```bash
-cd control-plane && npx wrangler kv namespace create OAUTH_KV
+cd control-plane && for s in GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET RUNPOD_API_KEY RUNPOD_REGISTRY_AUTH_ID GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN DRIVE_FOLDER_ID TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do npx wrangler secret put $s; done
 ```
-```bash
-npx wrangler d1 create video-factory
-```
-Paste both ids into `control-plane/wrangler.jsonc`, then:
-```bash
-npx wrangler d1 migrations apply video-factory --remote
-```
-```bash
-npx wrangler deploy
-```
-Note the URL `https://video-factory.<subdomain>.workers.dev`; set `CP_URL` and `MCP_RESOURCE` (`…/mcp`)
-in `wrangler.jsonc`. On GitHub → Settings → Developer settings → OAuth Apps → New: homepage = that URL,
-callback = `<URL>/callback`. Then set every secret (one command each; paste the value when asked):
-```bash
-for s in GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET COOKIE_ENCRYPTION_KEY RUNPOD_API_KEY RUNPOD_REGISTRY_AUTH_ID GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN DRIVE_FOLDER_ID TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do npx wrangler secret put $s; done
-```
-(`COOKIE_ENCRYPTION_KEY`: `openssl rand -hex 32`.) Redeploy: `npx wrangler deploy`.
+`RUNPOD_REGISTRY_AUTH_ID`: RunPod → Settings → Container Registry Auth → your Docker Hub `runpod-pull` entry's id.
 
-Local dummy-pod test: copy `.dev.vars.example` to `.dev.vars`, fill it, then
-```bash
-npx wrangler d1 migrations apply video-factory --local && npx wrangler dev
-```
-```bash
-curl -X POST localhost:8788/dev/acquire -H 'content-type: application/json' -d '{"image":"dummy"}'
-```
-Done when it rents a real pod in the expected region and the pod is gone ~60–120 s later (the
-per-minute watchdog deletes it; `wrangler dev` runs crons only if you hit `/__scheduled?cron=*+*+*+*+*`).
+## 4. Renderer image to Docker Hub (Phase 4)
 
-## 4. Renderer image (Phase 4)
-
-GitHub repo → Settings → Secrets → Actions: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (gha-push). Push to
-main; the `renderer` workflow tests, builds and pushes `docker.io/<user>/video-renderer:<sha>` and prints it
-in the job summary. Put it in `RENDERER_IMAGE` (wrangler.jsonc) and redeploy. In the RunPod console, start
-one pod on a cheap NVENC GPU with start command `--selftest`; the log must show `h264_nvenc`. Then
-`POST /dev/acquire {"image":"renderer"}` and watch it hello + heartbeat; kill the agent and the watchdog
-replaces it ~60 s later.
+GitHub repo → Settings → Secrets and variables → Actions: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (`gha-push`).
+Re-run the latest `renderer` workflow (or push). Its summary prints `docker.io/<user>/video-renderer:<sha>`:
+put that in `RENDERER_IMAGE` in `control-plane/wrangler.jsonc`, then `npx wrangler deploy`.
+In the RunPod console, start one pod on a cheap NVENC GPU with start command `--selftest`; its log must show
+`encoder: h264_nvenc`. Terminate it.
 
 ## 5. Connect Claude (Phase 8)
 
-Claude → Customize → Connectors → Add custom connector: name **Video Factory**, URL `<URL>/mcp`, sign in
-with GitHub (only `ALLOWED_GITHUB_LOGIN` gets in). Set every tool to **Always allow**. Create the Project
-from `docs/PROJECT_INSTRUCTIONS.md`.
+Claude → Customize → Connectors → Add custom connector: name **Video Factory**, URL `URL/mcp`, sign in with
+GitHub (only `ALLOWED_GITHUB_LOGIN` = `Pala-LakshmanSai` gets in). Set every tool to **Always allow**.
+Create a Project named **Video Factory** from `docs/PROJECT_INSTRUCTIONS.md` (instructions + the style docs).
+Done when a new chat with title + a 30 s voiceover + a style ends with a Drive link.
 
 ## 6. Prove it (Phase 9)
 
-Set `FAULTS_ENABLED` to `"1"`, deploy, sign in at `<URL>/admin/login`, copy the `vf_admin` cookie, then per drill:
+Set `FAULTS_ENABLED` to `"1"` in `wrangler.jsonc`, deploy, sign in at `URL/admin/login`, copy the `vf_admin`
+cookie, then per drill:
 ```bash
-CP_URL=<URL> ADMIN_COOKIE='vf_admin=…' node scripts/drill.ts <job_id> kill_pod
+CP_URL=https://video-factory.lakshmansai121.workers.dev ADMIN_COOKIE='vf_admin=…' node scripts/drill.ts <job_id> kill_pod
 ```
 Faults: `kill_pod`, `silence_heartbeat`, `slow_boot`, `price_cap:0.01`, `block_region:AP-IN-1`,
 `drop_upload_after_chunk:1`, `expire_upload_session`, `corrupt_md5`, `render_error:2`, `revoke_drive`.
-Faults that must be in place before the pod exists (`slow_boot`, `price_cap`, `block_region`) take
-`*` as job id: they apply to the next job. Set `FAULTS_ENABLED` back to `"0"` afterwards.
+`slow_boot`, `price_cap`, `block_region` must be armed before the pod exists: use `*` as job id (applies to the
+next job). Set `FAULTS_ENABLED` back to `"0"` afterwards. Status page: `URL/admin/status`.
 
-## Status page
+## Local dev (optional)
 
-`<URL>/admin/status` (GitHub sign-in): live jobs, pods, today's spend.
-
-## Golden references (one-time)
-
-The golden preview test skips until reference JPEGs exist. They must come from Linux with the CI fonts:
-run the `renderer` workflow once, download the `golden-diffs` artifact (or run the tests in the image with
-`GOLDEN_WRITE=1`), copy `golden/<style>/*.jpg` into `renderer/test/golden/<style>/` and commit.
+Copy `control-plane/.dev.vars.example` to `.dev.vars` (sets `DEV_ROUTES=1`), then
+`npx wrangler d1 migrations apply video-factory --local && npx wrangler dev`, and
+`curl -X POST localhost:8788/dev/acquire -H 'content-type: application/json' -d '{"image":"dummy"}'` rents a
+real pod with a public CUDA image (deleted after ~60 s by the watchdog).
