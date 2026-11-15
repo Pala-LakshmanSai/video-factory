@@ -11,7 +11,7 @@
 | Secrets | `COOKIE_ENCRYPTION_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` set. The other eight hold the placeholder `UNSET` until you replace them below |
 | GitHub OAuth App | Registered: https://github.com/settings/applications/4023620 (homepage `URL`, callbacks below); live `/admin/login` reaches GitHub consent |
 | Claude Project | **Video Factory** (private): instructions saved; knowledge complete: `explainer.md`, `bold-shorts.md`, `documentary.md`, `scene-plan-contract.md` |
-| Renderer image | Builds in CI (6.2 GB), smoke-tested (h264_nvenc + libx264, non-root `--selftest`, offline Kokoro), pushed to private GHCR |
+| Renderer image | Builds in CI (6.2 GB): ffmpeg has h264_nvenc + libx264, `--selftest` works as non-root, Kokoro TTS works offline |
 
 Until the secrets are real, GitHub sign-in to `/mcp` and `/admin` fails and the 5-min reaper logs RunPod 401s. Harmless.
 
@@ -46,17 +46,13 @@ cd control-plane && for s in RUNPOD_API_KEY RUNPOD_REGISTRY_AUTH_ID GOOGLE_CLIEN
 ```
 `RUNPOD_REGISTRY_AUTH_ID`: RunPod → Settings → Container Registry Auth → your Docker Hub `runpod-pull` entry's id.
 
-## 4. Renderer image (Phase 4) — private GHCR
+## 4. Renderer image to Docker Hub (Phase 4)
 
-CI now pushes every green `main` build to the private package `ghcr.io/pala-lakshmansai/video-renderer:<sha12>`
-(no Docker Hub secrets needed; the summary prints the pinned tag and digest). Still needed:
-1. GitHub → Settings → Developer settings → Fine-grained tokens → new token, resource owner `Pala-LakshmanSai`,
-   permission **Packages: Read-only** (or a classic token with only `read:packages`).
-2. RunPod → Settings → Container Registry Auth → add: registry `ghcr.io`, username `Pala-LakshmanSai`, password =
-   that token. Copy the entry's id, then `npx wrangler secret put RUNPOD_REGISTRY_AUTH_ID`.
-3. Put the pinned tag in `RENDERER_IMAGE` (`control-plane/wrangler.jsonc`) and deploy, still with `ADMISSION_ENABLED` `"0"`.
-4. RunPod console: one pod on a cheap NVENC GPU, image = that tag, registry auth = the ghcr.io entry, start command
-   `--selftest`; the log must show `encoder: h264_nvenc`. Terminate it. (Paid: a few cents.)
+GitHub repo → Settings → Secrets and variables → Actions: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (`gha-push`).
+Re-run the latest `renderer` workflow (or push). Its summary prints `docker.io/<user>/video-renderer:<sha>`:
+put that in `RENDERER_IMAGE` in `control-plane/wrangler.jsonc`, then `npx wrangler deploy`.
+In the RunPod console, start one pod on a cheap NVENC GPU with start command `--selftest`; its log must show
+`encoder: h264_nvenc`. Terminate it.
 
 ## 5. Connect Claude (Phase 8)
 
