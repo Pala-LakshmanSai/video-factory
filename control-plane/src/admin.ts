@@ -1,6 +1,6 @@
 // Prompt 7.4 GET /admin/status and Prompt 9 POST /admin/fault, behind a GitHub sign-in limited to
-// ALLOWED_GITHUB_LOGIN. Uses the same GitHub OAuth App; its callback /callback/admin is a sub-path of the
-// registered /callback, which GitHub allows. Session = HMAC-signed cookie (COOKIE_ENCRYPTION_KEY), 12 h.
+// ALLOWED_GITHUB_LOGIN. Uses the same GitHub OAuth App; /callback/admin must be registered on it as a
+// second exact callback URL next to /callback (docs/SETUP.md). Session = HMAC-signed cookie (COOKIE_ENCRYPTION_KEY), 12 h.
 // Dev-only POST /dev/acquire lives here too (enabled only when DEV_ROUTES="1").
 import { Hono } from "hono";
 import { getUpstreamAuthorizeUrl, fetchUpstreamAuthToken } from "./utils";
