@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentApp, deps as agentDeps } from "../src/agent";
 import { getJob } from "../src/db";
+import { armFault } from "../src/faults";
 import { acquireGpu, approve, deps as mcpDeps, reviseScene, submitJob, waitJob } from "../src/mcp";
 import { deps as rpDeps } from "../src/runpod";
 import { selectAndCreate } from "../src/selector";
@@ -218,6 +219,29 @@ describe("watchdog (fake time)", () => {
 		await watchdog(env, env.DB);
 		expect((await agent(id, "/heartbeat", { stage: "x", pct: 0 }, old)).status).toBe(401);
 		expect((await agent(id, "/heartbeat", { stage: "x", pct: 0 })).status).toBe(200);
+	});
+
+	it("silence_heartbeat affects one pod even if it never fetched the fault command", async () => {
+		const id = await newJob();
+		await submitJob(env.DB, id, PLAN);
+		const hello = { gpu: "g", vcpu: 8, ram_gb: 32, pod_id: "pod1", data_center: "AP-IN-1" };
+		await agent(id, "/hello", hello);
+		await armFault(env, id, "silence_heartbeat");
+		vi.advanceTimersByTime(61_000);
+		await watchdog(env, env.DB);
+		expect((await getJob(env.DB, id))!.attempts).toBe(1);
+		expect(podN).toBe(2);
+		await agent(id, "/hello", { ...hello, pod_id: "pod2" });
+
+		vi.advanceTimersByTime(40_000);
+		const heartbeat = await agent(id, "/heartbeat", { stage: "rendering", pct: 25 });
+		expect(await heartbeat.json()).toEqual({ cmd: "continue" });
+		expect(await env.DB.prepare("SELECT last_heartbeat_at FROM pods WHERE id = 'pod2'").first())
+			.toEqual({ last_heartbeat_at: Date.now() });
+		vi.advanceTimersByTime(25_000);
+		await watchdog(env, env.DB);
+		expect(podN).toBe(2);
+		expect((await getJob(env.DB, id))!.state).toBe("rendering");
 	});
 
 	it("cost over max per job -> failed (budget)", async () => {

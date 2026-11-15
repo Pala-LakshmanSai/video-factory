@@ -107,6 +107,12 @@ async function replacePod(env: Env, db: D1Database, job: JobRow, pod: PodRow, re
 		if (pod.data_center_id && !skip.includes(pod.data_center_id)) skip.push(pod.data_center_id);
 		await updateJob(db, job.id, { skip_dcs: JSON.stringify(skip) });
 	} else {
+		// Phase 9: silence one pod. The replacement must neither inherit the fault nor receive its stale command.
+		const silence = await hasFault(db, job.id, "silence_heartbeat", true);
+		if (silence) {
+			await db.prepare("UPDATE jobs SET pending_cmd = NULL WHERE id = ? AND pending_cmd = ?")
+				.bind(job.id, `fault:${silence}`).run();
+		}
 		const attempts = job.attempts + 1;
 		await updateJob(db, job.id, { attempts });
 		if (attempts > MAX_REPLACEMENTS) {
