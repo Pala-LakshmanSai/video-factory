@@ -14,7 +14,7 @@
     "CP_URL": "https://video-factory.lakshmansai121.workers.dev",
     "MCP_RESOURCE": "https://video-factory.lakshmansai121.workers.dev/mcp",
     // Phase 4 CI output, e.g. docker.io/<user>/video-renderer:<git sha>
-    "RENDERER_IMAGE": "docker.io/CHANGE_ME/video-renderer:CHANGE_ME",
+    "RENDERER_IMAGE": "docker.io/lakshmansai121/video-renderer@sha256:870518866b08940cfcdbe4881bddbb6249b127193febd095e05ae6d5361540f7",
     "ALLOWED_GITHUB_LOGIN": "Pala-LakshmanSai",
     // "1" only while running the Phase 9 drills
     "FAULTS_ENABLED": "0",
