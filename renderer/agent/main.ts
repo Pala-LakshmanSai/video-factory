@@ -67,6 +67,12 @@ async function selftest() {
 	}
 	const enc = await pickEncoder();
 	log("encoder:", enc.name);
+	if (enc.name !== "h264_nvenc") {
+		const sh = (c: string) => { try { return execFileSync("sh", ["-c", c], { encoding: "utf8" }).trim(); } catch (e) { return `(${(e as Error).message.split("\n")[0]})`; } };
+		log("nvenc diag: driver", sh("nvidia-smi --query-gpu=driver_version --format=csv,noheader"));
+		log("nvenc diag: libs", sh("ldconfig -p | grep -E 'libnvidia-encode|libcuda\\.so' || echo none"));
+		log("nvenc diag: caps", process.env.NVIDIA_DRIVER_CAPABILITIES ?? "unset", "visible", process.env.NVIDIA_VISIBLE_DEVICES ?? "unset");
+	}
 	const t0 = performance.now();
 	const r = await run("ffmpeg", ["-hide_banner", "-y", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30:duration=5", ...encoderArgs(enc), "-f", "mp4", join(tmpdir(), "selftest.mp4")]);
 	const s = (performance.now() - t0) / 1000;

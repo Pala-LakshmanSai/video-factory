@@ -32,6 +32,7 @@ export async function pickEncoder(): Promise<Encoder> {
 	if (cached) return cached;
 	if (process.env.FORCE_X264 === "1") return (cached = X264);
 	const r = await run("ffmpeg", ["-hide_banner", "-f", "lavfi", "-i", "color=black:s=256x256:d=0.04", "-frames:v", "1", ...NVENC.args, "-f", "null", "-"]);
+	if (r.code !== 0) console.error(`nvenc probe failed (${r.code}), using libx264:\n${r.stderr.slice(-1500)}`);
 	return (cached = r.code === 0 ? NVENC : X264);
 }
 export const encoderArgs = (e: Encoder) => [...e.args, ...COMMON];
