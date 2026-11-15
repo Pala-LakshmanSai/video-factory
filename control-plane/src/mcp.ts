@@ -33,17 +33,23 @@ export async function busySlots(db: D1Database) {
 }
 
 export async function acquireGpu(e: Env, db: D1Database, a: { style: string; title: string; voiceover: Voiceover; chat_key: string }, opts: { dev_mode?: string } = {}) {
-	const existing = await db.prepare("SELECT * FROM jobs WHERE chat_key = ?").bind(a.chat_key).first<JobRow>();
+	const byKey = () => db.prepare("SELECT * FROM jobs WHERE chat_key = ?").bind(a.chat_key).first<JobRow>();
+	const existing = await byKey();
 	if (existing) return { job_id: existing.id, state: existing.state };
 	const id = randomId("j_");
 	const state: JobState = (await busySlots(db)) >= MAX_PODS_AT_ONCE ? "queued" : "provisioning";
 	const t = now();
-	await db
-		.prepare("INSERT INTO jobs (id, chat_key, state, title, style, voiceover_json, ttl_min, dev_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	// A concurrent repeat call with the same chat_key loses the race and returns the winner's job.
+	const r = await db
+		.prepare("INSERT INTO jobs (id, chat_key, state, title, style, voiceover_json, ttl_min, dev_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chat_key) DO NOTHING")
 		.bind(id, a.chat_key, state, a.title, a.style, JSON.stringify(a.voiceover), CONSTANTS.POD_TTL_MIN, opts.dev_mode ?? null, t, t)
 		.run();
+	if (!r.meta.changes) {
+		const won = (await byKey())!;
+		return { job_id: won.id, state: won.state };
+	}
 	await logEvent(db, id, "state", { from: null, to: state });
-	return { job_id: id, state };
+	return { job_id: id, state, created: true as const };
 }
 
 export async function submitJob(db: D1Database, jobId: string, scenePlan: unknown) {
@@ -175,8 +181,10 @@ export function createServer() {
 			}),
 		},
 		async (a) => {
-			const r = await acquireGpu(env, db, a as never);
-			if (r.state === "provisioning") waitUntil(selectAndCreate(env, db, r.job_id).then(() => undefined));
+			const { created, ...r } = await acquireGpu(env, db, a as never);
+			// Only a new job starts selection: a repeat call must not race a second selectAndCreate (two pods).
+			// A lost waitUntil is picked up by the watchdog's stuck-provisioning sweep.
+			if (created && r.state === "provisioning") waitUntil(selectAndCreate(env, db, r.job_id).then(() => undefined));
 			return json(r);
 		},
 	);

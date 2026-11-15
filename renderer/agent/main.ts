@@ -21,6 +21,7 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 const STYLES_DIR = fileURLToPath(new URL("../styles", import.meta.url));
 const BENCH_PLAN = fileURLToPath(new URL("../../bench/plan-60s.json", import.meta.url));
 const WORK = join(env.WORK_DIR ?? tmpdir(), "vf");
+const UPLOAD_CHUNK = Number(env.UPLOAD_CHUNK_BYTES) || undefined; // tests only; default CONSTANTS.DRIVE_CHUNK_BYTES
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---- self-destruct (§6.4): DELETE with the pod-scoped key; fallback POST .../stop. Log both outcomes.
@@ -102,7 +103,7 @@ function startHeartbeat(cp: ControlPlane) {
 			if (e instanceof Gone) push("cancel");
 			else log("heartbeat failed:", (e as Error).message);
 		}
-	}, CONSTANTS.HEARTBEAT_INTERVAL_S * 1000);
+	}, Number(env.HEARTBEAT_MS) || CONSTANTS.HEARTBEAT_INTERVAL_S * 1000); // HEARTBEAT_MS: tests only
 }
 
 const planOf = (s: SpecOut): ScenePlan => ({ style: s.style, fps: s.fps, resolution: s.resolution, scenes: s.scenes });
@@ -192,6 +193,7 @@ async function main() {
 			const fileId = await resumableUpload(file, size, {
 				newSession: async () => (await cp.uploadSession({ name: `${spec.style}.mp4`, size, md5 })).session_uri,
 				log,
+				chunk: UPLOAD_CHUNK,
 				dropAfterChunk: faults.dropAfterChunk,
 			});
 			faults.dropAfterChunk = null;
@@ -216,6 +218,7 @@ async function main() {
 				const fileId = await resumableUpload(u.file, u.size, {
 					newSession: async () => (await cp.uploadSession({ name: `${spec.style}.mp4`, size: u.size, md5: u.md5 })).session_uri,
 					log,
+					chunk: UPLOAD_CHUNK,
 				});
 				status.stage = "verifying";
 				await cp.done({ file_id: fileId, md5: u.md5, size: u.size });

@@ -89,7 +89,7 @@ app.post("/authorize", async (c) => {
 		headers.append("Set-Cookie", approvedClientCookie);
 		headers.append("Set-Cookie", sessionBindingCookie);
 
-		return redirectToGithub(c.req.raw, stateToken, Object.fromEntries(headers));
+		return redirectToGithub(c.req.raw, stateToken, headers); // not Object.fromEntries: it keeps only the last Set-Cookie
 	} catch (error: any) {
 		console.error("POST /authorize error:", error);
 		if (error instanceof OAuthError) {
@@ -103,21 +103,20 @@ app.post("/authorize", async (c) => {
 async function redirectToGithub(
 	request: Request,
 	stateToken: string,
-	headers: Record<string, string> = {},
+	headersInit: HeadersInit = {},
 ) {
-	return new Response(null, {
-		headers: {
-			...headers,
-			location: getUpstreamAuthorizeUrl({
-				client_id: env.GITHUB_CLIENT_ID,
-				redirect_uri: new URL("/callback", request.url).href,
-				scope: "read:user",
-				state: stateToken,
-				upstream_url: "https://github.com/login/oauth/authorize",
-			}),
-		},
-		status: 302,
-	});
+	const headers = new Headers(headersInit);
+	headers.set(
+		"location",
+		getUpstreamAuthorizeUrl({
+			client_id: env.GITHUB_CLIENT_ID,
+			redirect_uri: new URL("/callback", request.url).href,
+			scope: "read:user",
+			state: stateToken,
+			upstream_url: "https://github.com/login/oauth/authorize",
+		}),
+	);
+	return new Response(null, { headers, status: 302 });
 }
 
 /**
