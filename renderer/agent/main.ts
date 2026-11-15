@@ -199,6 +199,7 @@ async function main() {
 			await cp.previews(await renderPreviews(input(spec), scenes));
 			for (const n of scenes ?? spec.scenes.map((s) => s.n)) previewed.add(n);
 		});
+	let resumeReport: Promise<unknown> | null = null;
 	const doFinal = () =>
 		attempt("final_render", async () => {
 			const file = await renderFinal(input(spec));
@@ -212,8 +213,13 @@ async function main() {
 				chunk: UPLOAD_CHUNK ?? (faults.dropAfterChunk ? 1024 * 1024 : undefined),
 				dropAfterChunk: faults.dropAfterChunk,
 				// Report the resume offset (from Drive's 308 Range) so the control plane records the evidence.
-				onResume: (offset) => void cp.heartbeat({ stage: `upload_resumed:${offset}`, pct: Math.round((offset / size) * 100) }).catch(() => undefined),
+				// Telemetry only: the control plane answers it without consuming any pending command.
+				onResume: (offset) => {
+					resumeReport = cp.heartbeat({ stage: `upload_resumed:${offset}`, pct: 0 }).catch(() => undefined);
+				},
 			});
+			// Best effort, bounded: let the telemetry land before /done so it can't race the verify.
+			if (resumeReport) await Promise.race([resumeReport, sleep(5000)]);
 			faults.dropAfterChunk = null;
 			status.stage = "verifying";
 			await cp.done({ file_id: fileId, md5, size });

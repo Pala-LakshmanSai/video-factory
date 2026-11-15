@@ -391,3 +391,24 @@ describe("Phase 9 fault mechanics", () => {
 		expect((await getJob(env.DB, "j1"))!.state).toBe("booting"); // on the replacement pod
 	});
 });
+
+describe("upload-resume telemetry never touches the command channel", () => {
+	it("keeps pending_cmd, logs only a valid positive offset, and the next real heartbeat still gets the command", async () => {
+		const { agentApp } = await import("../src/agent");
+		const { sha256Hex } = await import("../src/db");
+		await job("j1", "final_render", "plan_json='{}'");
+		await pod("p1", "j1", 5 * MIN, { hello: Date.now() - 4 * MIN, hb: Date.now() - 10_000 });
+		await env.DB.prepare("UPDATE jobs SET job_token_sha256 = ?, token_expires_at = ?, pending_cmd = 'render_final' WHERE id = 'j1'").bind(await sha256Hex("tok"), Date.now() + 60 * MIN).run();
+		const hb = (stage: string) =>
+			agentApp.fetch(new Request("https://cp.test/agent/j1/heartbeat", { method: "POST", headers: { Authorization: "Bearer tok", "Content-Type": "application/json" }, body: JSON.stringify({ stage, pct: 0 }) }), env).then((r) => r.json());
+		for (const bad of ["upload_resumed:0", "upload_resumed:-5", "upload_resumed:abc", "upload_resumed:1e400", "upload_resumed:"]) {
+			expect(await hb(bad)).toEqual({ cmd: "continue" });
+		}
+		expect(await hb("upload_resumed:1048576")).toEqual({ cmd: "continue" });
+		expect((await getJob(env.DB, "j1"))!.pending_cmd).toBe("render_final");
+		const ev = (await env.DB.prepare("SELECT data_json FROM events WHERE kind = 'upload_resumed'").all<{ data_json: string }>()).results;
+		expect(ev.map((e) => JSON.parse(e.data_json))).toEqual([{ offset: 1048576 }]);
+		expect(await hb("uploading")).toEqual({ cmd: "render_final" }); // the real heartbeat still receives it
+		expect((await getJob(env.DB, "j1"))!.pending_cmd).toBeNull();
+	});
+});
