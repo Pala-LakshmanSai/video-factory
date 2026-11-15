@@ -37,16 +37,19 @@ jobs:
   image:
     needs: test
     runs-on: ubuntu-24.04
+    # Private GHCR instead of Docker Hub (CONTRACT Extension 11): pushed with the job's own GITHUB_TOKEN.
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMG: ghcr.io/pala-lakshmansai/video-renderer
     steps:
       - name: Free runner disk (CUDA base + Chromium image is several GB)
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - id: hub
-        env: { HUB_USER: "${{ secrets.DOCKERHUB_USERNAME }}" }
-        run: |
-          if [ -n "$HUB_USER" ]; then echo "push=true" >> "$GITHUB_OUTPUT"; else echo "push=false" >> "$GITHUB_OUTPUT"; echo "::notice::Docker Hub secrets not set: building and smoke-testing only, no push"; fi
-          echo "image=docker.io/${HUB_USER:-local}/video-renderer:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - id: tag
+        run: echo "ref=${IMG}:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
       - name: Build
         uses: docker/build-push-action@v6
         with:
@@ -54,34 +57,33 @@ jobs:
           file: renderer/Dockerfile
           platforms: linux/amd64
           load: true
-          tags: ${{ steps.hub.outputs.image }}
+          tags: ${{ steps.tag.outputs.ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
       - name: Smoke test the image
-        env: { IMG: "${{ steps.hub.outputs.image }}" }
+        env: { REF: "${{ steps.tag.outputs.ref }}" }
         run: |
-          echo "image size: $(( $(docker image inspect -f '{{.Size}}' "$IMG") / 1000000 )) MB" | tee -a "$GITHUB_STEP_SUMMARY"
-          test "$(docker run --rm --entrypoint id "$IMG" -u)" != 0
-          docker run --rm --entrypoint ffmpeg "$IMG" -hide_banner -encoders | grep -E 'h264_nvenc|libx264'
-          docker run --rm "$IMG" --selftest | tee selftest.log
+          echo "image size: $(( $(docker image inspect -f '{{.Size}}' "$REF") / 1000000 )) MB" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$(docker run --rm --entrypoint id "$REF" -u)" != 0
+          docker run --rm --entrypoint ffmpeg "$REF" -hide_banner -encoders | grep -E 'h264_nvenc|libx264'
+          docker run --rm "$REF" --selftest | tee selftest.log
           grep -q 'encoder: libx264' selftest.log
-          docker run --rm --network none --entrypoint node "$IMG" --input-type=module -e "const m = await import('/app/renderer/engine/voice.ts'); await m.tts('Offline check.', '/tmp/t.wav'); console.log('offline TTS ok')"
-      - if: steps.hub.outputs.push == 'true'
+          docker run --rm --network none --entrypoint node "$REF" --input-type=module -e "const m = await import('/app/renderer/engine/voice.ts'); await m.tts('Offline check.', '/tmp/t.wav'); console.log('offline TTS ok')"
+      # Push exactly the image that passed the smoke test (no rebuild), only from main.
+      - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - if: steps.hub.outputs.push == 'true'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: renderer/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.hub.outputs.image }}
-          cache-from: type=gha
-      - if: steps.hub.outputs.push == 'true'
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env: { REF: "${{ steps.tag.outputs.ref }}" }
         run: |
-          echo "### Renderer image" >> "$GITHUB_STEP_SUMMARY"
-          echo "Set \`RENDERER_IMAGE\` in control-plane/wrangler.jsonc to:" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`${{ steps.hub.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
+          docker push "$REF"
+          digest=$(docker inspect -f '{{index .RepoDigests 0}}' "$REF")
+          {
+            echo "### Renderer image (private GHCR)"
+            echo "Pinned tag: \`$REF\`"
+            echo "Digest: \`$digest\`"
+            echo "Set \`RENDERER_IMAGE\` in control-plane/wrangler.jsonc to the pinned tag; RunPod pulls it with the ghcr.io registry auth."
+          } >> "$GITHUB_STEP_SUMMARY"
