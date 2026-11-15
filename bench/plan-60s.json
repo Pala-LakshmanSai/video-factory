@@ -1,0 +1,156 @@
+{
+ "style": "explainer",
+ "fps": 30,
+ "resolution": "1920x1080",
+ "scenes": [
+  {
+   "n": 1,
+   "template": "title",
+   "props": {
+    "title": "How Tea Cools",
+    "subtitle": "The physics in your cup",
+    "kicker": "Benchmark"
+   },
+   "duration_s": 5,
+   "narration": "",
+   "transition": "cut"
+  },
+  {
+   "n": 2,
+   "template": "kinetic-text",
+   "props": {
+    "text": "Heat always flows from hot to cold",
+    "emphasis": [
+     "hot",
+     "cold"
+    ]
+   },
+   "duration_s": 5,
+   "narration": "",
+   "transition": "fade"
+  },
+  {
+   "n": 3,
+   "template": "list",
+   "props": {
+    "heading": "Three ways heat escapes",
+    "items": [
+     "Evaporation",
+     "Convection",
+     "Radiation"
+    ]
+   },
+   "duration_s": 6,
+   "narration": "",
+   "transition": "slide"
+  },
+  {
+   "n": 4,
+   "template": "b-roll-caption",
+   "props": {
+    "caption": "Steam carries energy away from the surface"
+   },
+   "duration_s": 5,
+   "narration": "",
+   "transition": "cut"
+  },
+  {
+   "n": 5,
+   "template": "kinetic-text",
+   "props": {
+    "text": "Evaporation does most of the work",
+    "emphasis": [
+     "Evaporation"
+    ]
+   },
+   "duration_s": 5,
+   "narration": "",
+   "transition": "fade"
+  },
+  {
+   "n": 6,
+   "template": "quote",
+   "props": {
+    "quote": "Nothing is hotter than the first sip.",
+    "author": "Anonymous",
+    "role": "Tea drinker"
+   },
+   "duration_s": 5,
+   "narration": "",
+   "transition": "slide"
+  },
+  {
+   "n": 7,
+   "template": "list",
+   "props": {
+    "heading": "Cool it faster",
+    "items": [
+     "Stir it",
+     "Pour it wide",
+     "Blow across it",
+     "Add milk"
+    ]
+   },
+   "duration_s": 6,
+   "narration": "",
+   "transition": "cut"
+  },
+  {
+   "n": 8,
+   "template": "b-roll-caption",
+   "props": {
+    "caption": "A wide mug cools almost twice as fast"
+   },
+   "duration_s": 5,
+   "narration": "",
+   "transition": "fade"
+  },
+  {
+   "n": 9,
+   "template": "kinetic-text",
+   "props": {
+    "text": "Milk drops the temperature at once",
+    "emphasis": [
+     "once"
+    ]
+   },
+   "duration_s": 4,
+   "narration": "",
+   "transition": "slide"
+  },
+  {
+   "n": 10,
+   "template": "title",
+   "props": {
+    "title": "Recap",
+    "subtitle": "Evaporation, convection, radiation"
+   },
+   "duration_s": 4,
+   "narration": "",
+   "transition": "cut"
+  },
+  {
+   "n": 11,
+   "template": "quote",
+   "props": {
+    "quote": "Patience is the best cooling method.",
+    "author": "Grandma"
+   },
+   "duration_s": 5,
+   "narration": "",
+   "transition": "fade"
+  },
+  {
+   "n": 12,
+   "template": "end-card",
+   "props": {
+    "title": "Thanks for watching",
+    "cta": "Subscribe for more",
+    "handle": "@videofactory"
+   },
+   "duration_s": 5,
+   "narration": "",
+   "transition": "slide"
+  }
+ ]
+}

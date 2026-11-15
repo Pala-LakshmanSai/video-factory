@@ -1,0 +1,20 @@
+{
+  "name": "video-factory-renderer",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "agent": "node agent/main.ts",
+    "selftest": "node agent/main.ts --selftest",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "kokoro-js": "1.2.1",
+    "playwright": "1.55.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "typescript": "5.9.2"
+  }
+}

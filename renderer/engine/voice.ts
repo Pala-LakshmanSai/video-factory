@@ -1,0 +1,79 @@
+// Voiceover (Decision): a Drive audio file streamed via GET /input/voiceover, or text -> Kokoro-82M on the pod
+// (weights baked into the image, no network at run time). Cached per job in workDir. Output: 48 kHz mono WAV.
+import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { Voiceover } from "../../packages/contract/src/index.ts";
+import { durationOf, must } from "./ffmpeg.ts";
+
+export const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
+export const KOKORO_VOICE = process.env.TTS_VOICE ?? "af_heart";
+
+export async function prepareVoice(
+	vo: Voiceover,
+	dir: string,
+	fetchDriveAudio: () => Promise<Response>,
+): Promise<{ path: string; seconds: number }> {
+	await mkdir(dir, { recursive: true });
+	const out = join(dir, "voice.wav");
+	if (!existsSync(out)) {
+		if (vo.drive_file_id) {
+			const res = await fetchDriveAudio();
+			if (!res.ok) throw new Error(`GET /input/voiceover ${res.status}`);
+			const raw = join(dir, "voice.src");
+			await writeFile(raw, Buffer.from(await res.arrayBuffer()));
+			await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", raw, "-ac", "1", "-ar", "48000", out]);
+		} else {
+			await tts(vo.text!, out);
+		}
+	}
+	return { path: out, seconds: await durationOf(out) };
+}
+
+/** Kokoro-82M via kokoro-js (ONNX on CPU). Sentence by sentence so long scripts stay under the token limit. */
+export async function tts(text: string, out: string) {
+	const tf = await import("@huggingface/transformers");
+	tf.env.allowRemoteModels = process.env.TTS_ALLOW_DOWNLOAD === "1"; // image build only
+	if (process.env.TTS_CACHE) tf.env.cacheDir = process.env.TTS_CACHE;
+	const { KokoroTTS } = await import("kokoro-js");
+	const model = await KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8", device: "cpu" });
+	const sentences = text.match(/[^.!?。！？]+[.!?。！？]*\s*/g)?.map((s) => s.trim()).filter(Boolean) ?? [text];
+	const parts: Float32Array[] = [];
+	let rate = 24000;
+	const gap = () => new Float32Array(Math.round(rate * 0.18));
+	for (const s of sentences) {
+		const a = await model.generate(s, { voice: KOKORO_VOICE as never });
+		rate = a.sampling_rate;
+		parts.push(a.audio as Float32Array, gap());
+	}
+	const pcm = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+	let o = 0;
+	for (const p of parts) pcm.set(p, (o += p.length) - p.length);
+	const raw = out.replace(/\.wav$/, ".24k.wav");
+	await writeFile(raw, wav(pcm, rate));
+	await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", raw, "-ac", "1", "-ar", "48000", out]);
+}
+
+function wav(pcm: Float32Array, rate: number): Buffer {
+	const b = Buffer.alloc(44 + pcm.length * 2);
+	b.write("RIFF", 0);
+	b.writeUInt32LE(36 + pcm.length * 2, 4);
+	b.write("WAVEfmt ", 8);
+	b.writeUInt32LE(16, 16);
+	b.writeUInt16LE(1, 20);
+	b.writeUInt16LE(1, 22);
+	b.writeUInt32LE(rate, 24);
+	b.writeUInt32LE(rate * 2, 28);
+	b.writeUInt16LE(2, 32);
+	b.writeUInt16LE(16, 34);
+	b.write("data", 36);
+	b.writeUInt32LE(pcm.length * 2, 40);
+	for (let i = 0; i < pcm.length; i++) b.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(pcm[i] * 32767))), 44 + i * 2);
+	return b;
+}
+
+/** Silent track of a given length (bench runs, and tests). */
+export async function silence(seconds: number, out: string) {
+	await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", String(seconds), out]);
+	return { path: out, seconds };
+}

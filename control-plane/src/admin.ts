@@ -99,6 +99,13 @@ adminApp.post("/admin/fault", async (c) => {
 	}
 });
 
+adminApp.get("/admin/pods", async (c) => {
+	const rows = (await c.env.DB.prepare("SELECT id, job_id, created_at FROM pods WHERE deleted_at IS NULL").all()).results;
+	return c.json(rows);
+});
+
+adminApp.get("/admin/job/:job", async (c) => c.json(await c.env.DB.prepare("SELECT id, state, error_json, drive_link, cost_usd, attempts FROM jobs WHERE id = ?").bind(c.req.param("job")).first()));
+
 adminApp.get("/admin/events/:job", async (c) => {
 	const rows = (await c.env.DB.prepare("SELECT ts, kind, data_json FROM events WHERE job_id = ? ORDER BY id").bind(c.req.param("job")).all()).results;
 	return c.json(rows);
