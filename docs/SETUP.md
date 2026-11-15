@@ -101,7 +101,7 @@ One owner-approved render through the Claude Video Factory Project, $0.50 budget
 | Cost | $0.0385 (235 GPU-seconds) |
 | Admission | Opened 19:43:41, closed 19:45:11 UTC after the pod was accepted; faults and dev routes off throughout |
 
-Visual follow-up (fixed in 675f7d7, verified zero black joins on later drill renders): one-frame black flash at each `fade` scene join (incoming fade starts at full black). Renderer-only fix; needs a new image and digest pin.
+Visual follow-up, resolved: the one-frame black flash at each `fade` scene join (incoming fade started at full black) was fixed in 675f7d7 (fade/slide use the style background); that fix is in every pinned image since, and later drill downloads showed zero black joins.
 
 ## Phase 9 fault drills — exact upload proof passed (2026-11-16)
 
@@ -129,7 +129,8 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
 
 **Not qualified / open risks:**
 - **NVENC on RunPod GPUs.** B6 used `h264_nvenc` and failed with "could not open encoder" (-22) at segment 29
-  (GeForce concurrent-session limit); a9e41fa caps NVENC workers at 4. B7 ran on an RTX 4090 but the H.264 SEI
+  (likely the GeForce concurrent NVENC session limit with many parallel segment encoders; not proven by
+  provider driver diagnostics); a9e41fa caps NVENC workers at 4. B7 ran on an RTX 4090 but the H.264 SEI
   says x264: the 1-frame NVENC probe fell back, so the cap is **not** qualified. Suspected cause: host driver
   older than the bundled ffmpeg 8.1 NVENC SDK needs. Next build logs the probe stderr, driver version and
   `libnvidia-encode` presence on fallback; then run `--selftest` on one GPU pod (step 4) and require
