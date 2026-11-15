@@ -9,3 +9,4 @@ dist/
 .DS_Store
 !.dev.vars.example
 __pycache__/
+renderer/test/out/

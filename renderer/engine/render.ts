@@ -125,7 +125,9 @@ async function shot(page: Page, errors: string[], sceneN: number, t: number): Pr
 			document.body.style.transform = kind === "slide" && p < 1 ? `translateX(${(1 - e) * 100}%)` : "";
 		},
 		{ t, tr: TRANSITION_S },
-	);
+	).catch((e: Error) => {
+		throw new TemplateError(sceneN, `__seek(${t.toFixed(3)}) threw: ${e.message}\n${errors.join("\n")}`);
+	});
 	if (errors.length) throw new TemplateError(sceneN, errors.join("\n"));
 	return page.screenshot({ type: "jpeg", quality: 92 });
 }

@@ -44,7 +44,7 @@ async function file(bytes: number) {
 	return { p, data };
 }
 
-const md5 = (b: Buffer) => createHash("md5").update(b).digest("hex");
+const md5 = (b: Uint8Array) => createHash("md5").update(b).digest("hex");
 
 test("uploads in chunks and resumes after a simulated drop via bytes */size", async () => {
 	const { p, data } = await file(CHUNK * 3 + 1000);

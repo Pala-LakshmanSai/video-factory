@@ -19,7 +19,7 @@ jobs:
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
           npx tsc --noEmit
-          node --test test/*.test.ts
+          TEST_OUT=test/out node --test test/*.test.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with: { name: golden-diffs, path: renderer/test/out, if-no-files-found: ignore }
