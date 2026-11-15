@@ -131,11 +131,23 @@ agentApp.post("/done", async (c) => {
 	const body = await c.req.json<DoneIn>();
 	await updateJob(c.env.DB, job.id, { drive_file_id: body.file_id, md5: body.md5, size: body.size });
 	if (job.state === "uploading") await transition(c.env.DB, job, "verifying");
-	return c.json(await verify(c.env, job, body));
+	const defer = (p: Promise<unknown>) => {
+		try {
+			c.executionCtx.waitUntil(p);
+		} catch {
+			// No ExecutionContext (local test harness): the awaited call below still completes the work.
+		}
+	};
+	return c.json(await verify(c.env, job, body, defer));
 });
 
 /** §7 verification: size + md5 must match, else re-upload (max 2); match -> share, DELETE pod, done. */
-export async function verify(env: Env, job: JobRow, body: DoneIn) {
+/**
+ * `defer` runs work that must survive the agent's connection dropping. Deleting the pod kills the agent and
+ * with it the open /done request, and Workers cancel a handler whose client is gone, so the pod delete is
+ * the LAST step and goes through waitUntil (found live on 2026-11-16: drive_link stored, `done` never set).
+ */
+export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Promise<unknown>) => void = () => {}) {
 	const db = env.DB;
 	try {
 		const meta = await fileMeta(env, body.file_id);
@@ -153,11 +165,14 @@ export async function verify(env: Env, job: JobRow, body: DoneIn) {
 		}
 		await shareAnyone(env, body.file_id);
 		const pod = await activePod(db, job.id);
-		if (pod) {
-			await retirePod(env, db, job.id, pod.id, "done"); // unconfirmed -> stays tracked, reaper retries
-		}
 		await updateJob(db, job.id, { drive_link: meta.webViewLink, ...(await jobCost(db, job.id)) });
 		await transition(db, job, "done");
+		// Only now delete the pod (this ends the agent and its request). Unconfirmed -> stays tracked, reaper retries.
+		if (pod) {
+			const retire = retirePod(env, db, job.id, pod.id, "done").then(async () => updateJob(db, job.id, await jobCost(db, job.id)));
+			defer(retire);
+			await retire;
+		}
 		return {};
 	} catch (e) {
 		if (e instanceof DriveAuthError) await failJob(env, db, job, "drive_auth", e.message);

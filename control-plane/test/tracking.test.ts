@@ -318,3 +318,29 @@ describe("review 4: fencing, no replay, admission switch", () => {
 		expect(calls).toHaveLength(0);
 	});
 });
+
+describe("live smoke render finding (2026-11-16)", () => {
+	it("verify marks the job done BEFORE deleting the pod (the delete kills the agent's /done request)", async () => {
+		const { verify } = await import("../src/agent");
+		await job("j1", "verifying", "plan_json='{}'");
+		await pod("p1", "j1", 10 * MIN, { hello: Date.now() - 9 * MIN });
+		let stateAtDelete = "";
+		const deferred: Promise<unknown>[] = [];
+		mockFetch(
+			(u) => (u === "https://oauth2.googleapis.com/token" ? json({ access_token: "at", expires_in: 3599 }) : undefined),
+			(u) => (u.includes("/files/f1?fields") ? json({ size: "100", md5Checksum: "abc", webViewLink: "https://drive.test/f1" }) : undefined),
+			(u) => (u.includes("/files/f1/permissions") ? json({ id: "anyone" }) : undefined),
+			async (u, i) => {
+				if (i.method !== "DELETE") return;
+				stateAtDelete = (await getJob(env.DB, "j1"))!.state;
+				return new Response(null, { status: 204 });
+			},
+		);
+		await verify(env, (await getJob(env.DB, "j1"))!, { file_id: "f1", md5: "abc", size: 100 }, (p) => deferred.push(p));
+		expect(stateAtDelete).toBe("done");
+		expect(deferred).toHaveLength(1); // the delete is handed to waitUntil
+		const j = (await getJob(env.DB, "j1"))!;
+		expect(j.state).toBe("done");
+		expect(j.drive_link).toBe("https://drive.test/f1");
+	});
+});
