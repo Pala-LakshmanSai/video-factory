@@ -101,4 +101,41 @@ One owner-approved render through the Claude Video Factory Project, $0.50 budget
 | Cost | $0.0385 (235 GPU-seconds) |
 | Admission | Opened 19:43:41, closed 19:45:11 UTC after the pod was accepted; faults and dev routes off throughout |
 
-Open visual follow-up: one-frame black flash at each `fade` scene join (incoming fade starts at full black). Renderer-only fix; needs a new image and digest pin.
+Visual follow-up (fixed in 675f7d7, verified zero black joins on later drill renders): one-frame black flash at each `fade` scene join (incoming fade starts at full black). Renderer-only fix; needs a new image and digest pin.
+
+## Phase 9 fault drills — exact upload proof passed (2026-11-16)
+
+Single operator, owner-approved, $3 cap; spent **$0.4659** tracked. Every drill pod has a RunPod Audit Log deletion
+receipt (independent check). After the last run: `ADMISSION_ENABLED`/`FAULTS_ENABLED`/`DEV_ROUTES` all `"0"`,
+zero open jobs, zero live pods, zero armed faults. Renderer pin: `sha256:2913b893…926b` (a9e41fa).
+
+**Exact injection (named fault fired and the observed event matches):**
+
+| Fault | Job | Observed |
+|---|---|---|
+| `block_region:AP-IN-1` | `j_ed566cf306fb41e0` | region skipped (caveat: AP-IN-1 may have had no capacity anyway) |
+| `price_cap:0.01` | `j_8e5a089cc3994c8d` | 6 offers rejected → `failed_no_capacity` |
+| `kill_pod`, `corrupt_md5` | `j_3a652cdb53b24183` (B2) | pod replaced; md5 mismatch caught by verify |
+| `expire_upload_session` | `j_afa7f33820024043` (B3) | 2 upload sessions, restart from 0 |
+| `revoke_drive` | `j_8ad5a784467044f3` (B4) | `drive_auth` failure + Telegram alert |
+| `slow_boot` | `j_bea7ab5845f74a9f` (B1) | boot_timeout → replacement pod |
+| `render_error` + scene repair | `j_bea7ab5845f74a9f` (B1) | final-render scene error, `revise_scene` repair, done (RTX 3090) |
+| `silence_heartbeat` | `j_62299e36d97d4564` (B6) | healthy L40S lost heartbeat → deleted `heartbeat_lost`; replacement RTX 4090 accepted + heartbeating |
+| `drop_upload_after_chunk:1` | `j_0c4d12aba6cb4efc` (B7) | Drive 308, `upload_resumed` offset 1048576; size 2,366,936 + md5 `80a023ab…` verified; auto `done`; pod deleted `done` |
+
+**Equivalent coverage only:** chat closed mid-job (B3: server-side turn kept running), orphan reap (an untracked
+`vf-` pod, not a hand-made `vf-test`), CPU x264 finish (B2 replacement was CPU, not caused by `price_cap`).
+**Unplanned extra:** crash mid-create → held, no replay (`j_bb15243dd4b24261` → `failed_no_capacity`).
+
+**Not qualified / open risks:**
+- **NVENC on RunPod GPUs.** B6 used `h264_nvenc` and failed with "could not open encoder" (-22) at segment 29
+  (GeForce concurrent-session limit); a9e41fa caps NVENC workers at 4. B7 ran on an RTX 4090 but the H.264 SEI
+  says x264: the 1-frame NVENC probe fell back, so the cap is **not** qualified. Suspected cause: host driver
+  older than the bundled ffmpeg 8.1 NVENC SDK needs. Next build logs the probe stderr, driver version and
+  `libnvidia-encode` presence on fallback; then run `--selftest` on one GPU pod (step 4) and require
+  `encoder: h264_nvenc`.
+- **Heartbeat gap.** B7's pod sent no heartbeat for 79 s during preview render (threshold 60 s); it survived only
+  because of watchdog tick timing. Kokoro/Chromium work can starve the agent's event loop.
+- **Cold boot.** 6.2 GB image vs 6-min boot timeout on cold hosts.
+- **Fault slot.** `armFault` overwrites `pending_cmd`; arm agent faults only when it is empty.
+
