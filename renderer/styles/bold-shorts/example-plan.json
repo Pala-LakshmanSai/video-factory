@@ -1,0 +1,15 @@
+{
+  "style": "bold-shorts",
+  "fps": 30,
+  "resolution": "1080x1920",
+  "scenes": [
+    {"n": 1, "template": "title", "props": {"kicker": "Did you know?", "title": "Your tea is cooling wrong"}, "duration_s": 3.0, "narration": "Your tea is cooling wrong, and here's why.", "transition": "cut"},
+    {"n": 2, "template": "kinetic-text", "props": {"text": "Most heat escapes through the top", "emphasis": ["top"]}, "duration_s": 4.0, "narration": "Most of the heat escapes straight through the top of your mug.", "transition": "cut"},
+    {"n": 3, "template": "kinetic-text", "props": {"text": "Steam steals the energy fast", "emphasis": ["steam", "fast"]}, "duration_s": 4.5, "narration": "Steam steals that energy really, really fast, way faster than the mug does.", "transition": "cut"},
+    {"n": 4, "template": "list", "props": {"heading": "Keep it hot", "items": ["Use a lid", "Preheat the mug", "Pick ceramic"]}, "duration_s": 4.5, "narration": "Want it hot longer? Use a lid, preheat the mug, and pick ceramic.", "transition": "slide"},
+    {"n": 5, "template": "b-roll-caption", "props": {"caption": "A lid doubles your hot time"}, "duration_s": 4.0, "narration": "Just adding a lid can double how long your tea stays hot.", "transition": "cut"},
+    {"n": 6, "template": "kinetic-text", "props": {"text": "Cheapest upgrade in your kitchen", "emphasis": ["cheapest"]}, "duration_s": 3.5, "narration": "A lid is honestly the cheapest upgrade in your kitchen.", "transition": "cut"},
+    {"n": 7, "template": "kinetic-text", "props": {"text": "Try it tomorrow morning", "emphasis": ["tomorrow"]}, "duration_s": 3.0, "narration": "Try it tomorrow morning and feel the difference.", "transition": "cut"},
+    {"n": 8, "template": "end-card", "props": {"title": "Follow for more", "cta": "Daily kitchen hacks", "handle": "@kitchenphysics"}, "duration_s": 2.0, "narration": "Follow for more daily kitchen hacks.", "transition": "cut"}
+  ]
+}

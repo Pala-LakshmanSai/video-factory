@@ -1,0 +1,12 @@
+{
+  "style": "documentary",
+  "fps": 30,
+  "resolution": "1920x1080",
+  "scenes": [
+    {"n": 1, "template": "title", "props": {"kicker": "A short history", "title": "The Leaf That Crossed Oceans", "subtitle": "How tea shaped trade, empire and the morning cup"}, "duration_s": 6.0, "narration": "It began as a bitter medicine in southern China, thousands of years ago.", "transition": "fade"},
+    {"n": 2, "template": "b-roll-caption", "props": {"caption": "By the 1600s, tea was arriving in Europe by the shipload.", "credit": "Illustration: archive"}, "duration_s": 8.5, "narration": "Within centuries it spread along the caravan routes, and by the sixteen hundreds it reached Europe by ship.", "transition": "fade"},
+    {"n": 3, "template": "kinetic-text", "props": {"text": "A single leaf would redraw the map of the world", "emphasis": ["redraw"]}, "duration_s": 6.5, "narration": "And that single leaf would go on to redraw the map of the world.", "transition": "fade"},
+    {"n": 4, "template": "quote", "props": {"quote": "Thank God for tea! What would the world do without tea?", "author": "Sydney Smith", "role": "Essayist, 1771–1845"}, "duration_s": 7.5, "narration": "As one essayist put it: thank God for tea. What would the world do without it?", "transition": "fade"},
+    {"n": 5, "template": "end-card", "props": {"title": "The Leaf That Crossed Oceans", "cta": "Next: the tea clipper races", "handle": "@slowhistory"}, "duration_s": 4.0, "narration": "Next time, the great tea clipper races.", "transition": "fade"}
+  ]
+}

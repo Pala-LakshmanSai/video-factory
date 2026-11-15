@@ -21,7 +21,7 @@ jobs:
           npx tsc --noEmit
           TEST_OUT=test/out node --test test/*.test.ts
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with: { name: golden-diffs, path: renderer/test/out, if-no-files-found: ignore }
 
   image:

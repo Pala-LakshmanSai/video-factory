@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.6) 100%)}
+.bar{position:absolute;left:0;right:0;height:calc(var(--H) * .1);background:#000}
+#bt{top:0}#bb{bottom:0}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:center;padding:1%;box-sizing:border-box}
+#text{flex:none;margin:0;width:100%;text-align:center;font-family:var(--display);font-weight:var(--wb);line-height:1.3}
+#text span{display:inline-block}
+#text .em{font-style:italic;color:var(--accent)}
+</style></head>
+<body>
+<div id="vig"></div>
+<div class="safe" id="safe"><p id="text"></p></div>
+<div class="bar" id="bt"></div><div class="bar" id="bb"></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const box = document.getElementById("text");
+let words = [];
+VF.boot((S) => {
+  const text = VF.req(S.props.text, "text");
+  const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+  const emph = new Set(VF.list(S.props.emphasis).flatMap((e) => e.split(/\s+/)).map(norm).filter(Boolean));
+  // CJK text without spaces is revealed character by character.
+  let parts = text.split(/\s+/).filter(Boolean), sep = " ";
+  if (parts.length === 1 && /[぀-ヿ㐀-鿿가-힯]/.test(text)) { parts = Array.from(text); sep = ""; }
+  parts.forEach((w, i) => {
+    const s = document.createElement("span");
+    s.textContent = w;
+    if (emph.has(norm(w))) s.className = "em";
+    box.appendChild(s);
+    if (sep && i < parts.length - 1) box.appendChild(document.createTextNode(sep));
+  });
+  words = Array.from(box.querySelectorAll("span"));
+  VF.fitText(box, S.box.w * 0.98, S.box.h - S.box.w * 0.02, 8 * S.u, 2.2 * S.u);
+}, (t, S) => {
+  // words fade in slowly, overlapping, paced across the scene
+  const span = Math.max(0, S.duration - S.outD - S.inD), n = words.length;
+  words.forEach((w, i) => VF.show(w, VF.enter(t, S, (span * i) / n)));
+  const x = VF.exit(t, S), safe = document.getElementById("safe");
+  safe.style.opacity = x > 0 ? 1 - x : "";
+  safe.style.transform = `scale(${1 + 0.02 * (t / S.duration)})`;
+});
+</script>
+</body></html>

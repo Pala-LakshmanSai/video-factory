@@ -1,0 +1,41 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#media{position:absolute;inset:0;overflow:hidden;background:
+  radial-gradient(circle at 75% 30%, color-mix(in srgb, var(--accent) 35%, transparent) 0, transparent 45%),
+  radial-gradient(circle at 20% 80%, color-mix(in srgb, var(--accent) 18%, transparent) 0, transparent 40%),
+  color-mix(in srgb, var(--accent) 8%, var(--bg))}
+#img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start}
+.safe>*{flex:none;margin:0}
+#card{background:var(--bg);border-radius:calc(var(--u)*2);padding:calc(var(--u)*2.2) calc(var(--u)*3);box-shadow:0 calc(var(--u)*.8) calc(var(--u)*4) rgba(0,0,0,.18);border-left:calc(var(--u)*.9) solid var(--accent);max-width:100%;box-sizing:border-box}
+#caption{margin:0;line-height:1.25;font-weight:var(--wd);font-family:var(--display)}
+#credit{margin-top:calc(var(--u)*1.2);color:var(--fg);opacity:.75;line-height:1.2;background:color-mix(in srgb, var(--bg) 70%, transparent);padding:.15em .5em;border-radius:.4em}
+</style></head>
+<body>
+<div id="media"><img id="img" alt=""></div>
+<div class="safe" id="safe"><div id="card"><p id="caption"></p></div><p id="credit"></p></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+// Only data: image URIs are accepted (no network at render time); anything else falls back to the backdrop.
+const src = (window.__scene && window.__scene.props && window.__scene.props.image) || "";
+if (typeof src === "string" && /^data:image\//i.test(src)) { $("img").src = src; $("img").style.display = "block"; }
+VF.boot((S) => {
+  const p = S.props, u = S.u, padX = 2 * 3 * u + 0.9 * u, padY = 2 * 2.2 * u;
+  $("caption").textContent = VF.req(p.caption, "caption");
+  $("credit").textContent = VF.opt(p.credit, "");
+  let creditH = 0;
+  if ($("credit").textContent) { VF.fitText($("credit"), S.box.w, S.box.h * 0.08, 2.2 * u, 1.4 * u); creditH = $("credit").offsetHeight + 1.2 * u; }
+  else $("credit").style.display = "none";
+  VF.fitText($("caption"), S.box.w - padX, Math.min(S.box.h * 0.4, S.box.h - creditH) - padY, 6 * u, 2 * u);
+}, (t, S) => {
+  const u = S.u, a = VF.enter(t, S, 0.1), c = VF.enter(t, S, 0.1 + S.stagger), x = VF.exit(t, S);
+  $("img").style.transform = `scale(${VF.lerp(1.0, 1.08, t / S.duration)})`;
+  VF.show($("card"), a, `translateY(${(1 - a) * 5 * u}px)`);
+  VF.show($("credit"), c);
+  VF.show($("safe"), 1 - x);
+});
+</script>
+</body></html>

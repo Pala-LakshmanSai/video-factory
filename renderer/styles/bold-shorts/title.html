@@ -1,0 +1,38 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#slab{position:absolute;left:-10%;width:120%;top:58%;height:calc(var(--u)*22);background:var(--accent);opacity:.12;transform-origin:left center}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
+.safe>*{flex:none;margin:0;max-width:100%}
+#kicker{background:var(--accent);color:var(--bg);text-transform:uppercase;padding:.2em .6em;line-height:1.15;margin-bottom:calc(var(--u)*3);box-sizing:border-box}
+#title{width:100%;font-family:var(--display);font-weight:var(--wd);text-transform:uppercase;line-height:.95;letter-spacing:.01em}
+#bar{width:calc(var(--u)*30);max-width:60%;height:calc(var(--u)*1.6);background:var(--accent);margin:calc(var(--u)*3) 0}
+#subtitle{width:100%;color:var(--accent);text-transform:uppercase;line-height:1.2}
+</style></head>
+<body>
+<div id="slab"></div>
+<div class="safe" id="safe"><p id="kicker"></p><h1 id="title"></h1><div id="bar"></div><p id="subtitle"></p></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+VF.boot((S) => {
+  const p = S.props, W = S.box.w, H = S.box.h, u = S.u;
+  $("title").textContent = VF.req(p.title, "title");
+  $("kicker").textContent = VF.opt(p.kicker, "");
+  $("subtitle").textContent = VF.opt(p.subtitle, "");
+  if ($("kicker").textContent) VF.fitText($("kicker"), W, H * 0.1, 4 * u, 1.8 * u); else $("kicker").style.display = "none";
+  if ($("subtitle").textContent) VF.fitText($("subtitle"), W, H * 0.18, 5 * u, 2 * u); else $("subtitle").style.display = "none";
+  VF.fitText($("title"), W, H * 0.58, 26 * u, 4 * u);
+}, (t, S) => {
+  const st = S.stagger, x = VF.exit(t, S);
+  const k = VF.enter(t, S, 0), ti = VF.enter(t, S, st), b = VF.enter(t, S, 2 * st), s = VF.enter(t, S, 3 * st);
+  VF.show($("kicker"), k, `scale(${VF.lerp(0.6, 1, k)})`);
+  VF.show($("title"), ti, `scale(${VF.lerp(1.2, 1, ti)})`);
+  $("bar").style.transform = b === 1 ? "" : `scaleX(${Math.max(0, b)})`;
+  VF.show($("subtitle"), s, `translateY(${(1 - s) * 0.6}em)`);
+  VF.show($("safe"), 1 - x, `scale(${1 + x * 0.15})`);
+  $("slab").style.transform = `skewY(-8deg) scaleX(${VF.clamp(VF.enter(t, S, 0), 0, 1)})`;
+});
+</script>
+</body></html>

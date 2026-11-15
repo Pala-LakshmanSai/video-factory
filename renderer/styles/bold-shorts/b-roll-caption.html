@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#media{position:absolute;inset:0;overflow:hidden;background:
+  repeating-linear-gradient(-35deg, color-mix(in srgb, var(--accent) 14%, transparent) 0 calc(var(--u)*3), transparent calc(var(--u)*3) calc(var(--u)*9)),
+  radial-gradient(circle at 50% 40%, #2a2a2a 0, var(--bg) 70%)}
+#img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;filter:saturate(1.15) contrast(1.05)}
+#shade{position:absolute;inset:0;background:linear-gradient(transparent 35%, rgba(0,0,0,.55))}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:flex-end;align-items:center;text-align:center}
+.safe>*{flex:none;margin:0;max-width:100%}
+#caption{width:100%;font-family:var(--display);font-weight:var(--wd);text-transform:uppercase;line-height:1.18;margin-bottom:8%}
+#capline{background:var(--bg);color:var(--fg);padding:.04em .25em;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+#credit{color:var(--muted);text-transform:uppercase;letter-spacing:.08em;line-height:1.2}
+</style></head>
+<body>
+<div id="media"><img id="img" alt=""></div><div id="shade"></div>
+<div class="safe" id="safe"><p id="caption"><span id="capline"></span></p><p id="credit"></p></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+// Only data: image URIs are accepted (no network at render time); anything else falls back to the backdrop.
+const src = (window.__scene && window.__scene.props && window.__scene.props.image) || "";
+if (typeof src === "string" && /^data:image\//i.test(src)) { $("img").src = src; $("img").style.display = "block"; }
+VF.boot((S) => {
+  const p = S.props, u = S.u, W = S.box.w, H = S.box.h;
+  $("capline").textContent = VF.req(p.caption, "caption");
+  $("credit").textContent = VF.opt(p.credit, "");
+  let used = 0;
+  if ($("credit").textContent) { VF.fitText($("credit"), W, H * 0.06, 2.2 * u, 1.3 * u); used = $("credit").offsetHeight; }
+  else $("credit").style.display = "none";
+  // the caption keeps an 8% bottom margin (of box width) above the credit
+  VF.fitText($("caption"), W, Math.min(H * 0.5, H - used - W * 0.08), 16 * u, 3.5 * u);
+}, (t, S) => {
+  const a = VF.enter(t, S, 0.05), c = VF.enter(t, S, 0.05 + 2 * S.stagger), x = VF.exit(t, S);
+  $("img").style.transform = `scale(${VF.lerp(1.12, 1.0, t / S.duration)})`;
+  VF.show($("caption"), a, `scale(${VF.lerp(0.7, 1, a)})`);
+  VF.show($("credit"), c);
+  VF.show($("safe"), 1 - x, `scale(${1 + x * 0.12})`);
+});
+</script>
+</body></html>

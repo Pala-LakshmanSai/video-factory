@@ -1,0 +1,13 @@
+{
+  "style": "explainer",
+  "fps": 30,
+  "resolution": "1920x1080",
+  "scenes": [
+    {"n": 1, "template": "title", "props": {"kicker": "Kitchen physics", "title": "Why Hot Tea Cools So Fast", "subtitle": "Three ways heat escapes your cup"}, "duration_s": 5.0, "narration": "Ever wondered why your tea goes cold so quickly? Let's find out.", "transition": "fade"},
+    {"n": 2, "template": "kinetic-text", "props": {"text": "Heat always flows from hot to cold", "emphasis": ["hot", "cold"]}, "duration_s": 5.0, "narration": "First, a simple rule: heat always flows from hot things to cold things.", "transition": "slide"},
+    {"n": 3, "template": "list", "props": {"heading": "Where the heat goes", "items": ["Evaporation from the surface", "Conduction into the cup", "Radiation into the room"]}, "duration_s": 7.5, "narration": "Your tea loses heat three ways: steam off the top, warmth into the cup, and radiation into the room.", "transition": "slide"},
+    {"n": 4, "template": "b-roll-caption", "props": {"caption": "Evaporation does most of the work in the first few minutes"}, "duration_s": 5.5, "narration": "Evaporation is the big one. Each escaping molecule carries a lot of energy away.", "transition": "fade"},
+    {"n": 5, "template": "quote", "props": {"quote": "Nothing in life is to be feared, it is only to be understood.", "author": "Marie Curie", "role": "Physicist and chemist"}, "duration_s": 7.0, "narration": "As Marie Curie put it, nothing in life is to be feared, it is only to be understood.", "transition": "fade"},
+    {"n": 6, "template": "end-card", "props": {"title": "Thanks for watching!", "cta": "Subscribe for more kitchen science", "handle": "@kitchenphysics"}, "duration_s": 3.5, "narration": "Thanks for watching, and subscribe for more kitchen science.", "transition": "cut"}
+  ]
+}

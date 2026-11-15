@@ -1,0 +1,50 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#media{position:absolute;inset:0;overflow:hidden;background:
+  radial-gradient(ellipse at 30% 35%, color-mix(in srgb, var(--accent) 22%, transparent) 0, transparent 55%),
+  radial-gradient(ellipse at 80% 70%, color-mix(in srgb, var(--muted) 18%, transparent) 0, transparent 50%), var(--bg)}
+#img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;filter:saturate(.8) contrast(1.05) sepia(.12)}
+#black{position:absolute;inset:0;background:#000}
+#scrim{position:absolute;inset:0;background:linear-gradient(transparent 45%, rgba(0,0,0,.7)), radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.5) 100%)}
+.bar{position:absolute;left:0;right:0;height:calc(var(--H) * .1);background:#000}
+#bt{top:0}#bb{bottom:0}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start}
+.safe>*{flex:none;margin:0;max-width:100%}
+#caption{width:100%;font-family:var(--display);font-weight:var(--wb);line-height:1.3;text-shadow:0 0 .6em rgba(0,0,0,.6)}
+#credit{margin-top:calc(var(--u)*1.6);color:var(--accent);text-transform:uppercase;letter-spacing:.2em;line-height:1.3}
+</style></head>
+<body>
+<div id="media"><img id="img" alt=""></div><div id="scrim"></div><div id="black"></div>
+<div class="safe" id="safe"><p id="caption"></p><p id="credit"></p></div>
+<div class="bar" id="bt"></div><div class="bar" id="bb"></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+// Only data: image URIs are accepted (no network at render time); anything else falls back to the backdrop.
+const src = (window.__scene && window.__scene.props && window.__scene.props.image) || "";
+if (typeof src === "string" && /^data:image\//i.test(src)) { $("img").src = src; $("img").style.display = "block"; }
+VF.boot((S) => {
+  const p = S.props, u = S.u, W = S.box.w, H = S.box.h;
+  $("caption").textContent = VF.req(p.caption, "caption");
+  $("credit").textContent = VF.opt(p.credit, "");
+  let used = 0;
+  if ($("credit").textContent) { VF.fitText($("credit"), W, H * 0.08, 1.9 * u, 1.2 * u); used = $("credit").offsetHeight + 1.6 * u; }
+  else $("credit").style.display = "none";
+  // caption sits in the lower part of the frame, at most ~2/3 of the safe width on landscape
+  const cw = S.portrait ? W : W * 0.66;
+  $("caption").style.width = cw + "px";
+  VF.fitText($("caption"), cw, Math.min(H * 0.4, H - used), 4.6 * u, 1.8 * u);
+}, (t, S) => {
+  // Ken Burns push-in and fade up from black
+  $("img").style.transform = `scale(${VF.lerp(1.0, 1.06, t / S.duration)})`;
+  $("media").style.transform = $("img").style.display === "none" ? `scale(${VF.lerp(1.0, 1.06, t / S.duration)})` : "";
+  const f = VF.enter(t, S, 0), x = VF.exit(t, S);
+  $("black").style.opacity = Math.max(1 - f, x * 0.85);
+  VF.show($("caption"), VF.enter(t, S, S.stagger * 1.5));
+  VF.show($("credit"), VF.enter(t, S, S.stagger * 2.5));
+  VF.show($("safe"), 1 - x);
+});
+</script>
+</body></html>

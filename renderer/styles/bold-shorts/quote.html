@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:flex-start}
+.safe>*{flex:none;margin:0;max-width:100%}
+#mark{height:calc(var(--u)*11);font-family:var(--display);color:var(--accent);font-size:calc(var(--u)*24);line-height:1;overflow:visible;transform-origin:left top}
+#quote{width:100%;font-family:var(--display);font-weight:var(--wd);text-transform:uppercase;line-height:1.02}
+#attr{margin-top:calc(var(--u)*3);border-left:calc(var(--u)*1.2) solid var(--accent);padding-left:.6em;line-height:1.2;text-transform:uppercase}
+#author{color:var(--accent)}
+#role{color:var(--muted);display:block}
+</style></head>
+<body>
+<div class="safe" id="safe"><div id="mark" data-deco aria-hidden="true">&ldquo;</div><p id="quote"></p><p id="attr"><span id="author"></span><span id="role"></span></p></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+VF.boot((S) => {
+  const p = S.props, u = S.u, W = S.box.w;
+  $("quote").textContent = VF.req(p.quote, "quote");
+  $("author").textContent = VF.opt(p.author, "");
+  $("role").textContent = VF.opt(p.role, "");
+  let used = 11 * u;
+  if ($("author").textContent || $("role").textContent) { VF.fitText($("attr"), W, S.box.h * 0.16, 4.2 * u, 1.8 * u); used += $("attr").offsetHeight + 3 * u; }
+  else $("attr").style.display = "none";
+  VF.fitText($("quote"), W, S.box.h - used, 16 * u, 3 * u);
+}, (t, S) => {
+  const m = VF.enter(t, S, 0), q = VF.enter(t, S, S.stagger), a = VF.enter(t, S, S.inD + S.stagger), x = VF.exit(t, S);
+  VF.show($("mark"), m, `scale(${VF.lerp(0.3, 1, m)}) rotate(${(1 - m) * -20}deg)`);
+  VF.show($("quote"), q, `translateY(${(1 - q) * 0.5}em)`);
+  VF.show($("attr"), a, `translateX(${(1 - a) * -10}%)`);
+  VF.show($("safe"), 1 - x, `scale(${1 - x * 0.1})`);
+});
+</script>
+</body></html>

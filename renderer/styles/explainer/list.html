@@ -1,0 +1,51 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center}
+.safe>*{flex:none;margin:0;width:100%}
+#heading{font-family:var(--display);font-weight:var(--wd);line-height:1.1;letter-spacing:-.01em;margin-bottom:calc(var(--u)*3.5)}
+#items{list-style:none;padding:0;line-height:1.25}
+#items li{display:flex;align-items:flex-start;gap:.6em;margin:0 0 .55em}
+#items li:last-child{margin-bottom:0}
+.num{flex:none;width:1.5em;height:1.5em;margin-top:-.12em;border-radius:50%;background:var(--accent);color:var(--bg);font-weight:var(--wd);font-size:.9em;display:flex;align-items:center;justify-content:center}
+.txt{flex:1;min-width:0}
+</style></head>
+<body>
+<div class="safe" id="safe"><h2 id="heading"></h2><ul id="items"></ul></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let rows = [];
+VF.boot((S) => {
+  const p = S.props, u = S.u;
+  let items = VF.list(p.items).slice(0, 6);
+  if (!items.length) items = ["[missing items]"];
+  items.forEach((txt, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = '<span class="num"></span><span class="txt"></span>';
+    li.firstChild.textContent = String(i + 1);
+    li.lastChild.textContent = txt;
+    $("items").appendChild(li);
+  });
+  rows = Array.from($("items").children);
+  $("heading").textContent = VF.opt(p.heading, "");
+  let used = 0;
+  if ($("heading").textContent) {
+    VF.fitText($("heading"), S.box.w, S.box.h * 0.22, 8 * u, 2.4 * u);
+    used = $("heading").offsetHeight + 3.5 * u;
+  } else $("heading").style.display = "none";
+  VF.fitText($("items"), S.box.w, S.box.h - used, 6 * u, 1.8 * u);
+}, (t, S) => {
+  const u = S.u, n = rows.length;
+  const step = Math.max(S.stagger, (0.6 * Math.max(0, S.duration - S.inD - S.outD)) / n);
+  const h = VF.enter(t, S, 0);
+  VF.show($("heading"), h, `translateY(${(1 - h) * 3 * u}px)`);
+  rows.forEach((r, i) => {
+    const a = VF.enter(t, S, S.inD * 0.5 + i * step);
+    VF.show(r, a, `translateX(${(1 - a) * -4 * u}px)`);
+  });
+  VF.show($("safe"), 1 - VF.exit(t, S));
+});
+</script>
+</body></html>

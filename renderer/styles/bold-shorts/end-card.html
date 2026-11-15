@@ -1,0 +1,41 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--bg);font-family:var(--body);font-weight:var(--wb)}
+#panel{position:absolute;inset:0;background:var(--accent)}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
+.safe>*{flex:none;margin:0;max-width:100%}
+#title{width:100%;font-family:var(--display);font-weight:var(--wd);text-transform:uppercase;line-height:.95}
+#cta{margin-top:calc(var(--u)*4);background:var(--bg);color:var(--accent);text-transform:uppercase;padding:.45em 1em;line-height:1.15;box-sizing:border-box}
+#handle{margin-top:calc(var(--u)*3);line-height:1.2}
+</style></head>
+<body>
+<div id="panel"></div>
+<div class="safe" id="safe"><h1 id="title"></h1><p id="cta"></p><p id="handle"></p></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+VF.boot((S) => {
+  const p = S.props, u = S.u, W = S.box.w, H = S.box.h;
+  $("title").textContent = VF.opt(p.title, "Follow for more");
+  $("cta").textContent = VF.opt(p.cta, "Like & share");
+  $("handle").textContent = VF.opt(p.handle, "");
+  let used = 0;
+  if ($("handle").textContent) { VF.fitText($("handle"), W, H * 0.1, 4.5 * u, 1.8 * u); used += $("handle").offsetHeight + 3 * u; }
+  else $("handle").style.display = "none";
+  VF.fitText($("cta"), W, H * 0.18, 5 * u, 1.8 * u);
+  used += $("cta").offsetHeight + 4 * u;
+  VF.fitText($("title"), W, H - used, 26 * u, 4 * u);
+}, (t, S) => {
+  const st = S.stagger, pn = VF.clamp(VF.enter(t, S, 0), 0, 1);
+  $("panel").style.transform = pn === 1 ? "" : `translateY(${(1 - pn) * 100}%)`;
+  const ti = VF.enter(t, S, st * 2), c = VF.enter(t, S, st * 3), h = VF.enter(t, S, st * 4);
+  VF.show($("title"), ti, `scale(${VF.lerp(1.5, 1, ti)})`);
+  VF.show($("cta"), c, `scale(${VF.lerp(0.4, 1, c)})`);
+  VF.show($("handle"), h);
+  // gentle pulse on the CTA after it lands, purely from t
+  if (c === 1) $("cta").style.transform = `scale(${1 + 0.04 * Math.sin(t * Math.PI * 2 * 0.8) ** 2})`;
+  VF.show($("safe"), 1 - VF.exit(t, S));
+});
+</script>
+</body></html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#edge{position:absolute;left:0;top:0;bottom:0;width:calc(var(--u)*1.6);background:var(--accent);transform-origin:top center}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:center}
+#text{flex:none;margin:0;width:100%;text-align:center;font-family:var(--display);font-weight:var(--wd);text-transform:uppercase;line-height:1.02;letter-spacing:.01em}
+#text span{display:inline-block;padding:0 .06em}
+#text .em{background:var(--accent);color:var(--bg)}
+#text .now:not(.em){color:var(--accent)}
+</style></head>
+<body>
+<div id="edge"></div>
+<div class="safe" id="safe"><p id="text"></p></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const box = document.getElementById("text");
+let words = [];
+VF.boot((S) => {
+  const text = VF.req(S.props.text, "text");
+  const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+  const emph = new Set(VF.list(S.props.emphasis).flatMap((e) => e.split(/\s+/)).map(norm).filter(Boolean));
+  // CJK text without spaces is revealed character by character.
+  let parts = text.split(/\s+/).filter(Boolean), sep = " ";
+  if (parts.length === 1 && /[぀-ヿ㐀-鿿가-힯]/.test(text)) { parts = Array.from(text); sep = ""; }
+  parts.forEach((w, i) => {
+    const s = document.createElement("span");
+    s.textContent = w;
+    if (emph.has(norm(w))) s.className = "em";
+    box.appendChild(s);
+    if (sep && i < parts.length - 1) box.appendChild(document.createTextNode(sep));
+  });
+  words = Array.from(box.querySelectorAll("span"));
+  VF.fitText(box, S.box.w, S.box.h, 24 * S.u, 4 * S.u);
+}, (t, S) => {
+  const span = Math.max(0, S.duration - S.outD - S.inD), n = words.length;
+  let newest = -1;
+  words.forEach((w, i) => {
+    const start = (span * i) / n, a = VF.enter(t, S, start);
+    if (t >= start) newest = i;
+    VF.show(w, a, `scale(${VF.lerp(1.6, 1, a)})`);
+  });
+  words.forEach((w, i) => w.classList.toggle("now", i === newest && n > 1));
+  const e = VF.clamp(VF.enter(t, S, 0), 0, 1);
+  document.getElementById("edge").style.transform = e === 1 ? "" : `scaleY(${e})`;
+  const x = VF.exit(t, S);
+  VF.show(document.getElementById("safe"), 1 - x, `translateY(${-x * 6 * S.u}px)`);
+});
+</script>
+</body></html>

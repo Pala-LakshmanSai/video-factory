@@ -90,3 +90,9 @@ Faults that must be in place before the pod exists (`slow_boot`, `price_cap`, `b
 ## Status page
 
 `<URL>/admin/status` (GitHub sign-in): live jobs, pods, today's spend.
+
+## Golden references (one-time)
+
+The golden preview test skips until reference JPEGs exist. They must come from Linux with the CI fonts:
+run the `renderer` workflow once, download the `golden-diffs` artifact (or run the tests in the image with
+`GOLDEN_WRITE=1`), copy `golden/<style>/*.jpg` into `renderer/test/golden/<style>/` and commit.

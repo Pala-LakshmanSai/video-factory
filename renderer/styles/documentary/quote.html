@@ -1,0 +1,48 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--accent) 8%, transparent) 0, transparent 60%), radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.6) 100%)}
+.bar{position:absolute;left:0;right:0;height:calc(var(--H) * .1);background:#000}
+#bt{top:0}#bb{bottom:0}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:1%;box-sizing:border-box}
+.safe>*{flex:none;margin:0;max-width:100%}
+#mark{height:calc(var(--u)*9);font-family:var(--display);color:var(--accent);font-size:calc(var(--u)*16);line-height:1}
+#quote{width:100%;font-family:var(--display);font-style:italic;font-weight:var(--wb);line-height:1.35}
+#rule{width:calc(var(--u)*8);height:max(1px, calc(var(--u)*.18));background:var(--accent);margin:calc(var(--u)*3) 0}
+#author{width:100%;text-transform:uppercase;letter-spacing:.22em;line-height:1.3}
+#role{width:100%;color:var(--muted);font-style:italic;line-height:1.3;margin-top:.3em}
+</style></head>
+<body>
+<div id="vig"></div>
+<div class="safe" id="safe"><div id="mark" data-deco aria-hidden="true">&ldquo;</div><p id="quote"></p><div id="rule"></div><p id="author"></p><p id="role"></p></div>
+<div class="bar" id="bt"></div><div class="bar" id="bb"></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+VF.boot((S) => {
+  const p = S.props, u = S.u, W = S.box.w * 0.98, H = S.box.h - S.box.w * 0.02;
+  $("quote").textContent = VF.req(p.quote, "quote");
+  $("author").textContent = VF.opt(p.author, "");
+  $("role").textContent = VF.opt(p.role, "");
+  let used = 9 * u;
+  if ($("author").textContent) { VF.fitText($("author"), W, H * 0.08, 2.6 * u, 1.3 * u); used += $("author").offsetHeight; }
+  else $("author").style.display = "none";
+  if ($("role").textContent) { VF.fitText($("role"), W, H * 0.08, 2.4 * u, 1.3 * u); used += $("role").offsetHeight + 0.3 * 2.4 * u; }
+  else $("role").style.display = "none";
+  if (!$("author").textContent && !$("role").textContent) $("rule").style.display = "none"; else used += 6.2 * u;
+  VF.fitText($("quote"), W, H - used, 6.5 * u, 2 * u);
+}, (t, S) => {
+  const st = S.stagger;
+  VF.show($("mark"), VF.enter(t, S, 0));
+  VF.show($("quote"), VF.enter(t, S, st));
+  const r = VF.enter(t, S, 2 * st);
+  $("rule").style.transform = r === 1 ? "" : `scaleX(${r})`;
+  VF.show($("author"), VF.enter(t, S, 2.5 * st));
+  VF.show($("role"), VF.enter(t, S, 3 * st));
+  const x = VF.exit(t, S), safe = $("safe");
+  safe.style.opacity = x > 0 ? 1 - x : "";
+  safe.style.transform = `scale(${1 + 0.02 * (t / S.duration)})`;
+});
+</script>
+</body></html>

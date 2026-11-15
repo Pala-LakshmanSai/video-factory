@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#dot{position:absolute;width:calc(var(--u)*50);height:calc(var(--u)*50);border-radius:50%;background:var(--accent);opacity:.08;left:calc(var(--u)*-14);top:calc(var(--u)*-14)}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:center}
+#text{flex:none;margin:0;width:100%;text-align:center;font-family:var(--display);font-weight:var(--wd);line-height:1.15;letter-spacing:-.01em}
+#text span{display:inline-block}
+#text .em{color:var(--accent);background:linear-gradient(transparent 62%, color-mix(in srgb, var(--accent) 22%, transparent) 62%)}
+</style></head>
+<body>
+<div id="dot"></div>
+<div class="safe" id="safe"><p id="text"></p></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const box = document.getElementById("text");
+let words = [];
+VF.boot((S) => {
+  const text = VF.req(S.props.text, "text");
+  const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+  const emph = new Set(VF.list(S.props.emphasis).flatMap((e) => e.split(/\s+/)).map(norm).filter(Boolean));
+  // CJK text without spaces is revealed character by character.
+  let parts = text.split(/\s+/).filter(Boolean), sep = " ";
+  if (parts.length === 1 && /[぀-ヿ㐀-鿿가-힯]/.test(text)) { parts = Array.from(text); sep = ""; }
+  parts.forEach((w, i) => {
+    const s = document.createElement("span");
+    s.textContent = w;
+    if (emph.has(norm(w))) s.className = "em";
+    box.appendChild(s);
+    if (sep && i < parts.length - 1) box.appendChild(document.createTextNode(sep));
+  });
+  words = Array.from(box.querySelectorAll("span"));
+  VF.fitText(box, S.box.w, S.box.h, 11 * S.u, 2.4 * S.u);
+}, (t, S) => {
+  const span = Math.max(0, S.duration - S.outD - S.inD), n = words.length;
+  words.forEach((w, i) => {
+    const a = VF.enter(t, S, (span * i) / n);
+    VF.show(w, a, `translateY(${(1 - a) * 0.35}em)`);
+  });
+  const x = VF.exit(t, S);
+  VF.show(document.getElementById("safe"), 1 - x);
+  document.getElementById("dot").style.transform = `scale(${1 + t * 0.02})`;
+});
+</script>
+</body></html>

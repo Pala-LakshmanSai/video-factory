@@ -133,7 +133,7 @@ async function shot(page: Page, errors: string[], sceneN: number, t: number): Pr
 }
 
 const launch = () =>
-	chromium.launch({ args: ["--font-render-hinting=none", "--force-color-profile=srgb", "--disable-lcd-text", "--hide-scrollbars"] });
+	chromium.launch({ args: ["--disable-gpu", "--font-render-hinting=none", "--force-color-profile=srgb", "--disable-lcd-text", "--hide-scrollbars"] });
 
 /** 3 key frames per scene, 1280 px on the long side, JPEG < 500 KB. Returns {"scene-n-idx": jpeg}. */
 export async function renderPreviews(inp: RenderInput, onlyScenes?: number[]): Promise<Map<string, Buffer>> {

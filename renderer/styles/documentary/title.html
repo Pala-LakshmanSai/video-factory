@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--accent) 10%, transparent) 0, transparent 60%), radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%)}
+.bar{position:absolute;left:0;right:0;height:calc(var(--H) * .1);background:#000}
+#bt{top:0}#bb{bottom:0}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:1%;box-sizing:border-box}
+.safe>*{flex:none;margin:0;max-width:100%}
+#kicker{color:var(--accent);text-transform:uppercase;letter-spacing:.3em;line-height:1.3;margin-bottom:calc(var(--u)*3)}
+#title{width:100%;font-family:var(--display);font-weight:var(--wd);line-height:1.12;letter-spacing:.01em}
+#rule{width:calc(var(--u)*24);max-width:50%;height:max(1px, calc(var(--u)*.18));background:var(--accent);margin:calc(var(--u)*3.5) 0}
+#subtitle{width:100%;font-style:italic;color:var(--muted);line-height:1.35}
+</style></head>
+<body>
+<div id="vig"></div>
+<div class="safe" id="safe"><p id="kicker"></p><h1 id="title"></h1><div id="rule"></div><p id="subtitle"></p></div>
+<div class="bar" id="bt"></div><div class="bar" id="bb"></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+VF.boot((S) => {
+  const p = S.props, W = S.box.w * 0.98, H = S.box.h - S.box.w * 0.02, u = S.u; // .safe has 1% padding: headroom for the slow push-in
+  $("title").textContent = VF.req(p.title, "title");
+  $("kicker").textContent = VF.opt(p.kicker, "");
+  $("subtitle").textContent = VF.opt(p.subtitle, "");
+  if ($("kicker").textContent) VF.fitText($("kicker"), W, H * 0.1, 2.6 * u, 1.4 * u); else $("kicker").style.display = "none";
+  if ($("subtitle").textContent) VF.fitText($("subtitle"), W, H * 0.2, 4 * u, 1.6 * u); else $("subtitle").style.display = "none";
+  VF.fitText($("title"), W, H * 0.5, 11 * u, 2.6 * u);
+}, (t, S) => {
+  const st = S.stagger, k = VF.enter(t, S, 0), ti = VF.enter(t, S, st), r = VF.enter(t, S, 2 * st), s = VF.enter(t, S, 2.5 * st);
+  VF.show($("kicker"), k);
+  VF.show($("title"), ti, `translateY(${(1 - ti) * 1.5 * S.u}px)`);
+  $("rule").style.transform = r === 1 ? "" : `scaleX(${r})`;
+  VF.show($("subtitle"), s);
+  // slow drift across the whole scene, then a fade to black
+  const x = VF.exit(t, S);
+  $("safe").style.opacity = x > 0 ? 1 - x : "";
+  $("safe").style.transform = `scale(${1 + 0.02 * (t / S.duration)})`;
+});
+</script>
+</body></html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+.blob{position:absolute;border-radius:50%;background:var(--accent)}
+#b1{width:calc(var(--u)*70);height:calc(var(--u)*70);right:calc(var(--u)*-18);top:calc(var(--u)*-22);opacity:.10}
+#b2{width:calc(var(--u)*34);height:calc(var(--u)*34);left:calc(var(--u)*-10);bottom:calc(var(--u)*-12);opacity:.07}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center;align-items:flex-start}
+.safe>*{flex:none;margin:0;max-width:100%}
+#kicker{margin-bottom:.5em !important;color:var(--accent);font-weight:var(--wd);text-transform:uppercase;letter-spacing:.12em;line-height:1.2}
+#title{font-family:var(--display);font-weight:var(--wd);line-height:1.05;letter-spacing:-.02em;width:100%}
+#bar{height:calc(var(--u)*1.1);width:calc(var(--u)*16);background:var(--accent);border-radius:99px;transform-origin:left center;margin:calc(var(--u)*3) 0}
+#subtitle{color:var(--muted);line-height:1.3;width:100%}
+</style></head>
+<body>
+<div class="blob" id="b1"></div><div class="blob" id="b2"></div>
+<div class="safe" id="safe"><p id="kicker"></p><h1 id="title"></h1><div id="bar"></div><p id="subtitle"></p></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const el = { kicker: $("kicker"), title: $("title"), bar: $("bar"), subtitle: $("subtitle") };
+VF.boot((S) => {
+  const p = S.props, W = S.box.w, H = S.box.h, u = S.u;
+  el.title.textContent = VF.req(p.title, "title");
+  el.kicker.textContent = VF.opt(p.kicker, "");
+  el.subtitle.textContent = VF.opt(p.subtitle, "");
+  if (!el.kicker.textContent) el.kicker.style.display = "none";
+  if (!el.subtitle.textContent) el.subtitle.style.display = "none";
+  if (el.kicker.textContent) VF.fitText(el.kicker, W, H * 0.1, 3.4 * u, 1.6 * u);
+  VF.fitText(el.title, W, H * 0.55, 15 * u, 3 * u);
+  if (el.subtitle.textContent) VF.fitText(el.subtitle, W, H * 0.2, 5 * u, 1.8 * u);
+}, (t, S) => {
+  const u = S.u, st = S.stagger, x = VF.exit(t, S);
+  const show = (e, a) => VF.show(e, a, `translateY(${(1 - a) * 4 * u}px)`);
+  show(el.kicker, VF.enter(t, S, 0));
+  show(el.title, VF.enter(t, S, st));
+  const bar = VF.enter(t, S, 2 * st);
+  el.bar.style.transform = bar === 1 ? "" : `scaleX(${bar})`;
+  show(el.subtitle, VF.enter(t, S, 3 * st));
+  VF.show($("safe"), 1 - x, `translateY(${-x * 3 * u}px)`);
+  const b = VF.enter(t, S, 0);
+  $("b1").style.transform = `scale(${VF.lerp(0.6, 1, b) + t * 0.01})`;
+  $("b2").style.transform = `scale(${VF.lerp(0.6, 1, b) + t * 0.015})`;
+});
+</script>
+</body></html>

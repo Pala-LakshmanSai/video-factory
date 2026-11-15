@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;width:var(--W);height:var(--H);overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body);font-weight:var(--wb)}
+.safe{position:absolute;left:var(--sx);top:var(--sy);width:var(--sw);height:var(--sh);display:flex;flex-direction:column;justify-content:center}
+#wrap{position:relative;padding-left:calc(var(--u)*4.5)}
+#rule{position:absolute;left:0;top:0;bottom:0;width:calc(var(--u)*1);border-radius:99px;background:var(--accent);transform-origin:top center}
+#quote{margin:0;font-family:var(--display);font-weight:var(--wd);line-height:1.2;letter-spacing:-.01em}
+#attr{margin:calc(var(--u)*3) 0 0;line-height:1.3}
+#author{font-weight:var(--wd)}
+#role{color:var(--muted)}
+</style></head>
+<body>
+<div class="safe" id="safe"><div id="wrap"><div id="rule"></div><p id="quote"></p><p id="attr"><span id="author"></span><span id="role"></span></p></div></div>
+<script src="../_shared/runtime.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+VF.boot((S) => {
+  const p = S.props, u = S.u, w = S.box.w - 4.5 * u;
+  $("quote").textContent = "“" + VF.req(p.quote, "quote") + "”";
+  const author = VF.opt(p.author, ""), role = VF.opt(p.role, "");
+  $("author").textContent = author ? "— " + author : "";
+  $("role").textContent = role ? (author ? ", " : "— ") + role : "";
+  let used = 0;
+  if (author || role) { VF.fitText($("attr"), w, S.box.h * 0.15, 3.6 * u, 1.6 * u); used = $("attr").offsetHeight + 3 * u; }
+  else $("attr").style.display = "none";
+  VF.fitText($("quote"), w, S.box.h - used, 8 * u, 2.2 * u);
+}, (t, S) => {
+  const u = S.u, r = VF.enter(t, S, 0), q = VF.enter(t, S, S.stagger), a = VF.enter(t, S, S.inD + S.stagger);
+  $("rule").style.transform = r === 1 ? "" : `scaleY(${r})`;
+  VF.show($("quote"), q, `translateY(${(1 - q) * 3 * u}px)`);
+  VF.show($("attr"), a);
+  VF.show($("safe"), 1 - VF.exit(t, S));
+});
+</script>
+</body></html>
