@@ -68,7 +68,7 @@ beforeEach(async () => {
 	calls = mockFetch(
 		(u) => (u.includes("/v2/catalog/datacenters") ? json(catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" } })) : undefined),
 		async (u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? (await podGate, json({ id: `pod${++podN}`, costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201)) : undefined),
-		(u, i) => (u.startsWith("https://rest.runpod.io/v1/pods/") && i.method === "DELETE" ? json({}) : undefined),
+		(u, i) => (/runpod\.io\/v[12]\/pods\//.test(u) && i.method === "DELETE" ? json({}) : undefined),
 	);
 	const init = await rpc("initialize", { protocolVersion: PROTO, capabilities: {}, clientInfo: { name: "claude-test", version: "1" } });
 	expect(init.result).toMatchObject({ protocolVersion: PROTO, capabilities: { tools: {} }, serverInfo: { name: "Video Factory" } });

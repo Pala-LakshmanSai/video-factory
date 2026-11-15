@@ -118,7 +118,7 @@ export async function startHarness() {
 			createBodies.push(JSON.parse(init.body as string));
 			return json({ id: `pod${createBodies.length}`, costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201);
 		}
-		if (url.startsWith("https://rest.runpod.io/v1/pods/") && method === "DELETE") {
+		if (/runpod\.io\/v[12]\/pods\//.test(url) && method === "DELETE") {
 			deleted.push(url.split("/").at(-1)!);
 			return json({});
 		}

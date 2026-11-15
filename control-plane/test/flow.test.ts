@@ -35,7 +35,7 @@ function fakeCloud() {
 				return json({ id: `pod${++podN}`, costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: dc } }, 201);
 			}
 		},
-		(u, i) => (u.startsWith("https://rest.runpod.io/v1/pods/") && i.method === "DELETE" ? json({}) : undefined),
+		(u, i) => (/runpod\.io\/v[12]\/pods\//.test(u) && i.method === "DELETE" ? json({}) : undefined),
 		(u) => (u === "https://oauth2.googleapis.com/token" ? json({ access_token: "at", expires_in: 3599 }) : undefined),
 		(u) => (u.startsWith("https://www.googleapis.com/upload/") ? new Response(null, { status: 200, headers: { Location: "https://upload.test/session1" } }) : undefined),
 		(u) => (u.includes("/files/f1?fields") ? json({ size: "100", md5Checksum: driveMd5, webViewLink: "https://drive.test/f1" }) : undefined),
@@ -122,7 +122,7 @@ describe("happy path: acquire -> submit -> hello -> previews -> approve -> uploa
 		expect(job.state).toBe("done");
 		expect(job.drive_link).toBe("https://drive.test/f1");
 		expect(job.cost_usd).toBeCloseTo(0.1, 2); // 10 min at $0.60/hr
-		expect(calls.some((c) => c.url.endsWith("/v1/pods/pod1") && c.method === "DELETE")).toBe(true);
+		expect(calls.some((c) => c.url.endsWith("/v2/pods/pod1") && c.method === "DELETE")).toBe(true);
 		const done = await waitJob(env.DB, id, "done", 50);
 		expect(done.out).toMatchObject({ state: "done", drive_link: "https://drive.test/f1", gpu_minutes: 10, cost_usd: job.cost_usd });
 
@@ -184,7 +184,7 @@ describe("watchdog (fake time)", () => {
 		expect(job.state).toBe("booting");
 		expect(JSON.parse(job.skip_dcs)).toEqual(["AP-IN-1"]);
 		expect(job.gpu_label).toBe("RTX 4090 · EU-RO-1");
-		expect(calls.some((c) => c.url.endsWith("/v1/pods/pod1") && c.method === "DELETE")).toBe(true);
+		expect(calls.some((c) => c.url.endsWith("/v2/pods/pod1") && c.method === "DELETE")).toBe(true);
 	});
 
 	it("heartbeat silent 60 s while rendering -> replaced with the same plan; 3rd loss -> failed", async () => {

@@ -33,9 +33,15 @@ async function selfDestruct(reason: string): Promise<never> {
 		const id = env.RUNPOD_POD_ID;
 		const auth = { Authorization: `Bearer ${env.RUNPOD_API_KEY}` };
 		if (id && env.RUNPOD_API_KEY) {
-			const del = await fetch(`https://rest.runpod.io/v1/pods/${id}`, { method: "DELETE", headers: auth }).catch((e) => e as Error);
-			log("DELETE pod:", del instanceof Error ? del.message : del.status);
-			if (del instanceof Error || !del.ok) {
+			const gone = (r: Response | Error) => !(r instanceof Error) && (r.ok || r.status === 404);
+			let del = await fetch(`https://rest.runpod.io/v1/pods/${id}`, { method: "DELETE", headers: auth }).catch((e) => e as Error);
+			log("DELETE pod (v1):", del instanceof Error ? del.message : del.status);
+			if (!gone(del)) {
+				// Scoped keys may be refused by v1 REST; v2 terminates any pod.
+				del = await fetch(`https://api.runpod.io/v2/pods/${id}`, { method: "DELETE", headers: auth }).catch((e) => e as Error);
+				log("DELETE pod (v2):", del instanceof Error ? del.message : del.status);
+			}
+			if (!gone(del)) {
 				const stop = await fetch(`https://rest.runpod.io/v1/pods/${id}/stop`, { method: "POST", headers: auth }).catch((e) => e as Error);
 				log("POST stop:", stop instanceof Error ? stop.message : stop.status);
 			}

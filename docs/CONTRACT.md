@@ -327,6 +327,7 @@ export const ttlMinFor = (videoSeconds: number): number =>
 6. **`scene_plan` schema** — `ScenePlan` / `Scene` above. `/spec` returns the full plan (`fps`, `resolution` too) plus `voiceover`.
 7. **Error codes `drive_auth`, `pod_replacements` and `md5_mismatch`** — added beyond Prompt 1's list; Prompts 4a and 5a fail jobs with these reasons (md5 still wrong after 2 re-uploads) and Phase 7 alerts on them.
 9. **Benchmark pods** — env `BENCH=1`, `POST /agent/{job}/bench {render_s}`; jobs with `dev_mode` `bench` end `cancelled` (SPEC §9.3 re-rank).
+10. **RunPod v2 compatibility** — scoped keys can be refused by v1 REST (403) while `api.runpod.io/v2` works. Create: v1 first, and on v1 400/401/403 the same attempt goes to `POST /v2/pods`, one GPU type (or CPU flavor `{id, vcpuCount:16}`) per call in rank order. After a v1 401/403, creates skip v1 for that isolate. Delete: `DELETE /v2/pods/{id}` first (204/404 = gone), then v1 on 401/403/405. List (reaper): `GET /v2/pods` with cursor pagination, skipping TERMINATED, then v1 on 401/403. A create is never replayed blindly after a 5xx: the pod is looked up by its unique name `vf-{job_id}` and adopted if found. The pod's own self-destruct tries v1 DELETE, then v2 DELETE, then v1 stop.
 8. **Replacement after approve** — if a pod dies after `approve`, the new pod re-renders previews and the job moves straight on to `final_render` without asking Claude again (`jobs.approved`).
 
 ## Contradictions and gaps in SPEC.md
