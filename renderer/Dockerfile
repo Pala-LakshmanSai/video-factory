@@ -5,8 +5,9 @@
 
 ARG CUDA_IMAGE=nvidia/cuda:12.6.3-runtime-ubuntu22.04
 ARG NODE_VERSION=22.20.0
-# BtbN static GPL build: has both h264_nvenc and libx264. Pin a dated autobuild tag for reproducible images.
-ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz
+# BtbN static GPL build: has both h264_nvenc and libx264. Pinned to a month-end autobuild (BtbN keeps those;
+# daily ones get pruned). To bump: gh release list -R BtbN/FFmpeg-Builds, pick an autobuild-YYYY-MM-last-day tag.
+ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-8.1.tar.xz
 
 # ---- stage: ffmpeg
 FROM ubuntu:22.04 AS ffmpeg
