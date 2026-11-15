@@ -59,7 +59,9 @@ COPY renderer/engine ./engine
 COPY renderer/styles ./styles
 
 # ---- stage marker: TTS model (Kokoro-82M, downloaded once at build, offline at run time)
-RUN TTS_ALLOW_DOWNLOAD=1 node -e "import('./engine/voice.ts').then(m => m.tts('Video Factory is ready.', '/tmp/tts-warmup.wav'))" \
+# --input-type=module: plain `node -e` defines a global __dirname (".") that makes kokoro-js look for its
+# bundled voices relative to the cwd instead of its own package.
+RUN TTS_ALLOW_DOWNLOAD=1 node --input-type=module -e "const m = await import('./engine/voice.ts'); await m.tts('Video Factory is ready.', '/tmp/tts-warmup.wav')" \
  && rm -f /tmp/tts-warmup*.wav
 
 RUN useradd --create-home --uid 10001 vf && chown -R vf /app /opt/tts

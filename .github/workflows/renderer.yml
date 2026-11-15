@@ -64,7 +64,7 @@ jobs:
           docker run --rm --entrypoint ffmpeg "$IMG" -hide_banner -encoders | grep -E 'h264_nvenc|libx264'
           docker run --rm "$IMG" --selftest | tee selftest.log
           grep -q 'encoder: libx264' selftest.log
-          docker run --rm --network none --entrypoint node "$IMG" -e "import('/app/renderer/engine/voice.ts').then(m => m.tts('Offline check.', '/tmp/t.wav')).then(() => console.log('offline TTS ok'))"
+          docker run --rm --network none --entrypoint node "$IMG" --input-type=module -e "const m = await import('/app/renderer/engine/voice.ts'); await m.tts('Offline check.', '/tmp/t.wav'); console.log('offline TTS ok')"
       - if: steps.hub.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
