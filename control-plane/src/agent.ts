@@ -6,13 +6,12 @@ import type {
 } from "../../packages/contract/src/index";
 import { CONSTANTS, MAX_REUPLOADS } from "./config";
 import {
-	activePod, constantTimeEqual, getJob, jobCost, logEvent, markPodDeleted, now, plan, sha256Hex, updateJob, voiceover, type JobRow,
+	activePod, constantTimeEqual, getJob, jobCost, logEvent, now, plan, sha256Hex, updateJob, voiceover, type JobRow,
 } from "./db";
 import { DriveAuthError, createSession, fileMeta, shareAnyone, streamFile } from "./drive";
 import { recordBench } from "./bench";
 import { hasFault } from "./faults";
-import { deletePod } from "./runpod";
-import { failJob } from "./selector";
+import { failJob, retirePod } from "./selector";
 import { isTerminal, transition } from "./state";
 
 type Ctx = { Bindings: Env; Variables: { job: JobRow } };
@@ -155,8 +154,7 @@ export async function verify(env: Env, job: JobRow, body: DoneIn) {
 		await shareAnyone(env, body.file_id);
 		const pod = await activePod(db, job.id);
 		if (pod) {
-			await deletePod(env, pod.id);
-			await markPodDeleted(db, pod.id, "done");
+			await retirePod(env, db, job.id, pod.id, "done"); // unconfirmed -> stays tracked, reaper retries
 		}
 		await updateJob(db, job.id, { drive_link: meta.webViewLink, ...(await jobCost(db, job.id)) });
 		await transition(db, job, "done");

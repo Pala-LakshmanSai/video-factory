@@ -4,10 +4,10 @@
 // = $ per standard test video. Tested GPUs sorted by score, untested keep their relative order below.
 import { alert } from "./alerts";
 import { GPU_RANK, getConfig, norm, setConfig } from "./config";
-import { activePod, getJob, logEvent, markPodDeleted, now } from "./db";
+import { activePod, getJob, logEvent, now } from "./db";
 import { acquireGpu } from "./mcp";
-import { catalog, deletePod } from "./runpod";
-import { selectAndCreate } from "./selector";
+import { catalog } from "./runpod";
+import { retirePod, selectAndCreate } from "./selector";
 import { isTerminal, transition } from "./state";
 
 const BUDGET_USD = 2;
@@ -37,8 +37,7 @@ export async function startBench(env: Env, db: D1Database) {
 		const cost = (pod.cost_per_hr * EST_MIN_PER_RUN) / 60;
 		if (estimate + cost > BUDGET_USD) {
 			// Abort: this run would spend more than $2.
-			await deletePod(env, pod.id);
-			await markPodDeleted(db, pod.id, "bench_budget");
+			await retirePod(env, db, pod.job_id, pod.id, "bench_budget");
 			const job = await getJob(db, job_id);
 			if (job && !isTerminal(job.state)) await transition(db, job, "cancelled", { reason: "bench_budget" });
 			break;
@@ -62,8 +61,7 @@ export async function recordBench(env: Env, db: D1Database, jobId: string, rende
 		await setConfig(db, "bench_run", run);
 	}
 	if (pod) {
-		await deletePod(env, pod.id);
-		await markPodDeleted(db, pod.id, "bench_done");
+		await retirePod(env, db, pod.job_id, pod.id, "bench_done");
 	}
 	const job = await getJob(db, jobId);
 	if (job && !isTerminal(job.state)) await transition(db, job, "cancelled", { reason: "bench_done" });
@@ -86,8 +84,7 @@ export async function finishBench(env: Env, db: D1Database) {
 		if (!j || isTerminal(j.state)) continue;
 		const pod = await activePod(db, j.id);
 		if (pod) {
-			await deletePod(env, pod.id);
-			await markPodDeleted(db, pod.id, "bench_timeout");
+			await retirePod(env, db, pod.job_id, pod.id, "bench_timeout");
 		}
 		await transition(db, j, "cancelled", { reason: "bench_timeout" });
 	}

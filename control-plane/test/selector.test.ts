@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GPU_RANK, REGION_TIERS } from "../src/config";
 import { getJob } from "../src/db";
 import { deletePod, deps, listPods } from "../src/runpod";
-import { planAttempts, selectAndCreate } from "../src/selector";
-import { L40S, RTX4090, catalogOf, json, makeEnv, mockFetch } from "./helpers";
+import { UNCERTAIN_GIVE_UP_MS, UNCERTAIN_GRACE_MS, planAttempts, selectAndCreate } from "../src/selector";
+import { L40S, RTX4090, catalogOf, json, makeEnv, mockFetch, v2list, v2pod } from "./helpers";
 
 deps.sleep = async () => {};
 
@@ -74,7 +74,7 @@ describe("selectAndCreate against a fake RunPod", () => {
 		const calls = mockFetch(
 			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
 			(u) => (u === "https://rest.runpod.io/v1/pods" ? json({ error: "dataCenterIds: invalid enum value AP-IN-1" }, 400) : undefined),
-			(u) => (u === "https://api.runpod.io/v2/pods" ? json({ id: "v2pod", cost: 0.59, dataCenterId: "AP-IN-1", gpu: { id: RTX4090, vcpuCount: 16 } }, 201) : undefined),
+			(u) => (u === "https://api.runpod.io/v2/pods" ? json(v2pod({ id: "v2pod", name: "vf-j1", cost: 0.59, dataCenterId: "AP-IN-1", gpu: { id: RTX4090, vcpuCount: 16 } }), 201) : undefined),
 		);
 		expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
 		const v2 = calls.find((c) => c.url === "https://api.runpod.io/v2/pods")!.body as Record<string, any>;
@@ -100,7 +100,7 @@ describe("selectAndCreate against a fake RunPod", () => {
 		const calls = mockFetch(
 			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
 			(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? (posts++, json({ error: "gateway" }, 502)) : undefined),
-			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json({ pods: [{ id: "made", name: "vf-j1", status: "PROVISIONING", cost: 0.69, dataCenterId: "AP-IN-1", gpu: { id: RTX4090 } }] }) : undefined),
+			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([v2pod({ id: "made", name: "vf-j1", status: "PROVISIONING", cost: 0.69, dataCenterId: "AP-IN-1", gpu: { id: RTX4090 } })])) : undefined),
 		);
 		expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
 		expect(posts).toBe(1);
@@ -110,19 +110,125 @@ describe("selectAndCreate against a fake RunPod", () => {
 		expect((await getJob(env.DB, "j1"))!.gpu_label).toBe("RTX 4090 · AP-IN-1");
 	});
 
-	it("create 5xx with no pod made -> retried after the lookup", async () => {
+	it("create 5xx, pod not listed (yet) -> job held: no retry, no next candidate, no replacement", async () => {
 		let posts = 0;
 		mockFetch(
 			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
-			(u, i) =>
-				u === "https://rest.runpod.io/v1/pods" && i.method === "POST"
-					? (++posts === 1 ? json({ error: "oops" }, 500) : json({ id: "p2", costPerHr: 0.69, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201))
-					: undefined,
-			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json({ pods: [{ id: "other", name: "vf-someone-else", status: "RUNNING" }] }) : undefined),
+			(u, i) => (u.includes("runpod.io/v") && u.endsWith("/pods") && i.method === "POST" ? (posts++, json({ error: "oops" }, 500)) : undefined),
+			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([v2pod({ id: "other", name: "vf-someone-else" })])) : undefined),
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+		expect(posts).toBe(1);
+		const job = (await getJob(env.DB, "j1"))!;
+		expect(job.state).toBe("provisioning");
+		expect(job.create_uncertain_at).toBeTypeOf("number");
+		// Watchdog re-runs inside the grace window: still held, still no POST.
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+		expect(posts).toBe(1);
+	});
+
+	it("network error on create + lookup fails (list 5xx) -> held, never treated as absent", async () => {
+		let posts = 0;
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u, i) => {
+				if (u === "https://rest.runpod.io/v1/pods" && i.method === "POST") {
+					posts++;
+					throw new TypeError("fetch failed");
+				}
+			},
+			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json({ error: "busy" }, 503) : undefined),
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+		expect(posts).toBe(1);
+		const ev = (await env.DB.prepare("SELECT data_json FROM events WHERE kind = 'create_uncertain'").first<{ data_json: string }>())!;
+		expect(ev.data_json).toContain("lookup: unknown");
+	});
+
+	it("unreadable 201 (Pod missing required fields) -> held, not adopted", async () => {
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u) => (u === "https://rest.runpod.io/v1/pods" ? json({ error: "x" }, 403) : undefined),
+			(u, i) => (u === "https://api.runpod.io/v2/pods" && i.method === "POST" ? json({ id: "p?", cost: 0.5 }, 201) : undefined),
+			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined),
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+		expect(await env.DB.prepare("SELECT COUNT(*) n FROM pods").first()).toEqual({ n: 0 });
+	});
+
+	describe("held job, re-checked by the watchdog", () => {
+		const hold = (msAgo: number) => env.DB.prepare("UPDATE jobs SET create_uncertain_at = ? WHERE id = 'j1'").bind(Date.now() - msAgo).run();
+
+		it("pod shows up in the list -> adopted with the token already stored, no new POST", async () => {
+			await hold(60_000);
+			await env.DB.prepare("UPDATE jobs SET job_token_sha256 = 'h-before' WHERE id = 'j1'").run();
+			const calls = mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([v2pod({ id: "late", name: "vf-j1", cost: 0.7, gpu: { id: RTX4090 } })])) : undefined));
+			expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
+			expect(calls.some((c) => c.method === "POST")).toBe(false);
+			const job = (await getJob(env.DB, "j1"))!;
+			expect(job.state).toBe("booting");
+			expect(job.create_uncertain_at).toBeNull();
+			expect(job.job_token_sha256).toBe("h-before");
+		});
+
+		it("a replaced pod with the same name (already known) is not adopted", async () => {
+			await env.DB.prepare("INSERT INTO pods (id, job_id, cost_per_hr, created_at, deleted_at) VALUES ('old', 'j1', 0.5, 0, 1)").run();
+			await hold(60_000);
+			mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([v2pod({ id: "old", name: "vf-j1" })])) : undefined));
+			expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+		});
+
+		it("confirmed absent after the grace period -> hold cleared, fresh selection", async () => {
+			await hold(UNCERTAIN_GRACE_MS + 1000);
+			mockFetch(
+				(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined),
+				(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+				(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: "fresh", costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
+			);
+			expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
+			expect((await getJob(env.DB, "j1"))!.create_uncertain_at).toBeNull();
+		});
+
+		it("lookup keeps failing past the grace period -> still held (unknown is not absent)", async () => {
+			await hold(UNCERTAIN_GRACE_MS + 1000);
+			mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json({ pods: "nope" }) : undefined));
+			expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+		});
+
+		it("unknown for 15 min -> job failed, no pod created", async () => {
+			await hold(UNCERTAIN_GIVE_UP_MS + 1000);
+			const calls = mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json({}, 503) : undefined));
+			expect(await selectAndCreate(env, env.DB, "j1")).toBe("no_capacity");
+			expect((await getJob(env.DB, "j1"))!.state).toBe("failed");
+			expect(calls.some((c) => c.method === "POST")).toBe(false);
+		});
+	});
+
+	it("cost missing / not a number -> treated as over the cap: tracked, deleted, next attempt", async () => {
+		let n = 0;
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json(++n === 1 ? { id: "nocost", machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } } : { id: "ok", costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "EU-RO-1" } }, 201) : undefined),
+			(u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
 		);
 		expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
-		expect(posts).toBe(2);
-		expect((await env.DB.prepare("SELECT id FROM pods").first<{ id: string }>())!.id).toBe("p2");
+		const rows = (await env.DB.prepare("SELECT id, deleted_at IS NOT NULL AS gone, delete_reason FROM pods ORDER BY id").all()).results;
+		expect(rows).toEqual([{ id: "nocost", gone: 1, delete_reason: "cost_invalid" }, { id: "ok", gone: 0, delete_reason: null }]);
+	});
+
+	it("over-cap pod whose DELETE fails: tracked as delete-pending and NO replacement is created", async () => {
+		let n = 0;
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: `p${++n}`, costPerHr: n === 1 ? 3 : 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
+			(u, i) => (i.method === "DELETE" ? json({}, 503) : undefined),
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+		expect(n).toBe(1);
+		const p1 = await env.DB.prepare("SELECT deleted_at, delete_reason FROM pods WHERE id = 'p1'").first();
+		expect(p1).toEqual({ deleted_at: null, delete_reason: "cost_reject" });
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held"); // still pending: no POST
+		expect(n).toBe(1);
 	});
 
 	it("v1 REST refuses the key (403) -> v2 per GPU, and later creates skip v1 entirely", async () => {
@@ -133,7 +239,7 @@ describe("selectAndCreate against a fake RunPod", () => {
 			(u, i) => {
 				if (u !== "https://api.runpod.io/v2/pods" || i.method !== "POST") return;
 				const b = JSON.parse(i.body as string);
-				return b.gpu.id === RTX4090 ? json({ title: "Bad Request", status: 400, detail: "no capacity" }, 400) : json({ id: `v2pod${++v2n}`, cost: 0.8, dataCenterId: "AP-IN-1", gpu: { id: L40S } }, 201);
+				return b.gpu.id === RTX4090 ? json({ title: "Bad Request", status: 400, detail: "no capacity" }, 400) : json(v2pod({ id: `v2pod${++v2n}`, name: b.name, cost: 0.8, dataCenterId: "AP-IN-1", gpu: { id: L40S } }), 201);
 			},
 		);
 		expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
@@ -155,7 +261,7 @@ describe("selectAndCreate against a fake RunPod", () => {
 			(u, i) => {
 				if (u !== "https://api.runpod.io/v2/pods" || i.method !== "POST") return;
 				const b = JSON.parse(i.body as string);
-				return b.cpu.id === "cpu5c" ? json({ status: 400, detail: "no capacity" }, 400) : json({ id: "cpupod", cost: 0.32, dataCenterId: "EU-RO-1" }, 201);
+				return b.cpu.id === "cpu5c" ? json({ status: 400, detail: "no capacity" }, 400) : json(v2pod({ id: "cpupod", name: b.name, cost: 0.32, dataCenterId: "EU-RO-1" }), 201);
 			},
 		);
 		expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
@@ -191,14 +297,28 @@ describe("deletePod / listPods", () => {
 		mockFetch((u) =>
 			u.startsWith("https://api.runpod.io/v2/pods?")
 				? u.includes("cursor=c2")
-					? json({ pods: [{ id: "3", name: "vf-b", status: "RUNNING" }], pagination: { nextCursor: null, hasNextPage: false } })
-					: json({ pods: [{ id: "1", name: "vf-a", status: "RUNNING", cost: 0.5, createdAt: "2026-11-15T00:00:00Z" }, { id: "2", name: "vf-x", status: "TERMINATED" }], pagination: { nextCursor: "c2", hasNextPage: true } })
+					? json(v2list([v2pod({ id: "3", name: "vf-b", cost: 0.4 })]))
+					: json(v2list([v2pod({ id: "1", name: "vf-a" }), v2pod({ id: "2", name: "vf-x", status: "TERMINATED" })], "c2"))
 				: undefined,
 		);
-		expect(await listPods(env)).toEqual([
-			{ id: "1", name: "vf-a", createdAt: "2026-11-15T00:00:00Z", costPerHr: 0.5 },
-			{ id: "3", name: "vf-b", createdAt: undefined, costPerHr: undefined },
-		]);
+		expect((await listPods(env)).map((p) => [p.id, p.name, p.costPerHr])).toEqual([["1", "vf-a", 0.5], ["3", "vf-b", 0.4]]);
+	});
+	for (const [label, page] of [
+		["missing pagination", { pods: [] }],
+		["hasNextPage without a cursor", { pods: [], pagination: { nextCursor: null, hasNextPage: true } }],
+		["pods not an array", { pods: {}, pagination: { nextCursor: null, hasNextPage: false } }],
+		["a Pod without cost", { pods: [{ id: "1", name: "vf-a", status: "RUNNING", createdAt: "x" }], pagination: { nextCursor: null, hasNextPage: false } }],
+		["a Pod with an unknown status", v2list([v2pod({ id: "1", status: "WEIRD" })])],
+	] as const) {
+		it(`listPods rejects a malformed page: ${label}`, async () => {
+			mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(page) : undefined));
+			await expect(listPods(env)).rejects.toThrow(/malformed|without nextCursor/);
+		});
+	}
+	it("listPods rejects an endless cursor chain as incomplete", async () => {
+		let n = 0;
+		mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([], `c${++n}`)) : undefined));
+		await expect(listPods(env)).rejects.toThrow(/incomplete/);
 	});
 	it("listPods falls back to v1 when v2 refuses the key", async () => {
 		mockFetch(

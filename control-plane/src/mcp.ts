@@ -5,10 +5,9 @@ import { env, waitUntil } from "cloudflare:workers";
 import { z } from "zod";
 import type { JobState, PreviewLabel, Scene, ScenePlan, Voiceover, WaitJobOut } from "../../packages/contract/src/index";
 import { CONSTANTS, MAX_PODS_AT_ONCE, STYLES } from "./config";
-import { activePod, getJob, jobCost, logEvent, markPodDeleted, now, plan, randomId, updateJob, type JobRow } from "./db";
+import { activePod, getJob, jobCost, logEvent, now, plan, randomId, updateJob, type JobRow } from "./db";
 import { mergePatch, validatePlan } from "./plan";
-import { deletePod } from "./runpod";
-import { selectAndCreate } from "./selector";
+import { retirePod, selectAndCreate } from "./selector";
 import { isTerminal, transition } from "./state";
 
 export const deps = { sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)), pollMs: 2000 };
@@ -151,8 +150,7 @@ export async function release(e: Env, db: D1Database, jobId: string) {
 	if (!job) return { error: `no job ${jobId}` };
 	const pod = await activePod(db, job.id);
 	if (pod) {
-		await deletePod(e, pod.id);
-		await markPodDeleted(db, pod.id, "released");
+		await retirePod(e, db, job.id, pod.id, "released");
 	}
 	if (!isTerminal(job.state)) await transition(db, job, "cancelled");
 	await updateJob(db, job.id, await jobCost(db, job.id));

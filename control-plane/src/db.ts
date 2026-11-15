@@ -16,6 +16,7 @@ export interface JobRow {
 	qa_rounds: number;
 	rerender_scene: number | null;
 	approved: number;
+	create_uncertain_at: number | null;
 	pending_cmd: string | null;
 	reuploads: number;
 	skip_dcs: string;
@@ -88,11 +89,17 @@ export async function lastEvents(db: D1Database, jobId: string, n = 5) {
 
 export async function activePod(db: D1Database, jobId: string) {
 	return db
-		.prepare("SELECT * FROM pods WHERE job_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1")
+		.prepare("SELECT * FROM pods WHERE job_id = ? AND deleted_at IS NULL AND delete_reason IS NULL ORDER BY created_at DESC LIMIT 1")
 		.bind(jobId)
 		.first<PodRow>();
 }
 
+/** Deletion asked for but not confirmed by RunPod: stays tracked (deleted_at NULL) and is retried by the watchdog. */
+export async function markDeletePending(db: D1Database, podId: string, reason: string) {
+	await db.prepare("UPDATE pods SET delete_reason = ? WHERE id = ? AND deleted_at IS NULL").bind(reason, podId).run();
+}
+
+/** RunPod confirmed the pod is gone (DELETE 2xx/404). */
 export async function markPodDeleted(db: D1Database, podId: string, reason: string) {
 	await db
 		.prepare("UPDATE pods SET deleted_at = ?, delete_reason = ? WHERE id = ? AND deleted_at IS NULL")

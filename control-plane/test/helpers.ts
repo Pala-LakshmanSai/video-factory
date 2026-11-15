@@ -1,6 +1,6 @@
 // Test harness: D1 over node:sqlite, KV over a Map, and a fetch router for RunPod / Drive.
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { vi } from "vitest";
 
 const norm = (a: unknown[]) => a.map((v) => (v === undefined ? null : typeof v === "boolean" ? Number(v) : v)) as never[];
@@ -15,7 +15,8 @@ class Stmt {
 
 export function makeDb(): D1Database {
 	const db = new DatabaseSync(":memory:");
-	db.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
+	const dir = new URL("../migrations/", import.meta.url);
+	for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(f, dir), "utf8"));
 	return { prepare: (sql: string) => new Stmt(db, sql) } as unknown as D1Database;
 }
 
@@ -82,3 +83,12 @@ export function catalogOf(dcs: Record<string, Record<string, Avail>>) {
 
 export const RTX4090 = "NVIDIA GeForce RTX 4090";
 export const L40S = "NVIDIA L40S";
+
+/** A Pod as the v2 OpenAPI contract requires it (id, name, status, cost, createdAt, …), with overrides. */
+export const v2pod = (o: Record<string, unknown>) => ({
+	name: "vf-x", status: "RUNNING", cost: 0.5, createdAt: "2026-11-15T00:00:00Z", dataCenterId: "AP-IN-1",
+	image: "img", args: [], disk: 30, mounts: {}, ports: [], env: {}, registry: null, cloud: "SECURE", cudaVersion: "12.8",
+	ssh: null, template: null, locked: false, runtime: null, startedAt: null, globalNetworking: false, actions: [],
+	...o,
+});
+export const v2list = (pods: unknown[], nextCursor: string | null = null) => ({ pods, pagination: { nextCursor, hasNextPage: nextCursor !== null } });

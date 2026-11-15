@@ -4,7 +4,7 @@ import { getJob, jobCost, logEvent, markPodDeleted, now, updateJob, type JobRow,
 import { alert } from "./alerts";
 import { busySlots } from "./mcp";
 import { deletePod } from "./runpod";
-import { failJob, selectAndCreate } from "./selector";
+import { failJob, retirePod, selectAndCreate } from "./selector";
 import { isTerminal, transition } from "./state";
 
 const LIVE_STATES = ["waiting_for_plan", "rendering", "preview_ready", "rerendering", "final_render", "uploading", "verifying"];
@@ -12,14 +12,19 @@ const LIVE_STATES = ["waiting_for_plan", "rendering", "preview_ready", "rerender
 export async function watchdog(env: Env, db: D1Database) {
 	const t = now();
 
+	// 0. Deletes RunPod never confirmed: retry until it does (pod stays tracked meanwhile).
+	const pending = (await db.prepare("SELECT * FROM pods WHERE deleted_at IS NULL AND delete_reason IS NOT NULL").all<PodRow>()).results;
+	for (const p of pending) {
+		if (await deletePod(env, p.id).catch(() => false)) await markPodDeleted(db, p.id, p.delete_reason!);
+	}
+
 	// 1. Live pods: dev cleanup, boot timeout, heartbeat loss.
-	const pods = (await db.prepare("SELECT * FROM pods WHERE deleted_at IS NULL").all<PodRow>()).results;
+	const pods = (await db.prepare("SELECT * FROM pods WHERE deleted_at IS NULL AND delete_reason IS NULL").all<PodRow>()).results;
 	for (const pod of pods) {
 		const job = await getJob(db, pod.job_id);
 		if (!job || isTerminal(job.state)) continue; // reaper's job
 		if (job.dev_mode === "dummy" && t - pod.created_at > 60_000) {
-			await deletePod(env, pod.id);
-			await markPodDeleted(db, pod.id, "dev_dummy_60s");
+			await retirePod(env, db, job.id, pod.id, "dev_dummy_60s");
 			await transition(db, job, "cancelled", { reason: "dev_dummy_done" });
 			continue;
 		}
@@ -41,9 +46,13 @@ export async function watchdog(env: Env, db: D1Database) {
 		if (c.cost_usd > MAX_COST_PER_JOB_USD) await failJob(env, db, job, "budget", `$${c.cost_usd} > $${MAX_COST_PER_JOB_USD}`);
 	}
 
-	// 3. Selector runs that never happened or died (waitUntil cut short): retry after 90 s.
+	// 3. Selector runs that never happened or died (waitUntil cut short): retry after 90 s. Held jobs (create
+	//    claim set: in flight or outcome unknown) are re-checked every minute whatever their updated_at.
 	const stuck = (
-		await db.prepare("SELECT id FROM jobs WHERE state IN ('provisioning','retrying') AND updated_at < ?").bind(t - 90_000).all<{ id: string }>()
+		await db
+			.prepare("SELECT id FROM jobs WHERE state IN ('provisioning','retrying') AND (updated_at < ? OR create_uncertain_at IS NOT NULL)")
+			.bind(t - 90_000)
+			.all<{ id: string }>()
 	).results;
 	for (const j of stuck) await selectAndCreate(env, db, j.id);
 
@@ -61,7 +70,12 @@ export async function watchdog(env: Env, db: D1Database) {
  * Heartbeat loss: DELETE, new pod with the same plan; more than MAX_REPLACEMENTS -> failed (pod_replacements).
  */
 async function replacePod(env: Env, db: D1Database, job: JobRow, pod: PodRow, reason: "boot_timeout" | "heartbeat_lost") {
-	await deletePod(env, pod.id);
+	// Not confirmed deleted -> leave the pod tracked and active, and do NOT start a replacement: two live pods
+	// for one job is worse than a minute's delay. The next tick sees the same condition and tries again.
+	if (!(await deletePod(env, pod.id).catch(() => false))) {
+		await logEvent(db, job.id, "delete_failed", { pod: pod.id, reason });
+		return;
+	}
 	await markPodDeleted(db, pod.id, reason);
 	await logEvent(db, job.id, reason, { pod: pod.id, dc: pod.data_center_id });
 	if (job.dev_mode === "bench") {
