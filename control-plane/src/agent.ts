@@ -15,6 +15,15 @@ import { failJob, retirePod } from "./selector";
 import { isTerminal, transition } from "./state";
 
 type Ctx = { Bindings: Env; Variables: { job: JobRow } };
+
+/** waitUntil of this request, so a pod delete survives the agent's connection dropping (no-op in tests). */
+const deferOf = (c: { executionCtx: { waitUntil(p: Promise<unknown>): void } }) => (p: Promise<unknown>) => {
+	try {
+		c.executionCtx.waitUntil(p);
+	} catch {
+		// No ExecutionContext (local test harness): the awaited call still completes the work.
+	}
+};
 export const agentApp = new Hono<Ctx>().basePath("/agent/:job");
 
 export const deps = { sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)), pollMs: 2000 };
@@ -119,7 +128,7 @@ agentApp.post("/upload-session", async (c) => {
 		return c.json({ session_uri: uri });
 	} catch (e) {
 		if (e instanceof DriveAuthError) {
-			await failJob(c.env, c.env.DB, job, "drive_auth", e.message);
+			await failJob(c.env, c.env.DB, job, "drive_auth", e.message, deferOf(c));
 			return c.json({ error: "drive_auth", cmd: "cancel" }, 410);
 		}
 		throw e;
@@ -131,14 +140,7 @@ agentApp.post("/done", async (c) => {
 	const body = await c.req.json<DoneIn>();
 	await updateJob(c.env.DB, job.id, { drive_file_id: body.file_id, md5: body.md5, size: body.size });
 	if (job.state === "uploading") await transition(c.env.DB, job, "verifying");
-	const defer = (p: Promise<unknown>) => {
-		try {
-			c.executionCtx.waitUntil(p);
-		} catch {
-			// No ExecutionContext (local test harness): the awaited call below still completes the work.
-		}
-	};
-	return c.json(await verify(c.env, job, body, defer));
+	return c.json(await verify(c.env, job, body, deferOf(c)));
 });
 
 /** §7 verification: size + md5 must match, else re-upload (max 2); match -> share, DELETE pod, done. */
@@ -156,7 +158,7 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 		await logEvent(db, job.id, "verify", { ok, size: meta.size, md5: meta.md5Checksum, corrupt });
 		if (!ok) {
 			if (job.reuploads >= MAX_REUPLOADS) {
-				await failJob(env, db, job, "md5_mismatch", "md5 mismatch after 2 re-uploads"); // pod deleted inside
+				await failJob(env, db, job, "md5_mismatch", "md5 mismatch after 2 re-uploads", defer); // pod deleted last, inside
 				return {};
 			}
 			await updateJob(db, job.id, { reuploads: job.reuploads + 1, pending_cmd: "reupload" });
@@ -175,7 +177,7 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 		}
 		return {};
 	} catch (e) {
-		if (e instanceof DriveAuthError) await failJob(env, db, job, "drive_auth", e.message);
+		if (e instanceof DriveAuthError) await failJob(env, db, job, "drive_auth", e.message, defer);
 		else throw e;
 		return {};
 	}
@@ -193,7 +195,7 @@ agentApp.post("/error", async (c) => {
 	});
 	await logEvent(c.env.DB, job.id, "render_error", { stage: body.stage, scene: body.scene, n: counts[key] });
 	if (counts[key] >= CONSTANTS.RENDER_ERROR_RETRIES_MAX) {
-		await failJob(c.env, c.env.DB, job, "render_errors", `scene ${key} failed ${counts[key]} times: ${body.log_tail.slice(-300)}`);
+		await failJob(c.env, c.env.DB, job, "render_errors", `scene ${key} failed ${counts[key]} times: ${body.log_tail.slice(-300)}`, deferOf(c));
 		return c.json({ cmd: "cancel" });
 	}
 	return c.json({ cmd: "retry" });

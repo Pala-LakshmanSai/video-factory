@@ -344,3 +344,33 @@ describe("live smoke render finding (2026-11-16)", () => {
 		expect(j.drive_link).toBe("https://drive.test/f1");
 	});
 });
+
+describe("failure paths record before deleting the pod", () => {
+	for (const [label, run] of [
+		["3 render errors (/error)", async (j: string) => {
+			const { agentApp } = await import("../src/agent");
+			const { sha256Hex } = await import("../src/db");
+			await env.DB.prepare("UPDATE jobs SET job_token_sha256 = ?, token_expires_at = ?, render_errors = '{\"2\":2}' WHERE id = ?").bind(await sha256Hex("tok"), Date.now() + 60 * MIN, j).run();
+			return agentApp.fetch(new Request(`https://cp.test/agent/${j}/error`, { method: "POST", headers: { Authorization: "Bearer tok", "Content-Type": "application/json" }, body: JSON.stringify({ stage: "preview", scene: 2, log_tail: "boom" }) }), env);
+		}],
+		["direct failJob (budget)", async (j: string) => {
+			const { failJob } = await import("../src/selector");
+			await failJob(env, env.DB, (await getJob(env.DB, j))!, "budget", "over");
+		}],
+	] as const) {
+		it(`${label}: state is failed with error_json when the DELETE goes out`, async () => {
+			await job("j1", "rendering", "plan_json='{}'");
+			await pod("p1", "j1", 10 * MIN, { hello: Date.now() - 9 * MIN });
+			let atDelete: { state: string; error_json: string | null } | null = null;
+			mockFetch(async (u, i) => {
+				if (i.method !== "DELETE") return;
+				atDelete = (await getJob(env.DB, "j1"))!;
+				return new Response(null, { status: 204 });
+			});
+			await run("j1");
+			expect(atDelete!.state).toBe("failed");
+			expect(atDelete!.error_json).toBeTruthy();
+			expect((await row("p1"))!.deleted_at).toBeTypeOf("number");
+		});
+	}
+});

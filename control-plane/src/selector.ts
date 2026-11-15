@@ -264,14 +264,30 @@ export async function retirePod(env: Env, db: D1Database, jobId: string, podId: 
 }
 
 /** Fail a job: delete its pod, record cost, alert. Safe to call on an already-terminal job. */
-export async function failJob(env: Env, db: D1Database, job: JobRow, code: ErrorCode, message: string) {
+/**
+ * Record the failure (state, error, cost, alert) FIRST, delete the pod LAST. Called from the pod's own
+ * requests (/error, /upload-session, /done), deleting the pod kills the agent and Workers then cancel the
+ * handler, so anything after the delete may never run. `defer` (waitUntil) keeps the delete alive.
+ */
+export async function failJob(
+	env: Env, db: D1Database, job: JobRow, code: ErrorCode, message: string, defer: (p: Promise<unknown>) => void = () => {},
+) {
 	const pod = await activePod(db, job.id);
-	if (pod) await retirePod(env, db, job.id, pod.id, `failed:${code}`);
+	let recorded = true;
 	try {
 		await transition(db, job, "failed", { code });
 	} catch {
-		return; // already terminal
+		recorded = false; // already terminal: still make sure its pod goes
 	}
-	await updateJob(db, job.id, { error_json: JSON.stringify({ code, message }), ...(await jobCost(db, job.id)) });
-	await alert(env, db, `job failed: ${code}: ${message}`, job.id);
+	if (recorded) {
+		await updateJob(db, job.id, { error_json: JSON.stringify({ code, message }), ...(await jobCost(db, job.id)) });
+		await alert(env, db, `job failed: ${code}: ${message}`, job.id);
+	}
+	if (pod) {
+		const retire = retirePod(env, db, job.id, pod.id, `failed:${code}`).then(async () => {
+			if (recorded) await updateJob(db, job.id, await jobCost(db, job.id));
+		});
+		defer(retire);
+		await retire;
+	}
 }
