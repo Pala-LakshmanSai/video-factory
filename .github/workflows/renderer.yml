@@ -60,7 +60,8 @@ jobs:
       - name: Smoke test the image
         env: { IMG: "${{ steps.hub.outputs.image }}" }
         run: |
-          docker image ls "$IMG"
+          echo "image size: $(( $(docker image inspect -f '{{.Size}}' "$IMG") / 1000000 )) MB" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$(docker run --rm --entrypoint id "$IMG" -u)" != 0
           docker run --rm --entrypoint ffmpeg "$IMG" -hide_banner -encoders | grep -E 'h264_nvenc|libx264'
           docker run --rm "$IMG" --selftest | tee selftest.log
           grep -q 'encoder: libx264' selftest.log
