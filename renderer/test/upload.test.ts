@@ -49,8 +49,10 @@ const md5 = (b: Uint8Array) => createHash("md5").update(b).digest("hex");
 test("uploads in chunks and resumes after a simulated drop via bytes */size", async () => {
 	const { p, data } = await file(CHUNK * 3 + 1000);
 	const d = fakeDrive();
-	const id = await resumableUpload(p, data.length, { newSession: d.newSession, fetch: d.fetch, chunk: CHUNK, dropAfterChunk: 1, log: () => {} });
+	const resumes: number[] = [];
+	const id = await resumableUpload(p, data.length, { newSession: d.newSession, fetch: d.fetch, chunk: CHUNK, dropAfterChunk: 1, log: () => {}, onResume: (o) => resumes.push(o) });
 	assert.equal(id, "file1");
+	assert.deepEqual(resumes, [CHUNK], "resumed at the positive offset Drive's 308 Range reported");
 	assert.equal(d.sessions.size, 1, "same session resumed");
 	assert.equal(md5(Buffer.concat(d.sessions.get("https://upload.test/s1")!.buf)), md5(data));
 });

@@ -70,6 +70,8 @@ agentApp.get("/spec", async (c) => {
 agentApp.post("/heartbeat", async (c) => {
 	const job = c.get("job");
 	const hb = await c.req.json<HeartbeatIn>();
+	const resumed = /^upload_resumed:(\d+)$/.exec(hb.stage ?? "");
+	if (resumed) await logEvent(c.env.DB, job.id, "upload_resumed", { offset: Number(resumed[1]), pct: hb.pct });
 	const pod = await activePod(c.env.DB, job.id);
 	if (pod && !(await hasFault(c.env.DB, job.id, "silence_heartbeat"))) {
 		await c.env.DB.prepare("UPDATE pods SET last_heartbeat_at = ? WHERE id = ?").bind(now(), pod.id).run();

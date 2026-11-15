@@ -207,8 +207,12 @@ async function main() {
 			const fileId = await resumableUpload(file, size, {
 				newSession: async () => (await cp.uploadSession({ name: `${spec.style}.mp4`, size, md5 })).session_uri,
 				log,
-				chunk: UPLOAD_CHUNK,
+				// With the drop fault armed, use 1 MiB chunks (a Drive-valid multiple of 256 KiB) so a normal
+				// few-MB render spans several chunks and the drop lands mid-file (positive-offset resume).
+				chunk: UPLOAD_CHUNK ?? (faults.dropAfterChunk ? 1024 * 1024 : undefined),
 				dropAfterChunk: faults.dropAfterChunk,
+				// Report the resume offset (from Drive's 308 Range) so the control plane records the evidence.
+				onResume: (offset) => void cp.heartbeat({ stage: `upload_resumed:${offset}`, pct: Math.round((offset / size) * 100) }).catch(() => undefined),
 			});
 			faults.dropAfterChunk = null;
 			status.stage = "verifying";

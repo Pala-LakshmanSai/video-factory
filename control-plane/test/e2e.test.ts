@@ -79,5 +79,9 @@ describe.skipIf(!ready())("e2e: pod agent process <-> agent API over HTTP", () =
 		expect(await h.states(id)).toEqual(["provisioning", "booting", "rendering", "preview_ready", "rerendering", "preview_ready", "final_render", "uploading", "verifying", "uploading", "verifying", "done"]);
 		const kinds = (await env.DB.prepare("SELECT kind FROM events WHERE job_id = ?").bind(id).all<{ kind: string }>()).results.map((e) => e.kind);
 		expect(kinds).toEqual(expect.arrayContaining(["pod_created", "plan_submitted", "hello", "upload_session", "verify"]));
+		// drop_upload_after_chunk:1 with 64 KiB chunks: the agent resumed at Drive's 308 offset and reported it.
+		const resumed = (await env.DB.prepare("SELECT data_json FROM events WHERE job_id = ? AND kind = 'upload_resumed'").bind(id).all<{ data_json: string }>()).results;
+		expect(resumed.length).toBeGreaterThanOrEqual(1);
+		expect(JSON.parse(resumed[0].data_json).offset).toBeGreaterThan(0);
 	}, 600_000);
 });

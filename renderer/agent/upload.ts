@@ -7,6 +7,7 @@ export interface UploadDeps {
 	newSession: () => Promise<string>;
 	log: (msg: string) => void;
 	dropAfterChunk?: number | null; // Phase 9 fault: simulate a connection drop after chunk N
+	onResume?: (offset: number) => void; // called with Drive's 308 Range offset when resuming after a drop
 	fetch?: typeof fetch;
 	chunk?: number;
 }
@@ -43,6 +44,7 @@ export async function resumableUpload(path: string, size: number, d: UploadDeps)
 					if (q && q.status === 308) {
 						offset = nextOffset(q);
 						d.log(`resuming at byte ${offset}`);
+						d.onResume?.(offset);
 						continue;
 					}
 					if (q && q.status >= 400 && q.status < 500) break; // dead session
