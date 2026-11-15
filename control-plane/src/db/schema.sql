@@ -1,0 +1,1 @@
+-- D1 schema: jobs, pods, events (+ previews, config, catalog_cache). SPEC §17, built in Phase 3a.

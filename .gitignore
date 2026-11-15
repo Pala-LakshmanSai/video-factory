@@ -1,0 +1,9 @@
+.dev.vars
+.dev.vars.*
+client_secret*.json
+*.mp4
+.env*
+node_modules/
+.wrangler/
+dist/
+.DS_Store
