@@ -1,6 +1,6 @@
 // Render engine (Prompt 6a). Headless Chromium per scene template with frozen time; the engine drives
 // window.__seek(t) per frame and pipes screenshots into ffmpeg. Chromium drawing is the CPU-bound part
-// (SPEC §9.3), so (vCPU - 1) pages render contiguous frame ranges in parallel; segments are joined with the
+// (SPEC §9.3), so pages render contiguous frame ranges in parallel; segments are joined with the
 // concat demuxer (no re-encode), then the audio is muxed. Same plan + same machine -> same bytes.
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -10,7 +10,7 @@ import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { chromium, type Browser, type Page } from "playwright";
 import type { ScenePlan } from "../../packages/contract/src/index.ts";
-import { encoderArgs, must, pickEncoder, run } from "./ffmpeg.ts";
+import { encoderArgs, must, pickEncoder, run, type Encoder } from "./ffmpeg.ts";
 import { previewTimes, timeScenes, type Timed } from "./timing.ts";
 
 export class TemplateError extends Error {
@@ -184,13 +184,21 @@ function runBuffer(args: string[], input: NodeJS.ReadableStream): Promise<Buffer
 	});
 }
 
+export function renderWorkerCount(requested: number, maxSegments: number, encoder: Encoder["name"]): number {
+	// Every worker opens its own encoder. Leave room below the shared GeForce NVENC session limit.
+	const encoderLimit = encoder === "h264_nvenc" ? 4 : Infinity;
+	return Math.max(1, Math.min(requested, maxSegments, encoderLimit));
+}
+
 /** Full video: parallel frame ranges -> segments -> concat (copy) -> mux audio. Returns the mp4 path. */
 export async function renderFinal(inp: RenderInput): Promise<string> {
 	const { plan, workDir } = inp;
 	const timed = timeScenes(plan.scenes, inp.audioSeconds, plan.fps);
 	const total = timed.reduce((a, t) => a + t.frames, 0);
-	const workers = Math.max(1, Math.min(Number(process.env.RENDER_WORKERS) || availableParallelism() - 1, Math.ceil(total / plan.fps)));
 	const enc = await pickEncoder();
+	const workers = renderWorkerCount(
+		Number(process.env.RENDER_WORKERS) || availableParallelism() - 1, Math.ceil(total / plan.fps), enc.name,
+	);
 	await rm(workDir, { recursive: true, force: true });
 	await mkdir(workDir, { recursive: true });
 	for (const t of timed) if (inp.failScene === t.scene.n) throw new TemplateError(t.scene.n, "fault injected: render_error");

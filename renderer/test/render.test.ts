@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { ScenePlan } from "../../packages/contract/src/index.ts";
 import { STYLE_TEMPLATES } from "../../packages/contract/src/styles.ts";
 import { durationOf, run } from "../engine/ffmpeg.ts";
-import { renderFinal, renderPreviews } from "../engine/render.ts";
+import { renderFinal, renderPreviews, renderWorkerCount } from "../engine/render.ts";
 import { silence } from "../engine/voice.ts";
 
 process.env.FORCE_X264 = "1";
@@ -22,6 +22,14 @@ const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const STYLES = here("../styles");
 const OUT = process.env.TEST_OUT ?? join(tmpdir(), "vf-test-out");
 const total = (p: ScenePlan) => p.scenes.reduce((a, s) => a + s.duration_s, 0);
+
+test("NVENC worker cap preserves lower overrides and CPU parallelism", () => {
+	assert.equal(renderWorkerCount(32, 45, "h264_nvenc"), 4);
+	assert.equal(renderWorkerCount(2, 45, "h264_nvenc"), 2);
+	assert.equal(renderWorkerCount(32, 1, "h264_nvenc"), 1);
+	assert.equal(renderWorkerCount(32, 45, "libx264"), 32);
+	assert.equal(renderWorkerCount(32, 2, "libx264"), 2);
+});
 
 test("every style ships every template listed in packages/contract/src/styles.ts", async () => {
 	for (const [style, templates] of Object.entries(STYLE_TEMPLATES)) {
