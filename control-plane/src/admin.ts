@@ -1,7 +1,7 @@
 // Prompt 7.4 GET /admin/status and Prompt 9 POST /admin/fault, behind a GitHub sign-in limited to
 // ALLOWED_GITHUB_LOGIN. Uses the same GitHub OAuth App; /callback/admin must be registered on it as a
 // second exact callback URL next to /callback (docs/SETUP.md). Session = HMAC-signed cookie (COOKIE_ENCRYPTION_KEY), 12 h.
-// Dev-only POST /dev/acquire lives here too (enabled only when DEV_ROUTES="1").
+// Dev-only POST /admin/dev/acquire lives here too: behind the same sign-in, and only when DEV_ROUTES="1".
 import { Hono } from "hono";
 import { getUpstreamAuthorizeUrl, fetchUpstreamAuthToken } from "./utils";
 import { selectAndCreate } from "./selector";
@@ -112,7 +112,7 @@ adminApp.get("/admin/events/:job", async (c) => {
 });
 
 /** Dev only (Prompt 3b / 4b): rent a pod with the dummy CUDA image (deleted after 60 s) or RENDERER_IMAGE. */
-adminApp.post("/dev/acquire", async (c) => {
+adminApp.post("/admin/dev/acquire", async (c) => {
 	if (String(c.env.DEV_ROUTES) !== "1") return c.notFound();
 	const { image } = await c.req.json<{ image?: "dummy" | "renderer" }>().catch(() => ({ image: undefined }));
 	const mode = image === "renderer" ? "renderer" : "dummy";

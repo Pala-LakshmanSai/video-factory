@@ -30,7 +30,7 @@ export default {
 	fetch(req: Request, e: Env, ctx: ExecutionContext) {
 		const path = new URL(req.url).pathname;
 		if (path.startsWith("/agent/")) return agentApp.fetch(req, e, ctx);
-		if (path.startsWith("/admin") || path === "/callback/admin" || path.startsWith("/dev/")) return adminApp.fetch(req, e, ctx);
+		if (path.startsWith("/admin") || path === "/callback/admin") return adminApp.fetch(req, e, ctx);
 		return oauth.fetch(req, e, ctx);
 	},
 

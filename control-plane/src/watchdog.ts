@@ -4,6 +4,7 @@ import { getJob, jobCost, logEvent, markPodDeleted, now, updateJob, type JobRow,
 import { alert } from "./alerts";
 import { busySlots } from "./mcp";
 import { deletePod, podAbsent } from "./runpod";
+import { hasFault } from "./faults";
 import { failJob, retirePod, selectAndCreate } from "./selector";
 import { isTerminal, transition } from "./state";
 
@@ -100,6 +101,8 @@ async function replacePod(env: Env, db: D1Database, job: JobRow, pod: PodRow, re
 		return;
 	}
 	if (reason === "boot_timeout") {
+		// Phase 9 slow_boot fault: one boot timeout proves the path; the replacement pod must boot normally.
+		await hasFault(db, job.id, "slow_boot", true);
 		const skip = JSON.parse(job.skip_dcs) as string[];
 		if (pod.data_center_id && !skip.includes(pod.data_center_id)) skip.push(pod.data_center_id);
 		await updateJob(db, job.id, { skip_dcs: JSON.stringify(skip) });

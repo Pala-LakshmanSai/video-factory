@@ -86,7 +86,7 @@ explicitly approved; then set it to `"1"` and deploy.
 
 Copy `control-plane/.dev.vars.example` to `.dev.vars` (sets `DEV_ROUTES=1`), then
 `npx wrangler d1 migrations apply video-factory --local && npx wrangler dev`, and
-`curl -X POST localhost:8788/dev/acquire -H 'content-type: application/json' -d '{"image":"dummy"}'` rents a
+`POST /admin/dev/acquire` (signed in at `/admin/login`; `curl -X POST localhost:8788/admin/dev/acquire -H 'content-type: application/json' -d '{"image":"dummy"}'` rents a
 real pod with a public CUDA image (deleted after ~60 s by the watchdog).
 
 ## Production qualification — passed (2026-11-16)

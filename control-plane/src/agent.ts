@@ -122,7 +122,8 @@ agentApp.post("/upload-session", async (c) => {
 	try {
 		if (await hasFault(c.env.DB, job.id, "revoke_drive", true)) throw new DriveAuthError("invalid_grant (revoke_drive fault)");
 		let uri = await createSession(c.env, `${job.title}.mp4`, body.size);
-		if (await hasFault(c.env.DB, job.id, "expire_upload_session", true)) uri += "&upload_id=expired-by-fault";
+		// Phase 9: hand the pod a session URI whose upload_id Google no longer knows (-> 4xx -> new session).
+		if (await hasFault(c.env.DB, job.id, "expire_upload_session", true)) uri = uri.replace(/upload_id=[^&]+/, "upload_id=expired-by-fault");
 		if (job.state === "final_render") await transition(c.env.DB, job, "uploading");
 		await logEvent(c.env.DB, job.id, "upload_session", { size: body.size, md5: body.md5 });
 		return c.json({ session_uri: uri });

@@ -57,7 +57,10 @@ describe("routing", () => {
 		expect(login.headers.get("location")).toMatch(/^https:\/\/github\.com\/login\/oauth\/authorize\?.*redirect_uri=https%3A%2F%2Fcp\.test%2Fcallback%2Fadmin/);
 		expect(await (await req("/callback/admin?code=c&state=s")).text()).toBe("bad state");
 		e = { ...e, DEV_ROUTES: "0" } as Env;
-		expect((await req("/dev/acquire", { method: "POST" })).status).toBe(404);
+		expect((await req("/dev/acquire", { method: "POST" })).status).not.toBe(200); // old unauthenticated path is gone
+		const dev = await req("/admin/dev/acquire", { method: "POST" });
+		expect(dev.status).toBe(302); // dev route sits behind the GitHub admin sign-in
+		expect(dev.headers.get("location")).toContain("/admin/login");
 	});
 
 	it("everything else goes to the OAuth provider / GitHub handler", async () => {

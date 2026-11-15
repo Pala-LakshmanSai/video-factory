@@ -374,3 +374,20 @@ describe("failure paths record before deleting the pod", () => {
 		});
 	}
 });
+
+describe("Phase 9 fault mechanics", () => {
+	it("slow_boot: one boot timeout consumes the fault, so the replacement pod can boot", async () => {
+		await job("j1", "booting");
+		await pod("p1", "j1", 7 * MIN);
+		await env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('faults:j1', '[\"slow_boot\"]')").run();
+		mockFetch(
+			(u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: "p2", costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "EU-RO-1" } }, 201) : undefined),
+		);
+		await watchdog(env, env.DB);
+		const left = await env.DB.prepare("SELECT value_json FROM config WHERE key = 'faults:j1'").first<{ value_json: string }>();
+		expect(JSON.parse(left!.value_json)).toEqual([]);
+		expect((await getJob(env.DB, "j1"))!.state).toBe("booting"); // on the replacement pod
+	});
+});
