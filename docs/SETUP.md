@@ -88,3 +88,17 @@ Copy `control-plane/.dev.vars.example` to `.dev.vars` (sets `DEV_ROUTES=1`), the
 `npx wrangler d1 migrations apply video-factory --local && npx wrangler dev`, and
 `curl -X POST localhost:8788/dev/acquire -H 'content-type: application/json' -d '{"image":"dummy"}'` rents a
 real pod with a public CUDA image (deleted after ~60 s by the watchdog).
+
+## Production qualification — passed (2026-11-16)
+
+One owner-approved render through the Claude Video Factory Project, $0.50 budget, single submitter, no replay.
+
+| Item | Result |
+|---|---|
+| Job | `j_60e660d0ac1947b0` → `done` automatically at 19:48:31 UTC (no manual step; done-before-delete fix live) |
+| Pod | `wmtqzvibe7gmy6`, NVIDIA A40, EU-SE-1, $0.59/hr; created 19:44:36, deleted 19:48:32 UTC (RunPod Audit Log; Pods view empty) |
+| Output | Drive `1m5N2XlwaAZyS5ldPfpqsHvI8zbiQjSdg`: 4,424,566 bytes, md5 `31edd7f98ab77613c53648b64ca5b83f` (= Worker receipt), 1920×1080 30 fps H.264 + AAC mono, 25.7 s |
+| Cost | $0.0385 (235 GPU-seconds) |
+| Admission | Opened 19:43:41, closed 19:45:11 UTC after the pod was accepted; faults and dev routes off throughout |
+
+Open visual follow-up: one-frame black flash at each `fade` scene join (incoming fade starts at full black). Renderer-only fix; needs a new image and digest pin.
