@@ -1,0 +1,49 @@
+/**
+ * Video Factory control plane (SPEC §2). Docs: docs/SPEC.md, docs/CONTRACT.md.
+ * Secrets: `npx wrangler secret put <NAME>` for every name in secrets.required.
+ * Local dev: copy .dev.vars.example to .dev.vars (git-ignored).
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "video-factory",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    // Set after the first deploy: https://<worker>.<subdomain>.workers.dev
+    "CP_URL": "http://localhost:8788",
+    "MCP_RESOURCE": "http://localhost:8788/mcp",
+    // Phase 4 CI output, e.g. docker.io/<user>/video-renderer:<git sha>
+    "RENDERER_IMAGE": "docker.io/CHANGE_ME/video-renderer:CHANGE_ME",
+    "ALLOWED_GITHUB_LOGIN": "Pala-LakshmanSai",
+    // "1" only while running the Phase 9 drills
+    "FAULTS_ENABLED": "0",
+    // "1" only in .dev.vars (local): enables POST /dev/acquire
+    "DEV_ROUTES": "0"
+  },
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "<Add-KV-ID>" }],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "video-factory", "database_id": "<Add-D1-ID>", "migrations_dir": "migrations" }
+  ],
+  "triggers": {
+    // watchdog every minute; reaper every 5 min (SPEC §6.5); benchmark Sunday 03:00 UTC (SPEC §9.3)
+    "crons": ["* * * * *", "*/5 * * * *", "0 3 * * SUN"]
+  },
+  "observability": { "enabled": true },
+  "dev": { "port": 8788 },
+  "secrets": {
+    "required": [
+      "GITHUB_CLIENT_ID",
+      "GITHUB_CLIENT_SECRET",
+      "COOKIE_ENCRYPTION_KEY",
+      "RUNPOD_API_KEY",
+      "RUNPOD_REGISTRY_AUTH_ID",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_REFRESH_TOKEN",
+      "DRIVE_FOLDER_ID",
+      "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_CHAT_ID"
+    ]
+  }
+}

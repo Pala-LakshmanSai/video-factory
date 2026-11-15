@@ -30,7 +30,8 @@ export type ErrorCode =
   | "render_errors"          // SPEC §10 "3 render errors"
   | "budget"                 // SPEC §10 "budget" / §11 max cost per job
   | "drive_auth"             // Extension
-  | "pod_replacements";      // Extension
+  | "pod_replacements"       // Extension
+  | "md5_mismatch";          // Extension
 export interface AcquireGpuIn {
   style: string;
   title: string;
@@ -118,6 +119,9 @@ export interface ErrorIn { stage: string; scene?: number; log_tail: string }
 export interface ErrorOut { cmd: "retry" | "cancel" }
 
 /** GET /input/voiceover: only when voiceover is a drive_file_id; 200 audio bytes streamed from Drive. */
+
+/** POST /bench (Extension, BENCH=1 pods only): {render_s} -> 200 {cmd:"cancel"}. */
+export interface BenchIn { render_s: number }
 /** GET https://api.runpod.io/v2/catalog/datacenters?include=GPU_AVAILABILITY (cache 60 s) */
 export type Availability = "NONE" | "LOW" | "MEDIUM" | "HIGH";
 export interface Catalog {
@@ -149,6 +153,7 @@ export interface CreatePodBody {
   env: {
     JOB_ID: string; JOB_TOKEN: string; CP_URL: string; TTL_MIN: string;
     NVIDIA_DRIVER_CAPABILITIES?: "compute,utility,video";   // Extension (GPU pods)
+    BENCH?: "1";                                            // Extension: weekly benchmark pods
   };
 }
 export interface CreatePodResp {

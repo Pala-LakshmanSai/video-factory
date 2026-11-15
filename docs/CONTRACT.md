@@ -43,7 +43,8 @@ export type ErrorCode =
   | "render_errors"          // SPEC §10 "3 render errors"
   | "budget"                 // SPEC §10 "budget" / §11 max cost per job
   | "drive_auth"             // Extension
-  | "pod_replacements";      // Extension
+  | "pod_replacements"       // Extension
+  | "md5_mismatch";          // Extension
 ```
 
 ## §4 Contract A — MCP tools (Claude → control plane)
@@ -127,7 +128,7 @@ export interface Scene {
 }
 ```
 
-Validation (submit_job rejects with precise errors): `style` matches the job; `n` runs 1..N with no gaps; every `template` exists in that style; `sum(duration_s)` equals the voiceover length ± 0.1 s for a Drive audio file. For a text voiceover the length is unknown until on-pod TTS runs, so durations are relative weights the renderer rescales to the audio (see Contradictions #6).
+Validation (submit_job rejects with precise errors): `style` matches the job; `n` runs 1..N with no gaps; every `template` and `transition` exists in that style (`packages/contract/src/styles.ts`); total ≤ 3 min. The control plane never decodes audio, so for BOTH voiceover kinds `duration_s` are Claude's best estimate and the renderer rescales them proportionally to the real audio length (see Contradictions #6).
 
 ## §5 Contract B — Agent API (pod → control plane)
 
@@ -167,6 +168,9 @@ export interface ErrorIn { stage: string; scene?: number; log_tail: string }
 export interface ErrorOut { cmd: "retry" | "cancel" }
 
 /** GET /input/voiceover: only when voiceover is a drive_file_id; 200 audio bytes streamed from Drive. */
+
+/** POST /bench (Extension, BENCH=1 pods only): {render_s} -> 200 {cmd:"cancel"}. */
+export interface BenchIn { render_s: number }
 ```
 
 ```json
@@ -212,6 +216,7 @@ export interface CreatePodBody {
   env: {
     JOB_ID: string; JOB_TOKEN: string; CP_URL: string; TTL_MIN: string;
     NVIDIA_DRIVER_CAPABILITIES?: "compute,utility,video";   // Extension (GPU pods)
+    BENCH?: "1";                                            // Extension: weekly benchmark pods
   };
 }
 export interface CreatePodResp {
@@ -320,7 +325,9 @@ export const ttlMinFor = (videoSeconds: number): number =>
 4. **Preview JPEGs stored in D1**, ≤ 500 KB each, 3 per scene per round (start/mid/end, 1280 px). Multipart part names `scene-<n>-<idx>`.
 5. **States `queued` and `cancelled`.**
 6. **`scene_plan` schema** — `ScenePlan` / `Scene` above. `/spec` returns the full plan (`fps`, `resolution` too) plus `voiceover`.
-7. **Error codes `drive_auth` and `pod_replacements`** — added beyond Prompt 1's list; Prompts 4a and 5a fail jobs with these reasons and Phase 7 alerts on them.
+7. **Error codes `drive_auth`, `pod_replacements` and `md5_mismatch`** — added beyond Prompt 1's list; Prompts 4a and 5a fail jobs with these reasons (md5 still wrong after 2 re-uploads) and Phase 7 alerts on them.
+9. **Benchmark pods** — env `BENCH=1`, `POST /agent/{job}/bench {render_s}`; jobs with `dev_mode` `bench` end `cancelled` (SPEC §9.3 re-rank).
+8. **Replacement after approve** — if a pod dies after `approve`, the new pod re-renders previews and the job moves straight on to `final_render` without asking Claude again (`jobs.approved`).
 
 ## Contradictions and gaps in SPEC.md
 
