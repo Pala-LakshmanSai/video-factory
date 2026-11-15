@@ -107,7 +107,7 @@ Visual follow-up (fixed in 675f7d7, verified zero black joins on later drill ren
 
 Single operator, owner-approved, $3 cap; spent **$0.4659** tracked. Every drill pod has a RunPod Audit Log deletion
 receipt (independent check). After the last run: `ADMISSION_ENABLED`/`FAULTS_ENABLED`/`DEV_ROUTES` all `"0"`,
-zero open jobs, zero live pods, zero armed faults. Renderer pin: `sha256:2913b893…926b` (a9e41fa).
+zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2913b893…926b` (a9e41fa); now `sha256:1ad06161…79be` (912a8c0, adds NVENC fallback diagnostics).
 
 **Exact injection (named fault fired and the observed event matches):**
 
