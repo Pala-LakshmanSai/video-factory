@@ -184,7 +184,15 @@ async function main() {
 	};
 
 	let lastUpload = null as { file: string; fileId: string; md5: string; size: number } | null;
-	const doPreviews = (only?: number[]) => attempt("preview", async () => cp.previews(await renderPreviews(input(spec), only)));
+	// Scenes whose previews the control plane has. A round that failed posted nothing, so a later
+	// rerender:<n> must also preview every scene still missing (else preview_ready shows only scene n).
+	const previewed = new Set<number>();
+	const doPreviews = (only?: number[]) =>
+		attempt("preview", async () => {
+			const scenes = only && [...new Set([...only, ...spec.scenes.map((s) => s.n).filter((n) => !previewed.has(n))])];
+			await cp.previews(await renderPreviews(input(spec), scenes));
+			for (const n of scenes ?? spec.scenes.map((s) => s.n)) previewed.add(n);
+		});
 	const doFinal = () =>
 		attempt("final_render", async () => {
 			const file = await renderFinal(input(spec));
