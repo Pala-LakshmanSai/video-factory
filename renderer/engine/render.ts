@@ -90,17 +90,21 @@ async function openScene(browser: Browser, inp: RenderInput, timed: Timed[], k: 
 	const file = join(inp.stylesDir, plan.style, `${t.scene.template}.html`);
 	try {
 		await page.goto(pathToFileURL(file).href, { waitUntil: "load" });
-		await page.evaluate(async () => {
+		// Transitions go through the style's own background, not black: templates exit to that background, so
+		// a fade or slide from it is seamless (a fade from black flashed one dark frame at every join).
+		const bg = typeof tokens?.palette?.bg === "string" ? tokens.palette.bg : "#000";
+		await page.evaluate(async (bg: string) => {
 			// @ts-ignore
 			if (window.__ready) await window.__ready;
 			// @ts-ignore
 			if (typeof window.__seek !== "function") throw new Error("template defines no window.__seek");
-			document.documentElement.style.background = "#000";
+			document.documentElement.style.background = bg;
 			const o = document.createElement("div");
 			o.id = "__vf_overlay";
-			o.style.cssText = "position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:2147483647";
+			o.style.cssText = "position:fixed;inset:0;opacity:0;pointer-events:none;z-index:2147483647";
+			o.style.background = bg;
 			document.body.appendChild(o);
-		});
+		}, bg);
 	} catch (e) {
 		errors.push(String((e as Error).message));
 	}

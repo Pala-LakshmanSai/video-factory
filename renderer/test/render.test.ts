@@ -75,3 +75,24 @@ for (const style of Object.keys(STYLE_TEMPLATES)) {
 		if (missing) t.skip(`${missing} reference frames missing; candidates written to ${outDir}`);
 	});
 }
+
+test("fade and slide joins never dip to black (style background, not #000)", { timeout: 5 * 60_000 }, async () => {
+	const props = JSON.parse(await readFile(join(STYLES, "explainer", "example-plan.json"), "utf8")) as ScenePlan;
+	const pick = (t: string) => props.scenes.find((s) => s.template === t)!.props;
+	const plan: ScenePlan = {
+		style: "explainer", fps: 12, resolution: "640x360",
+		scenes: [
+			{ n: 1, template: "title", props: pick("title"), duration_s: 2, narration: "", transition: "fade" },
+			{ n: 2, template: "kinetic-text", props: pick("kinetic-text"), duration_s: 2, narration: "", transition: "slide" },
+			{ n: 3, template: "list", props: pick("list"), duration_s: 2, narration: "", transition: "cut" },
+		],
+	};
+	await mkdir(OUT, { recursive: true });
+	const audio = await silence(6, join(OUT, "joins.wav"));
+	const file = await renderFinal({ plan, stylesDir: STYLES, workDir: join(OUT, "joins"), audioPath: audio.path, audioSeconds: audio.seconds });
+	const r = await run("ffmpeg", ["-hide_banner", "-i", file, "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"]);
+	const luma = [...r.stderr.matchAll(/YAVG=([\d.]+)/g)].map((m) => Number(m[1]));
+	assert.equal(luma.length, 72, "one value per frame");
+	// Explainer's background is #f6f4ef (luma ~240); a black transition frame reads ~16.
+	assert.ok(Math.min(...luma) > 150, `darkest frame luma ${Math.min(...luma).toFixed(1)} (frame ${luma.indexOf(Math.min(...luma))})`);
+});
