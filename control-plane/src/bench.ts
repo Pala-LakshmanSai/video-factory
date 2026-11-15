@@ -21,6 +21,7 @@ interface BenchRun {
 }
 
 export async function startBench(env: Env, db: D1Database) {
+	if (String(env.ADMISSION_ENABLED) !== "1") return "admission disabled: benchmark not started";
 	if (await getConfig<BenchRun | null>(db, "bench_run", null)) return "already running";
 	const rank = await getConfig<string[]>(db, "gpu_rank", GPU_RANK);
 	const cat = await catalog(env, db);

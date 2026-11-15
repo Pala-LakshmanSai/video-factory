@@ -16,7 +16,9 @@ export interface JobRow {
 	qa_rounds: number;
 	rerender_scene: number | null;
 	approved: number;
+	create_claim: string | null;
 	create_uncertain_at: number | null;
+	admission_at: number | null;
 	pending_cmd: string | null;
 	reuploads: number;
 	skip_dcs: string;

@@ -82,32 +82,34 @@ export function podBody(env: Env, job: JobRow, a: Attempt, token: string): Creat
 
 const shortGpu = (id: string | null) => (id ?? "CPU").replace(/^NVIDIA (GeForce )?/, "");
 
-/** A held create is re-checked by the watchdog: confirmed absent for this long -> safe to create again. */
-export const UNCERTAIN_GRACE_MS = 3 * 60_000;
-/** Still unknown after this long -> give up on the job (a pod that shows up later is reaped as an orphan). */
+/** A held (ambiguous) create unresolved for this long fails the job. It is never replayed automatically. */
 export const UNCERTAIN_GIVE_UP_MS = 15 * 60_000;
 
 /**
- * `jobs.create_uncertain_at` is the create claim. It is set atomically BEFORE the first POST of a selection
- * and cleared only once the outcome is definite (pod accepted, or every candidate definitely refused).
- * So a crash mid-create, or a second selector run racing this one (acquire's waitUntil vs the watchdog),
- * finds the claim and treats the create as uncertain: it looks the pod up by name, never POSTs.
+ * `jobs.create_claim` is a unique token: only the selector run holding it may POST a create for the job.
+ * It is taken atomically before the first POST, re-checked before EVERY POST (fence), and cleared only on a
+ * definite outcome, fenced on the same token. A claim found set by any other run means a create may have
+ * happened: that run only looks the pod up by name. It never POSTs, and a negative list never clears the
+ * hold (lists can lag). The hold ends when the pod is found (adopted) or after UNCERTAIN_GIVE_UP_MS (failed).
  */
-async function claim(db: D1Database, jobId: string, prev: number | null): Promise<boolean> {
+async function takeClaim(db: D1Database, jobId: string): Promise<string | null> {
+	const c = randomId("c_");
 	const r = await db
-		.prepare(
-			`UPDATE jobs SET create_uncertain_at = ?, updated_at = ? WHERE id = ? AND state IN ('provisioning','retrying') AND ${prev === null ? "create_uncertain_at IS NULL" : "create_uncertain_at = ?"}`,
-		)
-		.bind(now(), now(), jobId, ...(prev === null ? [] : [prev]))
+		.prepare("UPDATE jobs SET create_claim = ?, create_uncertain_at = ? WHERE id = ? AND state IN ('provisioning','retrying') AND create_claim IS NULL")
+		.bind(c, now(), jobId)
 		.run();
-	return r.meta.changes === 1;
+	return r.meta.changes === 1 ? c : null;
 }
+const holdsClaim = async (db: D1Database, jobId: string, c: string) =>
+	(await db.prepare("SELECT create_claim FROM jobs WHERE id = ?").bind(jobId).first<{ create_claim: string | null }>())?.create_claim === c;
+export const releaseClaim = (db: D1Database, jobId: string, c: string) =>
+	db.prepare("UPDATE jobs SET create_claim = NULL, create_uncertain_at = NULL WHERE id = ? AND create_claim = ?").bind(jobId, c).run();
 
 /**
  * Rent a pod for `jobId` (state provisioning or retrying). On success: pod recorded, JOB_TOKEN hash stored
  * (one token per selection, so a replaced pod's token stops working), state -> booting.
- * Held ("held"): a create may be in flight or its outcome is unknown, or one of this job's pods is not yet
- * confirmed deleted. No POST happens while held. No capacity: state -> failed (failed_no_capacity).
+ * "held": a create's outcome is unknown, or one of this job's pods is not yet confirmed gone. No POST then.
+ * No capacity: state -> failed (failed_no_capacity). ADMISSION_ENABLED != "1": nothing is created ("skipped").
  */
 export async function selectAndCreate(
 	env: Env, db: D1Database, jobId: string, opts: { rank?: string[]; gpuOnly?: boolean } = {},
@@ -118,35 +120,57 @@ export async function selectAndCreate(
 	const pods = (await db.prepare("SELECT id, deleted_at FROM pods WHERE job_id = ?").bind(jobId).all<{ id: string; deleted_at: number | null }>()).results;
 	const known = pods.map((r) => r.id);
 	const undeleted = pods.filter((r) => r.deleted_at === null).length; // delete-pending pods of this job
-	const cap = Number(faultArg(await hasFault(db, job.id, "price_cap")) ?? CONSTANTS.PRICE_CAP_USD_PER_HR);
+	const capArg = Number(faultArg(await hasFault(db, job.id, "price_cap")));
+	// Never above the spec cap, never NaN (a NaN cap would make every "cost > cap" check false).
+	const cap = Number.isFinite(capArg) && capArg > 0 ? Math.min(capArg, CONSTANTS.PRICE_CAP_USD_PER_HR) : CONSTANTS.PRICE_CAP_USD_PER_HR;
 
-	if (job.create_uncertain_at) {
+	if (job.create_claim) {
+		if (!job.create_uncertain_at) {
+			// Claim without a clock (should not happen): start it now rather than give up immediately.
+			job.create_uncertain_at = now();
+			await db.prepare("UPDATE jobs SET create_uncertain_at = ? WHERE id = ? AND create_uncertain_at IS NULL").bind(job.create_uncertain_at, job.id).run();
+		}
 		const age = now() - job.create_uncertain_at;
 		const found = await lookupPodByName(env, `vf-${job.id}`, known);
 		await logEvent(db, job.id, "create_hold_check", { lookup: found.state, age_s: Math.round(age / 1000), undeleted });
 		if (found.state === "found") {
-			const r = await accept(env, db, job, found.pod, null, cap);
-			if (r !== "rejected") return r === "rejected_pending" ? "held" : r;
-			// Adopted pod was over the cap and is confirmed deleted: a fresh selection may follow.
+			const r = await accept(env, db, job, found.pod, null, cap, job.create_claim);
+			if (r === "created" || r === "skipped") return r;
+			if (r === "rejected_pending") return "held";
+			// Adopted pod was over the cap and is confirmed gone: the ambiguity is resolved, a fresh selection may follow.
+			await releaseClaim(db, job.id, job.create_claim);
+			job.create_claim = null;
 		} else if (age >= UNCERTAIN_GIVE_UP_MS) {
 			await failJob(env, db, job, "failed_no_capacity", `create outcome still unknown after ${Math.round(age / 60000)} min`);
 			return "no_capacity";
-		} else if (found.state !== "absent" || age < UNCERTAIN_GRACE_MS || undeleted > 0) {
-			return "held";
+		} else {
+			return "held"; // absent or unknown: never replay
 		}
-		// Confirmed absent past the grace period, nothing pending deletion: take the claim over (atomically).
-		if (!(await claim(db, job.id, job.create_uncertain_at))) return "held";
-	} else {
-		if (undeleted > 0) return "held"; // never start a replacement while an old pod may still be running
-		if (!(await claim(db, job.id, null))) return "held";
+	}
+	if (undeleted > 0) return "held"; // never start a replacement while an old pod may still be running
+
+	await db.prepare("UPDATE jobs SET admission_at = ? WHERE id = ?").bind(now(), job.id).run();
+	if (String(env.ADMISSION_ENABLED) !== "1") {
+		await logEvent(db, job.id, "admission_disabled", {});
+		return "skipped";
 	}
 
+	// Read-only preparation BEFORE taking the claim: a catalog outage must not leave a claim (a hold) behind.
 	const rank = opts.rank ?? (await getConfig<string[]>(db, "gpu_rank", GPU_RANK));
-	const cat = await catalog(env, db);
+	let cat;
+	try {
+		cat = await catalog(env, db);
+	} catch (e) {
+		await logEvent(db, job.id, "catalog_failed", { error: String((e as Error).message).slice(0, 200) });
+		return "skipped"; // the watchdog retries from admission_at; nothing was claimed or created
+	}
 	const blocked = faultArg(await hasFault(db, job.id, "block_region"));
 	const attempts = planAttempts(cat, rank, [...JSON.parse(job.skip_dcs), ...(blocked ? [blocked] : [])]).filter(
 		(a) => !opts.gpuOnly || a.computeTier !== "CPU",
 	);
+
+	const c = await takeClaim(db, job.id);
+	if (!c) return "held";
 
 	// One token per selection, stored BEFORE any create: a pod adopted after an uncertain create already
 	// carries this token in its env, so its /hello must verify.
@@ -154,10 +178,15 @@ export async function selectAndCreate(
 	await updateJob(db, job.id, { job_token_sha256: await sha256Hex(token), token_expires_at: now() + job.ttl_min * 60_000 });
 
 	for (const a of attempts) {
-		const res = await createPod(env, podBody(env, job, a, token), known);
+		// Fence: re-checked immediately before EVERY provider POST (v2 makes one POST per GPU type).
+		const res = await createPod(env, podBody(env, job, a, token), known, () => holdsClaim(db, job.id, c));
+		if (!res.ok && res.fenced) {
+			await logEvent(db, job.id, "claim_lost", { tier: a.computeTier });
+			return "held"; // someone else owns admission now; no more POSTs from this run
+		}
 		if (!res.ok && res.uncertain) {
-			// Keep the claim; restart its clock at the moment the outcome became unknown.
-			await db.prepare("UPDATE jobs SET create_uncertain_at = ? WHERE id = ?").bind(now(), job.id).run();
+			// Keep the claim (that IS the hold); restart its clock at the moment the outcome became unknown.
+			await db.prepare("UPDATE jobs SET create_uncertain_at = ? WHERE id = ? AND create_claim = ?").bind(now(), job.id, c).run();
 			await logEvent(db, job.id, "create_uncertain", { tier: a.computeTier, dcs: a.dataCenterIds, status: res.status, detail: res.body });
 			await alert(env, db, "pod create outcome unknown: job held, no replacement until resolved", job.id);
 			return "held";
@@ -167,14 +196,13 @@ export async function selectAndCreate(
 			continue;
 		}
 		known.push(res.pod.id);
-		const r = await accept(env, db, job, res.pod, a, cap);
+		const r = await accept(env, db, job, res.pod, a, cap, c);
 		if (r === "rejected") continue;
-		// Over-cap pod not confirmed deleted: keep the claim, no replacement until the watchdog deletes it.
 		if (r === "rejected_pending") return "held";
 		return r;
 	}
 
-	await updateJob(db, job.id, { create_uncertain_at: null });
+	await releaseClaim(db, job.id, c);
 	if (job.dev_mode === "bench") {
 		await transition(db, job, "cancelled", { reason: "bench_no_capacity" });
 		return "no_capacity";
@@ -187,7 +215,7 @@ export async function selectAndCreate(
  * Record a pod RunPod made (always, so it stays tracked), then enforce the price cap. A cost that is missing,
  * not a finite number or negative cannot be checked against the cap, so it is treated as over it.
  */
-async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a: Attempt | null, cap: number): Promise<"created" | "rejected" | "rejected_pending" | "skipped"> {
+async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a: Attempt | null, cap: number, c: string): Promise<"created" | "rejected" | "rejected_pending" | "skipped"> {
 	const t = now();
 	const compute = a ? (a.computeTier === "CPU" ? "CPU" : "GPU") : pod.gpuTypeId ? "GPU" : null;
 	await db
@@ -198,12 +226,14 @@ async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a:
 	if (!costOk || pod.costPerHr > cap) {
 		await logEvent(db, job.id, "cost_reject", { pod: pod.id, costPerHr: Number.isFinite(pod.costPerHr) ? pod.costPerHr : String(pod.costPerHr), reason: costOk ? "over_cap" : "cost_invalid", gpu: pod.gpuTypeId });
 		const gone = await retirePod(env, db, job.id, pod.id, costOk ? "cost_reject" : "cost_invalid");
-		return gone ? "rejected" : "rejected_pending";
+		if (gone) return "rejected";
+		// The create itself is resolved (the pod is known and tracked), so release the claim; the pending delete
+		// alone keeps the job held (selectAndCreate's `undeleted` gate) until the pod is confirmed gone.
+		await releaseClaim(db, job.id, c);
+		return "rejected_pending";
 	}
-	await updateJob(db, job.id, {
-		gpu_label: `${shortGpu(pod.gpuTypeId)} · ${pod.dataCenterId ?? a?.dataCenterIds[0] ?? "?"}`,
-		create_uncertain_at: null,
-	});
+	await updateJob(db, job.id, { gpu_label: `${shortGpu(pod.gpuTypeId)} · ${pod.dataCenterId ?? a?.dataCenterIds[0] ?? "?"}` });
+	await releaseClaim(db, job.id, c);
 	await logEvent(db, job.id, "pod_created", { pod: pod.id, tier: a?.computeTier ?? "adopted", gpu: pod.gpuTypeId, dc: pod.dataCenterId, costPerHr: pod.costPerHr, api: pod.api });
 	try {
 		await transition(db, job, "booting");

@@ -35,6 +35,7 @@ export function makeEnv(db = makeDb()): Env {
 		ALLOWED_GITHUB_LOGIN: "me",
 		FAULTS_ENABLED: "1",
 		DEV_ROUTES: "1",
+		ADMISSION_ENABLED: "1",
 		RUNPOD_API_KEY: "rp",
 		RUNPOD_REGISTRY_AUTH_ID: "reg",
 		GOOGLE_CLIENT_ID: "gid",

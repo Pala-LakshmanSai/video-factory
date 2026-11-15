@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getJob } from "../src/db";
 import { reaper } from "../src/reaper";
 import { deps, listPods, safeDetail } from "../src/runpod";
-import { UNCERTAIN_GRACE_MS, selectAndCreate } from "../src/selector";
+import { selectAndCreate } from "../src/selector";
 import { watchdog } from "../src/watchdog";
 import { RTX4090, catalogOf, json, makeEnv, mockFetch, v2list, v2pod } from "./helpers";
 
@@ -47,11 +47,11 @@ describe("create claim is taken before any POST", () => {
 		expect(await first).toBe("created");
 		expect(second).toBe("held");
 		expect(posts).toBe(1);
-		expect((await getJob(env.DB, "j1"))!.create_uncertain_at).toBeNull();
+		expect((await getJob(env.DB, "j1"))!.create_claim).toBeNull();
 	});
 
 	it("a claim left by a crashed run (no pod row) -> held, lookup only, no POST", async () => {
-		await job("j1", "provisioning", `create_uncertain_at=${Date.now() - 30_000}`);
+		await job("j1", "provisioning", `create_claim='c_dead'`);
 		const calls = mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined));
 		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
 		expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
@@ -60,7 +60,7 @@ describe("create claim is taken before any POST", () => {
 
 describe("watchdog", () => {
 	it("scans a held job every minute even though updated_at is fresh", async () => {
-		await job("j1", "provisioning", `create_uncertain_at=${Date.now() - 30_000}`);
+		await job("j1", "provisioning", `create_claim='c_dead'`);
 		const calls = mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([v2pod({ id: "late", name: "vf-j1", gpu: { id: RTX4090 } })])) : undefined));
 		await watchdog(env, env.DB);
 		expect(calls.some((c) => c.url.startsWith("https://api.runpod.io/v2/pods?"))).toBe(true);
@@ -94,23 +94,44 @@ describe("watchdog", () => {
 		mockFetch((u, i) => (i.method === "DELETE" ? json({}, 503) : undefined));
 		await watchdog(env, env.DB);
 		expect(await row("p1")).toEqual({ deleted_at: null, delete_reason: "failed:budget" });
-		mockFetch((u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined));
+		// DELETE accepted (204) but the pod is still listed by GET: NOT cleared.
+		let getStatus = 200;
+		mockFetch(
+			(u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
+			(u, i) => (u === "https://api.runpod.io/v2/pods/p1" && i.method !== "DELETE" ? (getStatus === 404 ? json({ status: 404 }, 404) : json(v2pod({ id: "p1", name: "vf-j1", status: "RUNNING" }))) : undefined),
+		);
+		await watchdog(env, env.DB);
+		expect((await row("p1"))!.deleted_at).toBeNull();
+		getStatus = 404; // direct provider absence
 		await watchdog(env, env.DB);
 		expect((await row("p1"))!.deleted_at).toBeTypeOf("number");
 	});
 
-	it("price-rejected pod pending delete: confirmed later, then (after the grace) a fresh pod", async () => {
-		await job("j1", "provisioning", `create_uncertain_at=${Date.now() - UNCERTAIN_GRACE_MS - 1000}`);
+	it("price-rejected pod pending delete blocks admission until direct absence, then a fresh pod", async () => {
+		await job("j1");
+		await env.DB.prepare("UPDATE jobs SET created_at = 0, admission_at = 0 WHERE id = 'j1'").run();
 		await pod("p1", "j1", 4 * MIN, { pending: "cost_reject" });
-		mockFetch(
+		let gone = false;
+		const calls = mockFetch(
 			(u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
-			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined),
+			(u, i) => (u === "https://api.runpod.io/v2/pods/p1" ? (gone ? json({}, 404) : json(v2pod({ id: "p1", name: "vf-j1" }))) : undefined),
 			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
 			(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: "p2", costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
 		);
-		await env.DB.prepare("UPDATE jobs SET updated_at = 0 WHERE id = 'j1'").run();
-		await watchdog(env, env.DB); // step 0 confirms p1's delete; step 3 finds the hold resolvable
+		await watchdog(env, env.DB);
+		expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+		gone = true;
+		await watchdog(env, env.DB);
 		expect((await row("p1"))!.deleted_at).toBeTypeOf("number");
+		expect((await getJob(env.DB, "j1"))!.state).toBe("booting");
+	});
+
+	it("unclaimed stale admission is retried from admission_at even though cost writes keep updated_at fresh", async () => {
+		await job("j1");
+		await env.DB.prepare("UPDATE jobs SET admission_at = ?, updated_at = ? WHERE id = 'j1'").bind(Date.now() - 2 * MIN, Date.now()).run();
+		const calls = mockFetch((u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined), (u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: "p1", costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined));
+		await watchdog(env, env.DB);
+		expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
 		expect((await getJob(env.DB, "j1"))!.state).toBe("booting");
 	});
 });
@@ -139,7 +160,7 @@ describe("reaper", () => {
 		expect(calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toEqual(["https://api.runpod.io/v2/pods/o"]);
 	});
 
-	it("unconfirmed delete of a terminal job's pod -> kept tracked as delete-pending", async () => {
+	it("any reaper delete of a tracked pod leaves it delete-pending (cleared later only on direct absence)", async () => {
 		await job("j1", "done");
 		await pod("p1", "j1", 20 * MIN);
 		mockFetch(list(v2pod({ id: "p1", name: "vf-j1", createdAt: iso(20 * MIN) })), (u, i) => (i.method === "DELETE" ? json({}, 503) : undefined));
@@ -189,5 +210,111 @@ describe("no raw provider JSON in diagnostics", () => {
 		const err = await listPods(env).catch((e: Error) => e);
 		expect(String(err)).toMatch(/malformed Pod #0 on page 1/);
 		expect(String(err)).not.toContain("t_0123");
+	});
+});
+
+describe("safety review 3", () => {
+	it("a malformed price_cap fault cannot disable the cap (NaN) and cannot raise it above $2/hr", async () => {
+		for (const arg of ["abc", "5"]) {
+			env = makeEnv();
+			await job("j1");
+			await env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('faults:j1', ?)").bind(JSON.stringify([`price_cap:${arg}`])).run();
+			let n = 0;
+			mockFetch(
+				(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+				(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: `p${++n}`, costPerHr: n === 1 ? 2.4 : 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
+				(u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
+			);
+			expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
+			expect((await row("p1"))!.delete_reason).toBe("cost_reject");
+		}
+	});
+
+	it("catalog outage: nothing claimed, nothing created, retried later", async () => {
+		await job("j1");
+		const calls = mockFetch((u) => (u.includes("/v2/catalog/datacenters") ? json({ title: "down" }, 503) : undefined));
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("skipped");
+		expect((await getJob(env.DB, "j1"))!.create_uncertain_at).toBeNull();
+		expect(calls.some((c) => c.method === "POST")).toBe(false);
+	});
+
+	it("202 QueuedPod is cancelled and counts as 'not placed': next candidate, no hold", async () => {
+		await job("j1");
+		deps.v1Denied = true;
+		const calls = mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH", "NVIDIA L40S": "HIGH" } })) : undefined),
+			(u, i) => {
+				if (u !== "https://api.runpod.io/v2/pods" || i.method !== "POST") return;
+				const b = JSON.parse(i.body as string);
+				return b.gpu.id === RTX4090 ? json({ id: "q1" }, 202) : json(v2pod({ id: "ok", name: b.name, cost: 0.8, gpu: { id: b.gpu.id } }), 201);
+			},
+			(u, i) => (u === "https://api.runpod.io/v2/queued-pods/q1" && i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
+		expect(calls.some((c) => c.url.endsWith("/queued-pods/q1") && c.method === "DELETE")).toBe(true);
+	});
+
+	it("202 QueuedPod whose cancel fails -> job held (it could start later)", async () => {
+		await job("j1");
+		deps.v1Denied = true;
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u, i) => (u === "https://api.runpod.io/v2/pods" && i.method === "POST" ? json({ id: "q1" }, 202) : undefined),
+			(u) => (u.includes("/queued-pods/") ? json({}, 503) : undefined),
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+	});
+
+	it("a delete failing for 10 min raises one 'may still be billing' alert", async () => {
+		await job("j1", "failed");
+		await pod("p1", "j1", 30 * MIN, { pending: "failed:budget" });
+		await env.DB.prepare("INSERT INTO events (job_id, ts, kind, data_json) VALUES ('j1', ?, 'delete_failed', ?)").bind(Date.now() - 11 * MIN, JSON.stringify({ pod: "p1", reason: "failed:budget" })).run();
+		mockFetch((u, i) => (i.method === "DELETE" ? json({ title: "Conflict" }, 409) : undefined));
+		await watchdog(env, env.DB);
+		await watchdog(env, env.DB);
+		const n = await env.DB.prepare("SELECT COUNT(*) n FROM events WHERE kind = 'delete_stuck'").first<{ n: number }>();
+		expect(n!.n).toBe(1);
+		expect((await row("p1"))!.deleted_at).toBeNull();
+	});
+});
+
+describe("review 4: fencing, no replay, admission switch", () => {
+	it("an old selector whose claim was taken over stops before its next POST", async () => {
+		await job("j1");
+		deps.v1Denied = true;
+		let posts = 0;
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH", "NVIDIA L40S": "HIGH" } })) : undefined),
+			async (u, i) => {
+				if (u !== "https://api.runpod.io/v2/pods" || i.method !== "POST") return;
+				posts++;
+				// While the first POST is "in flight", another actor takes admission over.
+				await env.DB.prepare("UPDATE jobs SET create_claim = 'c_other' WHERE id = 'j1'").run();
+				return json({ status: 400, detail: "no capacity" }, 400);
+			},
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+		expect(posts).toBe(1); // the second candidate (L40S) is NOT posted
+		const ev = await env.DB.prepare("SELECT COUNT(*) n FROM events WHERE kind = 'claim_lost'").first<{ n: number }>();
+		expect(ev!.n).toBe(1);
+	});
+
+	it("an old selector cannot release a claim it no longer owns", async () => {
+		await job("j1", "provisioning", `create_claim='c_new'`);
+		const { releaseClaim } = await import("../src/selector");
+		await releaseClaim(env.DB, "j1", "c_old");
+		expect((await getJob(env.DB, "j1"))!.create_claim).toBe("c_new");
+	});
+
+	it("ADMISSION_ENABLED != 1: no catalog read, no claim, no POST; benchmark refuses to start", async () => {
+		env = { ...makeEnv(), ADMISSION_ENABLED: "0" } as Env;
+		await job("j1");
+		const calls = mockFetch();
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("skipped");
+		expect(calls).toHaveLength(0);
+		expect((await getJob(env.DB, "j1"))!.create_claim).toBeNull();
+		const { startBench } = await import("../src/bench");
+		expect(await startBench(env, env.DB)).toMatch(/admission disabled/);
+		expect(calls).toHaveLength(0);
 	});
 });

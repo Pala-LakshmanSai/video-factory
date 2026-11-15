@@ -89,8 +89,8 @@ export interface CreatedPod {
 /** `uncertain`: RunPod may or may not have made the pod; the caller must not create a replacement. */
 export type CreateResult =
 	| { ok: true; pod: CreatedPod }
-	| { ok: false; status: number; body: string; uncertain?: false }
-	| { ok: false; status: number; body: string; uncertain: true };
+	| { ok: false; status: number; body: string; uncertain?: false; fenced?: boolean }
+	| { ok: false; status: number; body: string; uncertain: true; fenced?: false };
 
 type Body = CreatePodBody & { dockerStartCmd?: string[] };
 
@@ -101,19 +101,38 @@ const isStr = (x: unknown): x is string => typeof x === "string" && x.length > 0
  * One create POST, never replayed. 429 is retried inside rp (the request was not processed). A 5xx, a network
  * error or a 2xx we can't read is ambiguous: look the pod up by name; found -> adopt; otherwise uncertain.
  */
-async function createNoReplay(env: Env, url: string, payload: unknown, name: string, exclude: string[], parse: (j: unknown) => CreatedPod | null): Promise<CreateResult> {
+/** Called immediately before every provider POST; false = this run no longer owns admission (no POST). */
+export type Fence = () => Promise<boolean>;
+
+async function createNoReplay(env: Env, url: string, payload: unknown, name: string, exclude: string[], parse: (j: unknown) => CreatedPod | null, fence?: Fence): Promise<CreateResult> {
+	if (fence && !(await fence())) return { ok: false, status: 409, body: "create claim lost before POST", fenced: true };
 	let res: Response;
 	try {
 		res = await rp(env, url, { method: "POST", body: JSON.stringify(payload) }, false);
 	} catch (e) {
 		return ambiguous(env, name, exclude, 0, `network error: ${redact((e as Error).message).slice(0, 120)}`);
 	}
+	if (res.status === 202) return cancelQueued(env, name, exclude, await res.json().catch(() => null));
 	if (res.status === 200 || res.status === 201) {
 		const pod = parse(await res.json().catch(() => null));
 		return pod ? { ok: true, pod } : ambiguous(env, name, exclude, res.status, "unreadable create response");
 	}
 	if (res.status >= 500 || (res.status >= 200 && res.status < 300)) return ambiguous(env, name, exclude, res.status, safeDetail(await res.text()));
 	return { ok: false, status: res.status, body: safeDetail(await res.text()) };
+}
+
+/**
+ * 202 = RunPod queued the pod (QueuedPod) instead of placing it. We never ask for queueing; a queued pod
+ * would not appear in /v2/pods and could start later beside a replacement. Cancel it: confirmed -> a definite
+ * "no capacity" for this candidate; not confirmed -> uncertain (the job is held).
+ */
+async function cancelQueued(env: Env, name: string, exclude: string[], j: unknown): Promise<CreateResult> {
+	const id = (j as { id?: unknown } | null)?.id;
+	if (isStr(id)) {
+		const del = await rp(env, `${V2}/queued-pods/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => null);
+		if (del && (del.ok || del.status === 404)) return { ok: false, status: 400, body: "queued instead of placed; queued pod cancelled" };
+	}
+	return { ok: false, status: 202, body: `queued pod${isStr(id) ? " " + id : ""} not confirmed cancelled`, uncertain: true };
 }
 
 async function ambiguous(env: Env, name: string, exclude: string[], status: number, body: string): Promise<CreateResult> {
@@ -132,18 +151,18 @@ const parseV1 = (j: unknown): CreatedPod | null => {
  * §6.2 / §6.2b. v1 first (one call covers the whole ranked GPU list); v1 400/401/403 -> the same attempt via v2.
  * `exclude`: pod ids this job already had (a replaced pod keeps the same name until RunPod forgets it).
  */
-export async function createPod(env: Env, body: Body, exclude: string[] = []): Promise<CreateResult> {
+export async function createPod(env: Env, body: Body, exclude: string[] = [], fence?: Fence): Promise<CreateResult> {
 	if (!deps.v1Denied) {
-		const r = await createNoReplay(env, `${REST}/pods`, body, body.name, exclude, parseV1);
-		if (r.ok || r.uncertain) return r;
+		const r = await createNoReplay(env, `${REST}/pods`, body, body.name, exclude, parseV1, fence);
+		if (r.ok || r.uncertain || r.fenced) return r;
 		if (denied(r.status)) deps.v1Denied = true;
 		else if (r.status !== 400) return r;
 	}
-	return createPodV2(env, body, exclude);
+	return createPodV2(env, body, exclude, fence);
 }
 
 /** v2 places exactly one GPU type (or CPU flavor) per call: try the ranked candidates in order. */
-async function createPodV2(env: Env, body: Body, exclude: string[]): Promise<CreateResult> {
+async function createPodV2(env: Env, body: Body, exclude: string[], fence?: Fence): Promise<CreateResult> {
 	const base = {
 		name: body.name,
 		image: body.imageName,
@@ -164,9 +183,9 @@ async function createPodV2(env: Env, body: Body, exclude: string[]): Promise<Cre
 		last = await createNoReplay(env, `${V2}/pods`, payload, body.name, exclude, (j) => {
 			const p = validPod(j);
 			return p ? fromV2(p, want) : null;
-		});
+		}, fence);
 		// 400 = this candidate could not be placed (or rule broken): try the next. Success, uncertain or anything else: stop.
-		if (last.ok || last.uncertain || last.status !== 400) return last;
+		if (last.ok || last.uncertain || last.fenced || last.status !== 400) return last;
 	}
 	return last;
 }
@@ -191,6 +210,25 @@ export async function deletePod(env: Env, podId: string): Promise<boolean> {
 	if (!denied(v2.status) && v2.status !== 405) return false;
 	const v1 = await rp(env, `${REST}/pods/${id}`, { method: "DELETE" });
 	return v1.ok || v1.status === 404;
+}
+
+/**
+ * Direct provider check that a pod no longer exists: GET /v2/pods/{id} -> 404, or the Pod says TERMINATED
+ * (v1 GET 404 if v2 refuses the key). Anything else, including errors, is "not confirmed".
+ * A list that merely omits the pod is never enough (lists can lag).
+ */
+export async function podAbsent(env: Env, podId: string): Promise<boolean> {
+	const id = encodeURIComponent(podId);
+	try {
+		const r = await rp(env, `${V2}/pods/${id}`);
+		if (r.status === 404) return true;
+		if (r.ok) return validPod(await r.json().catch(() => null))?.status === "TERMINATED";
+		if (!denied(r.status)) return false;
+		const v1 = await rp(env, `${REST}/pods/${id}`);
+		return v1.status === 404;
+	} catch {
+		return false;
+	}
 }
 
 export interface ListedPod { id: string; name: string; createdAt?: string; costPerHr?: number; dataCenterId?: string | null; gpuTypeId?: string | null }

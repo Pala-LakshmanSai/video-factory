@@ -3,10 +3,11 @@ import { CONSTANTS, MAX_COST_PER_JOB_USD, MAX_PODS_AT_ONCE, MAX_REPLACEMENTS } f
 import { getJob, jobCost, logEvent, markPodDeleted, now, updateJob, type JobRow, type PodRow } from "./db";
 import { alert } from "./alerts";
 import { busySlots } from "./mcp";
-import { deletePod } from "./runpod";
+import { deletePod, podAbsent } from "./runpod";
 import { failJob, retirePod, selectAndCreate } from "./selector";
 import { isTerminal, transition } from "./state";
 
+const DELETE_STUCK_ALERT_MS = 10 * 60_000;
 const LIVE_STATES = ["waiting_for_plan", "rendering", "preview_ready", "rerendering", "final_render", "uploading", "verifying"];
 
 export async function watchdog(env: Env, db: D1Database) {
@@ -15,7 +16,21 @@ export async function watchdog(env: Env, db: D1Database) {
 	// 0. Deletes RunPod never confirmed: retry until it does (pod stays tracked meanwhile).
 	const pending = (await db.prepare("SELECT * FROM pods WHERE deleted_at IS NULL AND delete_reason IS NOT NULL").all<PodRow>()).results;
 	for (const p of pending) {
-		if (await deletePod(env, p.id).catch(() => false)) await markPodDeleted(db, p.id, p.delete_reason!);
+		await deletePod(env, p.id).catch(() => false);
+		// Cleared only on direct provider absence (GET -> 404 / TERMINATED), never on a 204 or a list omission.
+		if (await podAbsent(env, p.id)) {
+			await markPodDeleted(db, p.id, p.delete_reason!);
+			continue;
+		}
+		// Still billing. Alert once when it has been failing for 10 min (e.g. a cluster pod: v2 409).
+		const first = await db
+			.prepare("SELECT MIN(ts) AS ts, SUM(kind = 'delete_stuck') AS alerted FROM events WHERE job_id = ? AND kind IN ('delete_failed','delete_stuck') AND data_json LIKE ?")
+			.bind(p.job_id, `%"pod":"${p.id}"%`)
+			.first<{ ts: number | null; alerted: number | null }>();
+		if (first?.ts && t - first.ts > DELETE_STUCK_ALERT_MS && !first.alerted) {
+			await logEvent(db, p.job_id, "delete_stuck", { pod: p.id, reason: p.delete_reason });
+			await alert(env, db, `pod ${p.id} could not be deleted for ${Math.round((t - first.ts) / 60000)} min and may still be billing: delete it in the RunPod console`, p.job_id);
+		}
 	}
 
 	// 1. Live pods: dev cleanup, boot timeout, heartbeat loss.
@@ -46,11 +61,13 @@ export async function watchdog(env: Env, db: D1Database) {
 		if (c.cost_usd > MAX_COST_PER_JOB_USD) await failJob(env, db, job, "budget", `$${c.cost_usd} > $${MAX_COST_PER_JOB_USD}`);
 	}
 
-	// 3. Selector runs that never happened or died (waitUntil cut short): retry after 90 s. Held jobs (create
-	//    claim set: in flight or outcome unknown) are re-checked every minute whatever their updated_at.
+	// 3. Admissions: held jobs (create claim set) are re-checked every minute; unclaimed ones are retried 90 s after
+	//    their last selector attempt (admission_at), never judged by updated_at, which cost writes bump.
 	const stuck = (
 		await db
-			.prepare("SELECT id FROM jobs WHERE state IN ('provisioning','retrying') AND (updated_at < ? OR create_uncertain_at IS NOT NULL)")
+			.prepare(
+				"SELECT id FROM jobs WHERE state IN ('provisioning','retrying') AND (create_claim IS NOT NULL OR COALESCE(admission_at, created_at) < ?)",
+			)
 			.bind(t - 90_000)
 			.all<{ id: string }>()
 	).results;

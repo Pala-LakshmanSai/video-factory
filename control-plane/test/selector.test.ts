@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GPU_RANK, REGION_TIERS } from "../src/config";
 import { getJob } from "../src/db";
 import { deletePod, deps, listPods } from "../src/runpod";
-import { UNCERTAIN_GIVE_UP_MS, UNCERTAIN_GRACE_MS, planAttempts, selectAndCreate } from "../src/selector";
+import { UNCERTAIN_GIVE_UP_MS, planAttempts, selectAndCreate } from "../src/selector";
 import { L40S, RTX4090, catalogOf, json, makeEnv, mockFetch, v2list, v2pod } from "./helpers";
 
 deps.sleep = async () => {};
@@ -122,7 +122,8 @@ describe("selectAndCreate against a fake RunPod", () => {
 		const job = (await getJob(env.DB, "j1"))!;
 		expect(job.state).toBe("provisioning");
 		expect(job.create_uncertain_at).toBeTypeOf("number");
-		// Watchdog re-runs inside the grace window: still held, still no POST.
+		expect(job.create_claim).toMatch(/^c_/);
+		// Watchdog re-runs: still held, still no POST.
 		expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
 		expect(posts).toBe(1);
 	});
@@ -157,7 +158,7 @@ describe("selectAndCreate against a fake RunPod", () => {
 	});
 
 	describe("held job, re-checked by the watchdog", () => {
-		const hold = (msAgo: number) => env.DB.prepare("UPDATE jobs SET create_uncertain_at = ? WHERE id = 'j1'").bind(Date.now() - msAgo).run();
+		const hold = (msAgo: number) => env.DB.prepare("UPDATE jobs SET create_claim = 'c_crashed', create_uncertain_at = ? WHERE id = 'j1'").bind(Date.now() - msAgo).run();
 
 		it("pod shows up in the list -> adopted with the token already stored, no new POST", async () => {
 			await hold(60_000);
@@ -167,7 +168,7 @@ describe("selectAndCreate against a fake RunPod", () => {
 			expect(calls.some((c) => c.method === "POST")).toBe(false);
 			const job = (await getJob(env.DB, "j1"))!;
 			expect(job.state).toBe("booting");
-			expect(job.create_uncertain_at).toBeNull();
+			expect(job.create_claim).toBeNull();
 			expect(job.job_token_sha256).toBe("h-before");
 		});
 
@@ -178,19 +179,19 @@ describe("selectAndCreate against a fake RunPod", () => {
 			expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
 		});
 
-		it("confirmed absent after the grace period -> hold cleared, fresh selection", async () => {
-			await hold(UNCERTAIN_GRACE_MS + 1000);
-			mockFetch(
+		it("absent in the list for a long time (14 min) -> STILL held: a negative list never permits a replay", async () => {
+			await hold(14 * 60_000);
+			const calls = mockFetch(
 				(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined),
 				(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
-				(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: "fresh", costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
 			);
-			expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
-			expect((await getJob(env.DB, "j1"))!.create_uncertain_at).toBeNull();
+			expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
+			expect(calls.some((c) => c.method === "POST")).toBe(false);
+			expect((await getJob(env.DB, "j1"))!.create_claim).toBe("c_crashed");
 		});
 
-		it("lookup keeps failing past the grace period -> still held (unknown is not absent)", async () => {
-			await hold(UNCERTAIN_GRACE_MS + 1000);
+		it("lookup keeps failing -> still held (unknown is not absent)", async () => {
+			await hold(5 * 60_000);
 			mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json({ pods: "nope" }) : undefined));
 			expect(await selectAndCreate(env, env.DB, "j1")).toBe("held");
 		});

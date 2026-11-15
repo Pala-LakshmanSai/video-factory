@@ -73,6 +73,15 @@ Faults: `kill_pod`, `silence_heartbeat`, `slow_boot`, `price_cap:0.01`, `block_r
 `slow_boot`, `price_cap`, `block_region` must be armed before the pod exists: use `*` as job id (applies to the
 next job). Set `FAULTS_ENABLED` back to `"0"` afterwards. Status page: `URL/admin/status`.
 
+## Deploying a control-plane change
+
+Order matters: the code needs the new columns.
+```bash
+cd control-plane && npx wrangler d1 migrations apply video-factory --remote && npx wrangler deploy
+```
+`ADMISSION_ENABLED` stays `"0"` in `wrangler.jsonc` (no pod is ever rented, no benchmark runs) until a paid test is
+explicitly approved; then set it to `"1"` and deploy.
+
 ## Local dev (optional)
 
 Copy `control-plane/.dev.vars.example` to `.dev.vars` (sets `DEV_ROUTES=1`), then

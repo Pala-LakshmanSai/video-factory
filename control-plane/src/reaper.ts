@@ -35,14 +35,16 @@ export async function reaper(env: Env, db: D1Database) {
 		if (!reason) continue;
 		const ok = await deletePod(env, p.id).catch(() => false);
 		// Unconfirmed -> keep it tracked (delete pending); the watchdog and the next reaper run retry it.
-		if (row) await (ok ? markPodDeleted(db, p.id, `reaper:${reason}`) : markDeletePending(db, p.id, `reaper:${reason}`));
+		// Tracked pods become delete-pending either way; the watchdog clears them on direct provider absence.
+		if (row) await markDeletePending(db, p.id, `reaper:${reason}`);
 		await logEvent(db, job?.id ?? "reaper", ok ? "reaper_delete" : "delete_failed", { pod: p.id, name: p.name, reason });
 		if (job && !isTerminal(job.state)) await alert(env, db, `reaper deleted pod ${p.id} of a still-active job (${reason})`, job.id);
 	}
 
 	// Pods D1 thinks are alive but RunPod no longer lists (self-destructed, deleted by hand).
 	// Only trusted because listPods returned a complete, validated list; young pods are skipped (list lag).
-	const tracked = (await db.prepare("SELECT id FROM pods WHERE deleted_at IS NULL AND created_at < ?").bind(now() - LIST_LAG_MS).all<{ id: string }>()).results;
+	// Delete-pending pods are excluded: they clear only on direct absence (watchdog), never on a list omission.
+	const tracked = (await db.prepare("SELECT id FROM pods WHERE deleted_at IS NULL AND delete_reason IS NULL AND created_at < ?").bind(now() - LIST_LAG_MS).all<{ id: string }>()).results;
 	for (const t of tracked) if (!liveIds.has(t.id)) await markPodDeleted(db, t.id, "gone");
 }
 
