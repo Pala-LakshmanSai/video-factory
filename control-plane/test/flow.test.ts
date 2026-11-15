@@ -148,6 +148,30 @@ describe("happy path: acquire -> submit -> hello -> previews -> approve -> uploa
 });
 
 describe("agent auth", () => {
+	it("repairs only the failed scene of the current final render after the error was shown", async () => {
+		const id = await newJob();
+		await submitJob(env.DB, id, PLAN);
+		await agent(id, "/hello", { gpu: "g", vcpu: 8, ram_gb: 32, pod_id: "pod1", data_center: "AP-IN-1" });
+		await agent(id, "/previews", undefined, token(), previews([1, 2]));
+		expect(await approve(env.DB, id)).toEqual({ state: "final_render" });
+		const patch = { props: { title: "Updated" } };
+		expect(await reviseScene(env.DB, id, 2, patch)).toHaveProperty("error");
+
+		await agent(id, "/error", { stage: "final_render", scene: 2, log_tail: "Template error" });
+		expect((await waitJob(env.DB, id, "done", 1)).out!.error).toContain("render error in scene 2 (final_render)");
+		expect((await getJob(env.DB, id))!.last_render_error).toBeNull();
+		expect(await reviseScene(env.DB, id, 1, patch)).toHaveProperty("error");
+		expect(await reviseScene(env.DB, id, 2, patch)).toEqual({ state: "rerendering", scene: 2 });
+		expect(await getJob(env.DB, id)).toMatchObject({ approved: 0, pending_cmd: "rerender:2", render_errors: '{"2":1}' });
+
+		expect(await (await agent(id, "/heartbeat", { stage: "idle", pct: 0 })).json()).toEqual({ cmd: "rerender:2" });
+		await agent(id, "/previews", undefined, token(), previews([2]));
+		expect((await getJob(env.DB, id))!.state).toBe("preview_ready");
+		expect(await approve(env.DB, id)).toEqual({ state: "final_render" });
+		expect(await reviseScene(env.DB, id, 2, patch)).toHaveProperty("error");
+		expect(podN).toBe(1);
+	});
+
 	it("rejects a wrong token and an expired token", async () => {
 		const id = await newJob();
 		expect((await agent(id, "/heartbeat", { stage: "x", pct: 0 }, "nope")).status).toBe(401);

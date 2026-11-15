@@ -133,13 +133,30 @@ export async function approve(db: D1Database, jobId: string) {
 export async function reviseScene(db: D1Database, jobId: string, scene: number, patch: Partial<Scene>) {
 	const job = await getJob(db, jobId);
 	if (!job) return { error: `no job ${jobId}` };
-	if (!["rendering", "preview_ready", "rerendering"].includes(job.state)) return { error: `revise_scene needs rendering/preview_ready/rerendering, job is ${job.state}` };
+	if (!["rendering", "preview_ready", "rerendering", "final_render"].includes(job.state)) return { error: `revise_scene needs a preview or a reported final render error, job is ${job.state}` };
 	const p = plan(job)!;
 	const i = p.scenes.findIndex((s) => s.n === scene);
 	if (i < 0) return { error: `no scene ${scene}; scenes are 1..${p.scenes.length}` };
 	const next = { ...p, scenes: p.scenes.map((s, k) => (k === i ? ({ ...(mergePatch(s, patch) as Scene), n: scene }) : s)) };
 	const errs = validatePlan(next, job.style);
 	if (errs.length) return { error: "patched scene invalid:\n- " + errs.join("\n- ") };
+	if (job.state === "final_render") {
+		// wait_job clears the notification after showing it. Use the event to require a scene error
+		// after the latest state transition, and fence the repair against concurrent progress or approval.
+		const last = await db.prepare("SELECT id, kind, data_json FROM events WHERE job_id = ? AND kind IN ('state', 'render_error') ORDER BY id DESC LIMIT 1")
+			.bind(job.id).first<{ id: number; kind: string; data_json: string }>();
+		const error = last?.kind === "render_error" ? JSON.parse(last.data_json) as { stage: string; scene?: number; n: number } : null;
+		if (!last || error?.stage !== "final_render" || error.scene !== scene || !Number.isInteger(error.n) || error.n < 1 || error.n >= CONSTANTS.RENDER_ERROR_RETRIES_MAX) {
+			return { error: `revise_scene during final_render requires a reported final render error for scene ${scene}` };
+		}
+		const result = await db.prepare(
+			"UPDATE jobs SET state = 'rerendering', plan_json = ?, pending_cmd = ?, rerender_scene = ?, qa_rounds = qa_rounds + 1, approved = 0, last_render_error = NULL, updated_at = ? " +
+			"WHERE id = ? AND state = 'final_render' AND qa_rounds = ? AND ? = (SELECT MAX(id) FROM events WHERE job_id = ? AND kind IN ('state', 'render_error'))",
+		).bind(JSON.stringify(next), `rerender:${scene}`, scene, now(), job.id, job.qa_rounds, last.id, job.id).run();
+		if (result.meta.changes !== 1) return { error: "job changed while repairing final render; call wait_job" };
+		await logEvent(db, job.id, "state", { from: "final_render", to: "rerendering", scene });
+		return { state: "rerendering" as const, scene };
+	}
 	await updateJob(db, job.id, { plan_json: JSON.stringify(next), pending_cmd: `rerender:${scene}`, rerender_scene: scene, qa_rounds: job.qa_rounds + 1 });
 	await transition(db, job, "rerendering", { scene });
 	return { state: "rerendering" as const, scene };
@@ -228,7 +245,7 @@ export function createServer() {
 		"revise_scene",
 		{
 			description:
-				"Fix one scene: patch is a JSON merge patch on that scene (e.g. {props:{title:'...'}}). Only that scene re-renders. " + 'Next: call wait_job {until:"preview"} again.',
+				"Fix one scene: patch is a JSON merge patch on that scene (e.g. {props:{title:'...'}}). Only that scene re-renders. After a final render error, repair only the reported scene, then review and approve the new preview. " + 'Next: call wait_job {until:"preview"} again.',
 			inputSchema: z.object({ job_id: z.string(), scene: z.number().int().min(1), patch: z.record(z.string(), z.unknown()) }),
 		},
 		async ({ job_id, scene, patch }) => {
