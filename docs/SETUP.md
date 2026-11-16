@@ -105,9 +105,9 @@ Visual follow-up, resolved: the one-frame black flash at each `fade` scene join 
 
 ## Phase 9 fault drills — exact upload proof passed (2026-11-16)
 
-Single operator, owner-approved, $3 cap; spent **$0.4659** tracked. Every drill pod has a RunPod Audit Log deletion
+Single operator, owner-approved, $3 cap; spent **$0.4937** tracked (incl. B8). Every drill pod has a RunPod Audit Log deletion
 receipt (independent check). After the last run: `ADMISSION_ENABLED`/`FAULTS_ENABLED`/`DEV_ROUTES` all `"0"`,
-zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2913b893…926b` (a9e41fa); now `sha256:1ad06161…79be` (912a8c0, adds NVENC fallback diagnostics).
+zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2913b893…926b` (a9e41fa); then `sha256:1ad06161…79be` (912a8c0, NVENC fallback diagnostics); now `sha256:65af4b0b…66af` (05d866c).
 
 **Exact injection (named fault fired and the observed event matches):**
 
@@ -140,8 +140,16 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
   CUDA 13.2. RunPod Audit Log: created 03:37:53, stopped 03:39:39, deleted 03:39:49 UTC (116 s; ≈ $0.02 at
   quoted $0.59/hr + disk, no settled invoice checked). Scope: standalone NVENC on one A40 only. It does not
   qualify GeForce concurrency or the 4-worker cap under a full render, and B7 remains an x264 render.
-- **Heartbeat gap.** B7's pod sent no heartbeat for 79 s during preview render (threshold 60 s); it survived only
-  because of watchdog tick timing. Kokoro/Chromium work can starve the agent's event loop.
+- **B8 qualification (2026-11-16), image `sha256:65af4b0b…66af` (05d866c).** Job `j_0323c69825c8424b`, RTX 4090
+  pod `cx4380hwfgdt6i` (EU-RO-1): preview, chat `approve`, final, upload 2,407,708 bytes + md5 `4910981b…` verified,
+  auto `done` 04:13:50 UTC, pod deleted `done`, $0.0278. Encoder: **libx264 fallback**; the new diagnostics logged
+  `nvenc probe failed (187)` with `OpenEncodeSessionEx failed: unsupported device (2)` / `No capable devices found`
+  before any parallel encode. So this host's GeForce exposes no usable NVENC session to the container, while the
+  A40 selftest passed. **GeForce 4-worker NVENC remains unqualified.**
+- **Heartbeat gap — fixed and qualified on B8.** B7's pod sent no heartbeat for 79 s (threshold 60 s); it survived
+  only because of watchdog tick timing. 05d866c runs Kokoro TTS in a child process (local event-loop lag 2 ms) and
+  logs late heartbeat ticks with the stage; on B8, D1 received heartbeats about every 15 s through TTS and preview.
+- **Fault slot — fixed (5986f92).** `armFault` claims `pending_cmd` only when empty and returns 409 otherwise,
+  before storing fault config or logging `fault_armed`; regression test covers a queued `render_final`.
 - **Cold boot.** 6.2 GB image vs 6-min boot timeout on cold hosts.
-- **Fault slot.** `armFault` overwrites `pending_cmd`; arm agent faults only when it is empty.
 
