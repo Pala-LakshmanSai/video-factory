@@ -72,7 +72,7 @@ export async function tts(text: string, out: string) {
 	await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", raw, "-ac", "1", "-ar", "48000", out]);
 }
 
-/** TTS_THREADS, else min(8, cgroup v2 CPU quota or available cores). */
+/** TTS_THREADS, else min(4, cgroup v2 CPU quota or available cores). */
 export function ttsThreads(): number {
 	const env = Number(process.env.TTS_THREADS);
 	if (env >= 1) return Math.floor(env);
@@ -81,7 +81,7 @@ export function ttsThreads(): number {
 		const [quota, period] = readFileSync("/sys/fs/cgroup/cpu.max", "utf8").trim().split(/\s+/);
 		if (quota !== "max") cores = Math.min(cores, Math.max(1, Math.ceil(Number(quota) / Number(period))));
 	} catch {} // no cgroup v2 (macOS, v1 hosts): host cores
-	return Math.min(8, cores);
+	return Math.min(4, cores) // 4 matched 8 for speed at half the CPU (local measurement);
 }
 
 function wav(pcm: Float32Array, rate: number): Buffer {
