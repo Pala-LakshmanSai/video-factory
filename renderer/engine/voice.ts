@@ -81,7 +81,7 @@ export function ttsThreads(): number {
 		const [quota, period] = readFileSync("/sys/fs/cgroup/cpu.max", "utf8").trim().split(/\s+/);
 		if (quota !== "max") cores = Math.min(cores, Math.max(1, Math.ceil(Number(quota) / Number(period))));
 	} catch {} // no cgroup v2 (macOS, v1 hosts): host cores
-	return Math.min(4, cores) // 4 matched 8 for speed at half the CPU (local measurement);
+	return Math.min(4, cores); // 4 matched 8 for speed at half the CPU (local measurement)
 }
 
 function wav(pcm: Float32Array, rate: number): Buffer {
