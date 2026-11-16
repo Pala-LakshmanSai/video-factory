@@ -153,13 +153,14 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
   verified, auto `done` 04:28:49 UTC; RunPod Audit Log created 04:24:39, deleted 04:28:50 UTC; $0.0619. No
   `heartbeat tick late` lines. Fallback is now proven on two GeForce hosts. TTS took 2 min 6 s on this 64-vCPU host
   (hello 04:25:28, `voiceover 35.51 s` 04:27:34) with heartbeats intact.
-- **Why GeForce NVENC fails (research, not yet confirmed on a pod):** matches a known NVIDIA driver bug on
+- **Why GeForce NVENC fails — suspected, unverified:** the symptoms match a known NVIDIA driver bug on
   multi-GPU hosts with drivers ≥ 570 (reported through 610.x): a container given a subset of GPUs can open NVENC
   only on the host's "primary" GPU; others get `unsupported device (2)` / `No capable devices found`
   (NVIDIA forum 347361, nvidia-container-toolkit#1249, closed as a driver issue). Older ffmpeg or a CUDA-version
   filter cannot avoid it. **Decision:** keep the libx264 fallback as normal behaviour on GeForce (proven on B8/B9,
   correct output, auto done); NVENC is opportunistic. Datacenter GPUs (A40 passed selftest) have no 8-session cap.
-  Confirmation check for a future failing pod: `nvidia-smi -L` vs `ls /dev/nvidia[0-9]*`.
+  The failing hosts' topology and driver were not captured, so this stays a hypothesis until a failing pod shows
+  `nvidia-smi -L` vs `ls /dev/nvidia[0-9]*` and the driver version. NVENC is claimed only where exact-digest logs show it.
 - **Heartbeat gap — fixed and qualified on B8.** B7's pod sent no heartbeat for 79 s (threshold 60 s); it survived
   only because of watchdog tick timing. 05d866c runs Kokoro TTS in a child process (local event-loop lag 2 ms) and
   logs late heartbeat ticks with the stage; on B8, D1 received heartbeats about every 15 s through TTS and preview.
