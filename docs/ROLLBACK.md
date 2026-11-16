@@ -24,3 +24,10 @@ To restore the source too: `git checkout stable-v1` (or `git revert` the style c
 Style work must keep D1 migrations additive (new tables/columns only), so the stable Worker
 still runs against the newer schema. The 3 built-in styles stay in the image as the fallback
 if the style registry is unreachable.
+
+## Before rolling back past the style registry
+
+Jobs created after a148db5 may use imported styles that the stable-v1 image lacks. Each job pins its own
+renderer image (`jobs.renderer_image`, migration 0003), but stable-v1 ignores that column. So before
+`wrangler rollback` to stable-v1: set `ADMISSION_ENABLED="0"` and wait until no job is open
+(`SELECT COUNT(*) FROM jobs WHERE state NOT IN ('done','failed','cancelled')` = 0).

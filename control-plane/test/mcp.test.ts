@@ -169,6 +169,30 @@ describe("tools/call", () => {
 		expect(calls.filter((c) => c.method === "POST" && c.url.endsWith("/v1/pods"))).toHaveLength(1);
 	});
 
+	it("list_styles is read-only: zero jobs, zero provider calls", async () => {
+		const r = await call("list_styles", {});
+		expect(r.isError).toBeFalsy();
+		await Promise.all(pending.splice(0));
+		expect(calls).toHaveLength(0);
+		expect((await stubEnv.DB.prepare("SELECT COUNT(*) n FROM jobs").first<{ n: number }>())!.n).toBe(0);
+	});
+
+	it("a pending (or unknown) style id is rejected by acquire_gpu with an otherwise valid request", async () => {
+		const notReady = Object.keys(STYLE_REGISTRY).find((k) => STYLE_REGISTRY[k].status === "pending") ?? "stickman";
+		expect(READY_STYLES).not.toContain(notReady);
+		const r = await call("acquire_gpu", { ...ACQ, style: notReady });
+		expect(r.isError).toBe(true);
+		await Promise.all(pending.splice(0));
+		expect(calls).toHaveLength(0);
+		expect((await stubEnv.DB.prepare("SELECT COUNT(*) n FROM jobs").first<{ n: number }>())!.n).toBe(0);
+	});
+
+	it("acquire_gpu pins the job to the current renderer image", async () => {
+		const out = jsonOf(await call("acquire_gpu", ACQ));
+		expect((await getJob(stubEnv.DB, out.job_id))!.renderer_image).toBe(stubEnv.RENDERER_IMAGE);
+		await Promise.all(pending.splice(0));
+	});
+
 	it("bad acquire_gpu input is a tool error, not a crash", async () => {
 		const r = await call("acquire_gpu", { ...ACQ, style: "cartoon", voiceover: { text: "a", drive_file_id: "b" } });
 		expect(r.isError).toBe(true);
@@ -259,5 +283,16 @@ describe("tools/call", () => {
 	it("unknown tool is reported, not thrown", async () => {
 		const m = await rpc("tools/call", { name: "render_everything", arguments: {} });
 		expect(m.error ?? m.result?.isError).toBeTruthy();
+	});
+});
+
+describe("per-job renderer pin", () => {
+	it("pods for a job use the job's pinned image, not a newer global one", async () => {
+		const { podBody } = await import("../src/selector");
+		const job = { id: "j_pin", dev_mode: null, renderer_image: "docker.io/x/video-renderer@sha256:old" } as never;
+		const env2 = { ...stubEnv, RENDERER_IMAGE: "docker.io/x/video-renderer@sha256:new" } as Env;
+		const a = { computeTier: "GPU/SECURE", dataCenterIds: ["EU-RO-1"], gpuTypeIds: [RTX4090] } as never;
+		expect(podBody(env2, job, a, "tok").imageName).toBe("docker.io/x/video-renderer@sha256:old");
+		expect(podBody(env2, { ...(job as object), renderer_image: null } as never, a, "tok").imageName).toBe("docker.io/x/video-renderer@sha256:new");
 	});
 });

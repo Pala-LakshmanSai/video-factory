@@ -20,6 +20,7 @@ export interface JobRow {
 	create_uncertain_at: number | null;
 	admission_at: number | null;
 	pending_cmd: string | null;
+	renderer_image: string | null;
 	reuploads: number;
 	skip_dcs: string;
 	stage: string | null;
@@ -101,12 +102,15 @@ export async function markDeletePending(db: D1Database, podId: string, reason: s
 	await db.prepare("UPDATE pods SET delete_reason = ? WHERE id = ? AND deleted_at IS NULL").bind(reason, podId).run();
 }
 
-/** RunPod confirmed the pod is gone (DELETE 2xx/404). */
+/** RunPod confirmed the pod is gone (DELETE 2xx/404). Every confirmed delete re-records the job's final cost. */
 export async function markPodDeleted(db: D1Database, podId: string, reason: string) {
-	await db
+	const r = await db
 		.prepare("UPDATE pods SET deleted_at = ?, delete_reason = ? WHERE id = ? AND deleted_at IS NULL")
 		.bind(now(), reason, podId)
 		.run();
+	if (!r.meta.changes) return;
+	const pod = await db.prepare("SELECT job_id FROM pods WHERE id = ?").bind(podId).first<{ job_id: string }>();
+	if (pod) await updateJob(db, pod.job_id, await jobCost(db, pod.job_id));
 }
 
 /** GPU seconds + $ across every pod this job ever had (live pods billed up to now). */

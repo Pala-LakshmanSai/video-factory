@@ -41,8 +41,8 @@ export async function acquireGpu(e: Env, db: D1Database, a: { style: string; tit
 	const t = now();
 	// A concurrent repeat call with the same chat_key loses the race and returns the winner's job.
 	const r = await db
-		.prepare("INSERT INTO jobs (id, chat_key, state, title, style, voiceover_json, ttl_min, dev_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chat_key) DO NOTHING")
-		.bind(id, a.chat_key, state, a.title, a.style, JSON.stringify(a.voiceover), CONSTANTS.POD_TTL_MIN, opts.dev_mode ?? null, t, t)
+		.prepare("INSERT INTO jobs (id, chat_key, state, title, style, voiceover_json, ttl_min, dev_mode, renderer_image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chat_key) DO NOTHING")
+		.bind(id, a.chat_key, state, a.title, a.style, JSON.stringify(a.voiceover), CONSTANTS.POD_TTL_MIN, opts.dev_mode ?? null, e.RENDERER_IMAGE, t, t)
 		.run();
 	if (!r.meta.changes) {
 		const won = (await byKey())!;
@@ -209,7 +209,7 @@ export function createServer() {
 		"acquire_gpu",
 		{
 			description:
-				"Call FIRST for a new video request, before planning: rents a fresh GPU while you plan. Pass a random 8-letter chat_key you make once per chat and reuse it on any repeat call (same chat -> same job). Returns {job_id, state} in under 1 s. " + NEXT.acquire,
+				"Call for a new video request once the style is known, before planning: rents a fresh GPU while you plan. style is a registry id from list_styles (e.g. \"explainer\"), not its label; only ready styles are accepted, so call list_styles first if the user hasn't picked one. Pass a random 8-letter chat_key you make once per chat and reuse it on any repeat call (same chat -> same job). Returns {job_id, state} in under 1 s. " + NEXT.acquire,
 			inputSchema: z.object({
 				style: z.enum(STYLES as [string, ...string[]]),
 				title: z.string().min(1).max(200),

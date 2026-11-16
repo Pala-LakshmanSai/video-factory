@@ -12,7 +12,7 @@ import { DriveAuthError, createSession, fileMeta, shareAnyone, streamFile } from
 import { recordBench } from "./bench";
 import { hasFault } from "./faults";
 import { failJob, retirePod } from "./selector";
-import { isTerminal, transition } from "./state";
+import { IllegalTransition, isTerminal, transition } from "./state";
 
 type Ctx = { Bindings: Env; Variables: { job: JobRow } };
 
@@ -113,12 +113,19 @@ agentApp.post("/previews", async (c) => {
 	).results;
 	const done = need.length > 0 && need.every((n) => (have.find((h) => h.scene === n)?.k ?? 0) >= 3);
 	if (done && (job.state === "rendering" || job.state === "rerendering")) {
-		await updateJob(c.env.DB, job.id, { rerender_scene: null });
-		await transition(c.env.DB, job, "preview_ready", { round });
-		if (job.approved) {
-			// Replacement pod after approve: Claude already approved, go straight on.
-			await updateJob(c.env.DB, job.id, { pending_cmd: "render_final" });
-			await transition(c.env.DB, job, "final_render", { reason: "already_approved" });
+		const scene = job.rerender_scene;
+		try {
+			await transition(c.env.DB, job, "preview_ready", { round });
+			// Clear only the scene we read: a concurrent revise_scene may already have set the next one.
+			await c.env.DB.prepare("UPDATE jobs SET rerender_scene = NULL WHERE id = ? AND rerender_scene = ?").bind(job.id, scene).run();
+			if (job.approved) {
+				// Replacement pod after approve: Claude already approved, go straight on.
+				await transition(c.env.DB, job, "final_render", { reason: "already_approved" });
+				await updateJob(c.env.DB, job.id, { pending_cmd: "render_final" });
+			}
+		} catch (e) {
+			// Lost the compare-and-set to revise_scene / approve: the previews are stored and the job moved on.
+			if (!(e instanceof IllegalTransition) || (await getJob(c.env.DB, job.id))?.state === e.from) throw e;
 		}
 	}
 	return c.body(null, 201);
@@ -147,8 +154,11 @@ agentApp.post("/upload-session", async (c) => {
 agentApp.post("/done", async (c) => {
 	const job = c.get("job");
 	const body = await c.req.json<DoneIn>();
+	// Idempotent for agent retries (timeout/network): this file was already verified and rejected -> no-op.
+	if (job.state === "uploading" && job.drive_file_id === body.file_id) return c.json({});
 	await updateJob(c.env.DB, job.id, { drive_file_id: body.file_id, md5: body.md5, size: body.size });
 	if (job.state === "uploading") await transition(c.env.DB, job, "verifying");
+	// state verifying: a first /done was cut off (or is still running); re-verifying is safe, see verify().
 	return c.json(await verify(c.env, job, body, deferOf(c)));
 });
 
@@ -187,6 +197,7 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 		return {};
 	} catch (e) {
 		if (e instanceof DriveAuthError) await failJob(env, db, job, "drive_auth", e.message, defer);
+		else if (e instanceof IllegalTransition) return {}; // a concurrent /done for the same file got there first
 		else throw e;
 		return {};
 	}

@@ -8,7 +8,7 @@ import {
 import { activePod, getJob, jobCost, logEvent, markDeletePending, markPodDeleted, now, randomId, sha256Hex, updateJob, type JobRow } from "./db";
 import { catalog, createPod, deletePod, lookupPodByName, type CreatedPod } from "./runpod";
 import { faultArg, hasFault } from "./faults";
-import { isTerminal, transition } from "./state";
+import { IllegalTransition, isTerminal, transition } from "./state";
 
 const matches = (pattern: string, id: string) =>
 	pattern.endsWith("*") ? id.startsWith(pattern.slice(0, -1)) : id === pattern;
@@ -49,7 +49,7 @@ export function podBody(env: Env, job: JobRow, a: Attempt, token: string): Creat
 	const dummy = job.dev_mode === "dummy";
 	const base = {
 		name: `vf-${job.id}` as const,
-		imageName: dummy ? DEV_DUMMY_IMAGE : env.RENDERER_IMAGE,
+		imageName: dummy ? DEV_DUMMY_IMAGE : (job.renderer_image ?? env.RENDERER_IMAGE),
 		containerRegistryAuthId: env.RUNPOD_REGISTRY_AUTH_ID,
 		dataCenterIds: a.dataCenterIds,
 		dataCenterPriority: "custom" as const,
@@ -273,11 +273,19 @@ export async function failJob(
 	env: Env, db: D1Database, job: JobRow, code: ErrorCode, message: string, defer: (p: Promise<unknown>) => void = () => {},
 ) {
 	const pod = await activePod(db, job.id);
-	let recorded = true;
-	try {
-		await transition(db, job, "failed", { code });
-	} catch {
-		recorded = false; // already terminal: still make sure its pod goes
+	// A lost compare-and-set (stale `job`: a concurrent /hello or /previews moved it) re-reads and retries;
+	// only a job that is (or became) terminal is left as is. Its pod still goes either way.
+	let recorded = false;
+	for (let cur: JobRow | null = job, i = 0; cur && !isTerminal(cur.state) && i < 20; i++) {
+		try {
+			await transition(db, cur, "failed", { code });
+			recorded = true;
+			job.state = "failed";
+			break;
+		} catch (e) {
+			if (!(e instanceof IllegalTransition)) throw e;
+			cur = await getJob(db, job.id);
+		}
 	}
 	if (recorded) {
 		await updateJob(db, job.id, { error_json: JSON.stringify({ code, message }), ...(await jobCost(db, job.id)) });

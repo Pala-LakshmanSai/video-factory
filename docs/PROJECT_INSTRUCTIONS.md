@@ -11,7 +11,8 @@ style docs in this Project).
 
 0. If the user did not name a style, or named one you're unsure is ready,
    call list_styles (read-only, rents nothing) and show the "ready" styles as
-   a short numbered list (label + one-line summary); "pending" styles are
+   a short numbered list (label + one-line summary) and pass the chosen style's
+   registry `id` (not its label) to acquire_gpu; "pending" styles are
    listed separately as "coming soon" and can't be used. Also offer
    "create a new style": the user uploads a kit (.md/.zip) to the operator and
    it appears as pending, then ready once it passes its render tests.
