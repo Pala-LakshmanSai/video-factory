@@ -19,7 +19,7 @@ Stickman Explainer: flat vector stick figures (round heads, thick limbs, a hoodi
 
 ## Pacing
 
-From `tokens.pacing`: **2.6 words per second**, scenes **1.5 s min, 6 s max**.
+From `tokens.pacing`: **2.6 words per second**, scenes **2 s min, 6 s max**. The 2 s minimum holds after the renderer stretches the plan to the real audio, so plan each scene at **≥ 2.2 s** and merge very short lines. Whole plan ≤ 1.5 MB including any `photo` data URIs.
 
 - **Cut on every sentence**: one spoken line, one picture. `duration_s = max(1.5, words / 2.6)`, rounded to 0.5 s. Typical shots are 2–4 s; the cold open can go faster (1.5–2.5 s).
 - Over ~15 words in one scene? Split it.

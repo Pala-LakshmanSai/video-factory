@@ -5,6 +5,8 @@ Kurzgesagt-like narrated science animation, ported from the audited Flatglow Exp
 **Use it for:** science, nature, space, biology and "how does X work" explainers, and curious, playful educational videos.
 **Don't use it for:** serious documentary or history (use `documentary`), or hype shorts (use `bold-shorts`).
 
+> Limits: every scene ≥ 2 s after stretching to the real audio (plan ≥ 2.2 s; tokens use 2.5 s). Whole plan ≤ 1.5 MB.
+
 ## Plan rules
 - `style: "flatglow"`, `fps: 30` (any fps from 12 to 60 is accepted), `resolution: "1920x1080"` (preferred) or `"1080x1920"`.
 - `n` runs 1..N. The total must be ≤ 3 min. `transition` is `cut`, `fade` or `slide`; use `cut` on the last scene. `narration` holds the exact voiceover words.

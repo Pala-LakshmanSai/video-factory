@@ -13,13 +13,13 @@ Calm, real-media documentary for an older (55+) audience watching on a TV: archi
 - `template` is one of the seven ids below. `transition` (into the next scene) is `cut`, `fade` or `slide`. Default `cut` between shots; `fade` into/out of title, chapter and quote cards (the engine fades from black, 0.35 s; there are no cross-dissolves); `slide` sparingly; `cut` on the last scene.
 - `narration` = the exact words spoken over the scene; every voiceover word belongs to exactly one scene.
 - `duration_s` is rescaled to the real audio length, but **overlay/caption times inside props are NOT rescaled**: keep `duration_s` close to the real spoken time so `at`/`dur` land on the words.
-- **Images must be `data:image/...` URIs** (no `https:`, no file paths; no network at render). Re-encode ≤ 1920 px JPEG. A missing image draws a dark grey frame. Keep the whole plan small (tens of MB at most).
+- **Images must be `data:image/...` URIs** (no `https:`, no file paths; no network at render). Re-encode ≤ 1920 px JPEG. A missing image draws a dark grey frame. The whole serialized plan (UTF-8 JSON, every data URI included) must stay **under 1.5 MB**: it is stored in one database row with a hard 2 MB limit. Size images before renting: ≤ 1280 px, JPEG quality ~75, about 60–150 KB each, so roughly 8–15 images per plan; flipbooks spend this budget fast (use few, small frames).
 - Every template accepts `props.kind` to override its default shot kind, but use the matching template instead.
 - Audio: the job has exactly one audio track. Score and sound effects only exist if pre-mixed into the voiceover file supplied from Drive (`voiceover: { drive_file_id }`); a Kokoro `{ text }` voiceover gives voice only.
 
 ## Pacing
 
-`tokens.pacing`: 2.33 words/s, shots 1.6 s min, 12 s max. Cold open: 2.5–4 s shots; body: 5–8 s. Cut on spoken words. On-screen text needs `1 s + 0.45 s × words` (2.5–8 s) to be read.
+`tokens.pacing`: 2.33 words/s, shots **2 s min** (after the renderer stretches the plan to the real audio, so plan ≥ 2.2 s), 12 s max. Cold open: 2.5–4 s shots; body: 5–8 s. Cut on spoken words. On-screen text needs `1 s + 0.45 s × words` (2.5–8 s) to be read.
 
 ## Shared props (all media templates: `photo`, `map`, `compare`, `end`; overlays/captions on any template)
 

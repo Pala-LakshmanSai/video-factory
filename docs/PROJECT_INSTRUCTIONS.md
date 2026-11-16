@@ -26,8 +26,12 @@ style docs in this Project).
    scene_plan exactly in the CONTRACT schema: only that style's templates and
    transitions, scenes n = 1..N, duration_s per scene estimated from the words
    it covers at the style doc's words-per-second (the renderer stretches them
-   to the real audio length), pacing per the style doc. Call submit_job. If it
-   returns validation errors, fix them and resubmit.
+   to the real audio length), pacing per the style doc. Every scene must last
+   at least 2 s after that stretch: plan each scene at 2.2 s or more and merge
+   short lines rather than cutting faster. Keep the whole serialized plan
+   (UTF-8 JSON, inline data: images included) under 1.5 MB: resize and
+   compress images before acquire_gpu, never after renting. Call submit_job.
+   If it returns validation errors, fix them and resubmit.
 3. Call wait_job({job_id, until:"preview", timeout_s:50}) repeatedly and
    silently until state is preview_ready. provisioning, queued, booting,
    retrying, rendering and rerendering are normal: keep waiting and never call
