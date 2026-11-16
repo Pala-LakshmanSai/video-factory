@@ -245,14 +245,17 @@ export async function selectAndCreate(
 async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a: Attempt | null, cap: number, c: string | null): Promise<"created" | "rejected" | "rejected_pending" | "skipped"> {
 	const t = now();
 	const compute = a ? (a.computeTier === "CPU" ? "CPU" : "GPU") : pod.gpuTypeId ? "GPU" : null;
-	await db
-		.prepare("INSERT OR IGNORE INTO pods (id, job_id, gpu_type_id, data_center_id, cloud_type, compute_type, cost_per_hr, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-		.bind(pod.id, job.id, pod.gpuTypeId, pod.dataCenterId, a?.computeTier.split("/")[1] ?? null, compute, Number.isFinite(pod.costPerHr) ? pod.costPerHr : CONSTANTS.PRICE_CAP_USD_PER_HR, t)
-		.run();
 	const costOk = Number.isFinite(pod.costPerHr) && pod.costPerHr >= 0;
-	if (!costOk || pod.costPerHr > cap) {
+	const reject = !costOk || pod.costPerHr > cap ? (costOk ? "cost_reject" : "cost_invalid") : null;
+	// A rejected pod is recorded already delete-pending (same statement): its row never looks like an active,
+	// valid-priced pod, so a crash before the DELETE leaves it to the pending-delete retry, never to repair/boot.
+	await db
+		.prepare("INSERT OR IGNORE INTO pods (id, job_id, gpu_type_id, data_center_id, cloud_type, compute_type, cost_per_hr, created_at, delete_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		.bind(pod.id, job.id, pod.gpuTypeId, pod.dataCenterId, a?.computeTier.split("/")[1] ?? null, compute, Number.isFinite(pod.costPerHr) ? pod.costPerHr : CONSTANTS.PRICE_CAP_USD_PER_HR, t, reject)
+		.run();
+	if (reject) {
 		await logEvent(db, job.id, "cost_reject", { pod: pod.id, costPerHr: Number.isFinite(pod.costPerHr) ? pod.costPerHr : String(pod.costPerHr), reason: costOk ? "over_cap" : "cost_invalid", gpu: pod.gpuTypeId });
-		const gone = await retirePod(env, db, job.id, pod.id, costOk ? "cost_reject" : "cost_invalid");
+		const gone = await retirePod(env, db, job.id, pod.id, reject);
 		if (gone) return "rejected";
 		// The create itself is resolved (the pod is known and tracked), so release the claim; the pending delete
 		// alone keeps the job held (selectAndCreate's `undeleted` gate) until the pod is confirmed gone.

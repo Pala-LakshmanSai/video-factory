@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getJob } from "../src/db";
 import { deps } from "../src/runpod";
 import { selectAndCreate } from "../src/selector";
-import { RTX4090, catalogOf, json, makeEnv, mockFetch } from "./helpers";
+import { RTX4090, catalogOf, json, makeEnv, mockFetch, v2list } from "./helpers";
 
 deps.sleep = async () => {};
 const cat = catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" }, "EU-RO-1": { [RTX4090]: "HIGH" } });
@@ -21,11 +21,12 @@ const hooked = (db: D1Database, hook: { before?: (sql: string, a: unknown[]) => 
 };
 const isTakeClaim = (sql: string) => sql.startsWith("UPDATE jobs SET create_claim = ?");
 
-function runpod() {
+function runpod(price: number | null = 0.6) {
 	let n = 0;
 	const calls = mockFetch(
 		(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
-		(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: `p${++n}`, costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
+		(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: `p${++n}`, costPerHr: price, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
+		(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined),
 	);
 	return { posts: () => calls.filter((c) => c.method === "POST" && c.url.endsWith("/v1/pods")) };
 }
@@ -95,6 +96,26 @@ describe("create claim vs an accepted pod", () => {
 		expect(rp.posts()).toHaveLength(1);
 		expect(await podCount()).toBe(1);
 	});
+});
+
+describe("price check survives a crash between pod INSERT and acceptance", () => {
+	for (const [label, price, reason] of [["unpriced", null, "cost_invalid"], ["over-cap", 2.4, "cost_reject"]] as const) {
+		it(`${label} pod: recorded delete-pending in the INSERT; repair never boots it, no second POST`, async () => {
+			const rp = runpod(price);
+			const dying = hooked(raw, { after: async (sql) => {
+				if (sql.startsWith("INSERT OR IGNORE INTO pods")) throw new Error("worker died");
+			} });
+			await expect(selectAndCreate(env, dying, "j1")).rejects.toThrow("worker died");
+			for (const claim of ["kept", "cleared"]) {
+				if (claim === "cleared") await raw.prepare("UPDATE jobs SET create_claim = NULL, create_uncertain_at = NULL WHERE id = 'j1'").run();
+				expect(await selectAndCreate(env, raw, "j1")).toBe("held");
+				expect((await getJob(raw, "j1"))!.state).toBe("provisioning");
+			}
+			const p = await raw.prepare("SELECT deleted_at, delete_reason FROM pods WHERE id = 'p1'").first<{ deleted_at: number | null; delete_reason: string | null }>();
+			expect(p).toEqual({ deleted_at: null, delete_reason: reason }); // watchdog's pending-delete retry owns it now
+			expect(rp.posts()).toHaveLength(1);
+		});
+	}
 });
 
 describe("selection-time limits read from the fresh row", () => {
