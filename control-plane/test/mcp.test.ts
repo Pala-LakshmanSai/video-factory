@@ -274,6 +274,19 @@ describe("tools/call", () => {
 		expect([...Buffer.from(rest[3].data!, "base64")]).toEqual([...jpeg(2)]);
 	});
 
+	it("wait_job on a long video sends at most 90 mid frames, evenly spread", async () => {
+		const jid = await seedJob("preview_ready");
+		for (let scene = 1; scene <= 400; scene++)
+			for (let idx = 0; idx < 3; idx++)
+				await stubEnv.DB.prepare("INSERT INTO previews (job_id, round, scene, idx, jpeg) VALUES (?, 0, ?, ?, ?)").bind(jid, scene, idx, new Uint8Array([0xff, 0xd8, scene % 256, idx, 0xff, 0xd9])).run();
+		const r = await call("wait_job", { job_id: jid, until: "preview", timeout_s: 5 });
+		expect(r.isError).toBeFalsy();
+		const imgs = r.content!.filter((b) => b.type === "image");
+		expect(imgs).toHaveLength(90);
+		expect(r.content!.some((b) => b.type === "text" && /1200 preview frames; showing 90/.test(b.text!))).toBe(true);
+		expect([...Buffer.from(imgs[89].data!, "base64")][3]).toBe(1); // mid frame
+	});
+
 	it("wait_job enforces timeout_s <= 50 and reports unknown jobs as tool errors", async () => {
 		const tooLong = await call("wait_job", { job_id: "j_x", until: "preview", timeout_s: 51 });
 		expect(tooLong.isError).toBe(true);

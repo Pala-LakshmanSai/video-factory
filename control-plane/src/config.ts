@@ -46,7 +46,7 @@ export const GPU_RANK: string[] = [
 /** §9.3 exclusions (substring match on the normalised id). Defence in depth: GPU_RANK never lists them. */
 export const EXCLUDED_GPUS = ["a100", "h100", "h200", "b200", "b300", "a30", "mi300x", " mig "];
 
-export const COMPUTE_TIERS = ["GPU/SECURE", "GPU/COMMUNITY", "CPU"] as const;
+export const COMPUTE_TIERS = ["CPU", "GPU/SECURE", "GPU/COMMUNITY"] as const; // owner 2026-11-16: CPU first (render is CPU raster), GPUs when no CPU pod
 export const CPU_FLAVORS = ["cpu5c", "cpu3c"] as const;
 
 /** Decisions. */

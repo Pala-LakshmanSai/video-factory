@@ -6,7 +6,7 @@ import { reaper } from "../src/reaper";
 import { deps, listPods, safeDetail } from "../src/runpod";
 import { selectAndCreate } from "../src/selector";
 import { watchdog } from "../src/watchdog";
-import { RTX4090, catalogOf, json, makeEnv, mockFetch, v2list, v2pod } from "./helpers";
+import { RTX4090, catalogOf, gpuFirst, json, makeEnv, mockFetch, v2list, v2pod } from "./helpers";
 
 deps.sleep = async () => {};
 const cat = catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" }, "EU-RO-1": { [RTX4090]: "HIGH" } });
@@ -240,6 +240,7 @@ describe("safety review 3", () => {
 
 	it("202 QueuedPod is cancelled and counts as 'not placed': next candidate, no hold", async () => {
 		await job("j1");
+		await gpuFirst(env.DB);
 		deps.v1Denied = true;
 		const calls = mockFetch(
 			(u) => (u.includes("/v2/catalog/datacenters") ? json(catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH", "NVIDIA L40S": "HIGH" } })) : undefined),

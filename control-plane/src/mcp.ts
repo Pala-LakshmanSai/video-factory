@@ -116,21 +116,26 @@ export async function waitJob(db: D1Database, jobId: string, until: "preview" | 
 			const out: WaitJobOut = { state: job.state, pct: job.pct, previews: [] };
 			const images: Content[] = [];
 			if (job.state === "preview_ready") {
-				// Latest version of every frame across rounds (a rerender round only re-does one scene).
+				// Latest version of every frame across rounds (a rerender round only re-does one scene). Labels first, no
+				// JPEG bytes: a long video has ~1200 frames and loading them all exceeds D1's 50 MB result limit.
 				const rows = (
 					await db
 						.prepare(
-							"SELECT p.round, p.scene, p.idx, p.jpeg FROM previews p JOIN (SELECT scene, idx, MAX(round) r FROM previews WHERE job_id = ? GROUP BY scene, idx) m ON p.scene = m.scene AND p.idx = m.idx AND p.round = m.r WHERE p.job_id = ? ORDER BY p.scene, p.idx",
+							"SELECT p.round, p.scene, p.idx FROM previews p JOIN (SELECT scene, idx, MAX(round) r FROM previews WHERE job_id = ? GROUP BY scene, idx) m ON p.scene = m.scene AND p.idx = m.idx AND p.round = m.r WHERE p.job_id = ? ORDER BY p.scene, p.idx",
 						)
 						.bind(job.id, job.id)
-						.all<{ round: number; scene: number; idx: number; jpeg: ArrayBuffer | number[] }>()
+						.all<{ round: number; scene: number; idx: number }>()
 				).results;
 				// Long videos (one pod, any length) have ~3 frames x hundreds of scenes: send at most PREVIEW_IMAGES_MAX,
 				// mid frames only, evenly spread. Every frame stays in D1.
 				const mids = rows.length > PREVIEW_IMAGES_MAX ? rows.filter((r) => r.idx === 1) : rows;
 				const step = Math.max(1, mids.length / PREVIEW_IMAGES_MAX);
-				const shown = mids.length > PREVIEW_IMAGES_MAX ? Array.from({ length: PREVIEW_IMAGES_MAX }, (_, i) => mids[Math.floor(i * step)]) : mids;
-				if (shown.length < rows.length) images.push({ type: "text", text: `${rows.length} preview frames; showing ${shown.length} mid-scene frames evenly spread. revise_scene any scene that needs it.` });
+				const picked = mids.length > PREVIEW_IMAGES_MAX ? Array.from({ length: PREVIEW_IMAGES_MAX }, (_, i) => mids[Math.floor(i * step)]) : mids;
+				if (picked.length < rows.length) images.push({ type: "text", text: `${rows.length} preview frames; showing ${picked.length} mid-scene frames evenly spread. revise_scene any scene that needs it.` });
+				// Then the JPEGs of the shown frames only, one batch.
+				const jpegStmt = db.prepare("SELECT jpeg FROM previews WHERE job_id = ? AND round = ? AND scene = ? AND idx = ?");
+				const got = picked.length ? await db.batch<{ jpeg: ArrayBuffer | number[] }>(picked.map((r) => jpegStmt.bind(job.id, r.round, r.scene, r.idx))) : [];
+				const shown = picked.flatMap((r, i) => (got[i]?.results[0] ? [{ ...r, jpeg: got[i].results[0].jpeg }] : []));
 				for (const r of shown) {
 					const label: PreviewLabel = { scene: r.scene, idx: r.idx, round: r.round };
 					out.previews.push(label);

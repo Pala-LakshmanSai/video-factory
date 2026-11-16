@@ -12,6 +12,8 @@ class Stmt {
 	async all<T>() { return { results: this.db.prepare(this.sql).all(...norm(this.args)) as T[] }; }
 	runSync() { const r = this.db.prepare(this.sql).run(...norm(this.args)); return { meta: { changes: Number(r.changes) } }; }
 	async run() { return this.runSync(); }
+	/** What D1's batch returns per statement: rows for a SELECT, changes for a write. */
+	batchSync() { return /^\s*select/i.test(this.sql) ? { results: this.db.prepare(this.sql).all(...norm(this.args)), meta: { changes: 0 } } : this.runSync(); }
 }
 
 export function makeDb(): D1Database {
@@ -22,7 +24,7 @@ export function makeDb(): D1Database {
 	const batch = async (stmts: Stmt[]) => {
 		db.exec("BEGIN");
 		try {
-			const out = stmts.map((s) => s.runSync());
+			const out = stmts.map((s) => s.batchSync());
 			db.exec("COMMIT");
 			return out;
 		} catch (e) {
@@ -106,3 +108,8 @@ export const v2pod = (o: Record<string, unknown>) => ({
 	...o,
 });
 export const v2list = (pods: unknown[], nextCursor: string | null = null) => ({ pods, pagination: { nextCursor, hasNextPage: nextCursor !== null } });
+
+/** The pre-2026-11-16 order (GPU before CPU), for tests of the GPU create paths; production default is CPU first. */
+export const GPU_FIRST = ["GPU/SECURE", "GPU/COMMUNITY", "CPU"] as const;
+export const gpuFirst = (db: D1Database) =>
+	db.prepare("INSERT OR REPLACE INTO config (key, value_json) VALUES ('compute_tiers', ?)").bind(JSON.stringify(GPU_FIRST)).run();

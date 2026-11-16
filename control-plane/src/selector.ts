@@ -1,4 +1,4 @@
-// SPEC §8 literally: compute tier OUTER (GPU/SECURE, GPU/COMMUNITY, CPU), region tier inner,
+// SPEC §8: compute tier OUTER (CPU first by owner decision, then GPU/SECURE, GPU/COMMUNITY), region tier inner,
 // intersect with the live catalog, skip GPUs with availability NONE, cost check > $2/hr -> DELETE, continue.
 import { CONSTANTS as C, ttlMinFor, type Catalog, type CreatePodBody, type ErrorCode } from "../../packages/contract/src/index";
 import { alert } from "./alerts";
@@ -21,9 +21,11 @@ export interface Attempt {
 }
 
 /** Pure §8 ordering, unit-tested with a fake catalog. */
-export function planAttempts(cat: Catalog, rank: string[], skipDcs: string[], regionTiers = REGION_TIERS): Attempt[] {
+export function planAttempts(
+	cat: Catalog, rank: string[], skipDcs: string[], regionTiers = REGION_TIERS, tiers: readonly Attempt["computeTier"][] = COMPUTE_TIERS,
+): Attempt[] {
 	const out: Attempt[] = [];
-	for (const computeTier of COMPUTE_TIERS) {
+	for (const computeTier of tiers) {
 		for (const tier of regionTiers) {
 			const dcs = cat.dataCenters.filter((dc) => tier.some((p) => matches(p, dc.id)) && !skipDcs.includes(dc.id));
 			if (!dcs.length) continue;
@@ -171,6 +173,8 @@ export async function selectAndCreate(
 
 	// Read-only preparation BEFORE taking the claim: a catalog outage must not leave a claim (a hold) behind.
 	const rank = opts.rank ?? (await getConfig<string[]>(db, "gpu_rank", GPU_RANK));
+	// Compute tier order: CPU first by default (owner, 2026-11-16); config key compute_tiers overrides.
+	const tiers = (await getConfig<Attempt["computeTier"][]>(db, "compute_tiers", [...COMPUTE_TIERS])).filter((t) => (COMPUTE_TIERS as readonly string[]).includes(t));
 	let cat;
 	try {
 		cat = await catalog(env, db);
@@ -197,7 +201,7 @@ export async function selectAndCreate(
 		await failJob(env, db, job, "pod_replacements", `${job.attempts} pods lost`);
 		return "no_capacity";
 	}
-	const attempts = planAttempts(cat, rank, [...JSON.parse(job.skip_dcs), ...(blocked ? [blocked] : [])]).filter(
+	const attempts = planAttempts(cat, rank, [...JSON.parse(job.skip_dcs), ...(blocked ? [blocked] : [])], REGION_TIERS, tiers).filter(
 		(a) => !opts.gpuOnly || a.computeTier !== "CPU",
 	);
 

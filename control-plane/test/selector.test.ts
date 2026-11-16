@@ -3,14 +3,14 @@ import { GPU_RANK, REGION_TIERS } from "../src/config";
 import { getJob } from "../src/db";
 import { deletePod, deps, listPods } from "../src/runpod";
 import { UNCERTAIN_GIVE_UP_MS, planAttempts, selectAndCreate } from "../src/selector";
-import { L40S, RTX4090, catalogOf, json, makeEnv, mockFetch, v2list, v2pod } from "./helpers";
+import { GPU_FIRST, L40S, RTX4090, catalogOf, gpuFirst, json, makeEnv, mockFetch, v2list, v2pod } from "./helpers";
 
 deps.sleep = async () => {};
 
 describe("planAttempts: §8 ordering", () => {
 	it("compute tier is the OUTER loop, region tier inner, nearest first", () => {
 		const cat = catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" }, "EU-RO-1": { [L40S]: "LOW" }, "US-TX-3": { [RTX4090]: "MEDIUM" } });
-		const a = planAttempts(cat, GPU_RANK, []);
+		const a = planAttempts(cat, GPU_RANK, [], REGION_TIERS, GPU_FIRST);
 		expect(a.map((x) => `${x.computeTier} ${x.dataCenterIds.join(",")}`)).toEqual([
 			"GPU/SECURE AP-IN-1", "GPU/SECURE EU-RO-1", "GPU/SECURE US-TX-3",
 			"GPU/COMMUNITY AP-IN-1", "GPU/COMMUNITY EU-RO-1", "GPU/COMMUNITY US-TX-3",
@@ -20,18 +20,25 @@ describe("planAttempts: §8 ordering", () => {
 
 	it("AP-IN-1 empty (absent or all NONE) -> starts at Romania", () => {
 		const cat = catalogOf({ "AP-IN-1": { [RTX4090]: "NONE" }, "EU-RO-1": { [RTX4090]: "HIGH" } });
-		expect(planAttempts(cat, GPU_RANK, [])[0]).toMatchObject({ computeTier: "GPU/SECURE", dataCenterIds: ["EU-RO-1"] });
-		expect(planAttempts(catalogOf({ "EU-RO-1": { [RTX4090]: "HIGH" } }), GPU_RANK, [])[0].dataCenterIds).toEqual(["EU-RO-1"]);
+		expect(planAttempts(cat, GPU_RANK, [], REGION_TIERS, GPU_FIRST)[0]).toMatchObject({ computeTier: "GPU/SECURE", dataCenterIds: ["EU-RO-1"] });
+		expect(planAttempts(catalogOf({ "EU-RO-1": { [RTX4090]: "HIGH" } }), GPU_RANK, [], REGION_TIERS, GPU_FIRST)[0].dataCenterIds).toEqual(["EU-RO-1"]);
+	});
+
+	it("default order: CPU first in every region, then GPU secure, then GPU community", () => {
+		const cat = catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" }, "EU-RO-1": { [L40S]: "LOW" } });
+		expect(planAttempts(cat, GPU_RANK, []).map((x) => `${x.computeTier} ${x.dataCenterIds.join(",")}`)).toEqual([
+			"CPU AP-IN-1", "CPU EU-RO-1", "GPU/SECURE AP-IN-1", "GPU/SECURE EU-RO-1", "GPU/COMMUNITY AP-IN-1", "GPU/COMMUNITY EU-RO-1",
+		]);
 	});
 
 	it("all GPUs NONE everywhere -> only CPU attempts", () => {
 		const cat = catalogOf({ "AP-IN-1": { [RTX4090]: "NONE" }, "EU-SE-1": { [L40S]: "NONE" } });
-		expect(planAttempts(cat, GPU_RANK, []).map((x) => x.computeTier)).toEqual(["CPU", "CPU"]);
+		expect(planAttempts(cat, GPU_RANK, [], REGION_TIERS, GPU_FIRST).map((x) => x.computeTier)).toEqual(["CPU", "CPU"]);
 	});
 
 	it("keeps rank order, sends the catalog's exact spelling, drops excluded and skipped", () => {
 		const cat = catalogOf({ "EU-SE-1": { "NVIDIA  RTX A4500": "HIGH", [L40S]: "HIGH", "NVIDIA H100 PCIe": "HIGH" }, "EU-RO-1": { [RTX4090]: "HIGH" } });
-		const a = planAttempts(cat, [...GPU_RANK, "NVIDIA H100 PCIe"], ["EU-RO-1"]);
+		const a = planAttempts(cat, [...GPU_RANK, "NVIDIA H100 PCIe"], ["EU-RO-1"], REGION_TIERS, GPU_FIRST);
 		expect(a[0]).toEqual({ computeTier: "GPU/SECURE", dataCenterIds: ["EU-SE-1"], gpuTypeIds: [L40S, "NVIDIA  RTX A4500"] });
 	});
 
@@ -46,6 +53,7 @@ describe("selectAndCreate against a fake RunPod", () => {
 	beforeEach(async () => {
 		env = makeEnv();
 		deps.v1Denied = false;
+		await gpuFirst(env.DB); // these cases test the GPU create paths
 		await env.DB.prepare("INSERT INTO jobs (id, chat_key, state, title, style, voiceover_json, created_at, updated_at) VALUES ('j1','k','provisioning','t','explainer','{\"text\":\"hi\"}',0,0)").run();
 	});
 	const cat = catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" }, "EU-RO-1": { [RTX4090]: "HIGH" } });
