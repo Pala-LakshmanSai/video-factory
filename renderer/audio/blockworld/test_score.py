@@ -1,18 +1,18 @@
-"""No-rental proof for scripts/blockworld_score.py. Needs numpy+scipy, ffmpeg and the kit checkout.
+"""No-rental proof for renderer/audio/blockworld/score.py. Needs numpy+scipy, ffmpeg and the samples (assets/samples).
 
-    python3 scripts/test_blockworld_score.py
+    python3 renderer/audio/blockworld/test_score.py
 """
 import copy, hashlib, json, os, sys, tempfile, unittest, wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import blockworld_score as bs
+import score as bs
 
 sys.path.insert(0, os.path.join(bs.KIT_DEFAULT, "scripts"))
 import numpy as np
 from audio import lufs  # the kit's own BS.1770 meter
 
-EXAMPLE = os.path.join(HERE, "..", "renderer", "styles", "blockworld", "example-plan.json")
+EXAMPLE = os.path.join(HERE, "..", "..", "styles", "blockworld", "example-plan.json")
 
 
 def scored_plan():
@@ -167,12 +167,20 @@ class Score(unittest.TestCase):
 
     def test_relative_kit_path_cli(self):
         import subprocess
-        root = os.path.dirname(HERE); plan = os.path.join(self.d, "p.json"); out = os.path.join(self.d, "rel.wav")
+        root = os.path.abspath(os.path.join(HERE, "..", "..", "..")); plan = os.path.join(self.d, "p.json"); out = os.path.join(self.d, "rel.wav")
         with open(plan, "w") as f: json.dump(reviewer_plan(), f)
-        r = subprocess.run([sys.executable, "scripts/blockworld_score.py", plan, out, "--kit", "style-kits/3d minecraft"],
+        r = subprocess.run([sys.executable, "renderer/audio/blockworld/score.py", plan, out, "--kit", "renderer/audio/blockworld"],
                            cwd=root, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["seconds"], 5.0)
+
+    def test_explicit_voice_keeps_episode_length(self):
+        import subprocess
+        v = os.path.join(self.d, "v.wav")  # 8 s tone: longer than the 5 s episode, must not retime it
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=8", "-ar", "48000", v], check=True)
+        out = os.path.join(self.d, "voiced.wav")
+        self.assertEqual(bs.score(reviewer_plan(), out, voice=v), 5.0)
+        self.assertEqual(len(read_wav(out)), 5 * 44100)
 
     def test_clean_episode_has_only_audio_fields(self):
         ep, _ = bs.sanitize(scored_plan(), self.sfx, self.moods)

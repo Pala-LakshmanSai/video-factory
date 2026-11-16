@@ -6,3 +6,4 @@ scripts
 **/*.mp4
 **/.dev.vars*
 **/client_secret*.json
+renderer/audio/**/assets

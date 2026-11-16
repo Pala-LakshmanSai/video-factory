@@ -12,3 +12,6 @@ __pycache__/
 renderer/test/out/
 .venv/
 style-kits/
+
+# blockworld samples: baked into the image from a pinned tarball (renderer/Dockerfile), never committed
+renderer/audio/blockworld/assets/

@@ -16,6 +16,7 @@ import { prepareVoice, silence } from "../engine/voice.ts";
 import { ControlPlane, Gone, Held } from "./cp.ts";
 import { fetchPackage } from "./package.ts";
 import { resumableUpload } from "./upload.ts";
+import { episodeSeconds, Scores } from "./score.ts";
 
 const env = process.env;
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -175,8 +176,12 @@ async function main() {
 	// 3. plan + voiceover
 	let spec = await cp.spec();
 	status.stage = "tts";
-	const voice = await prepareVoice(spec.voiceover, join(WORK, "audio"), () => cp.voiceover());
-	log(`voiceover ${voice.seconds.toFixed(2)} s`);
+	// voiceover {none:true} (blockworld only): caption-led, no narrator. A blockworld voice is only an explicit extra.
+	const voice = "none" in spec.voiceover ? null : await prepareVoice(spec.voiceover, join(WORK, "audio"), () => cp.voiceover());
+	if (voice) log(`voiceover ${voice.seconds.toFixed(2)} s`);
+	// blockworld: the episode's own score, re-made whenever the episode changes (keyed by its sha), never a stale one.
+	const scores = spec.style === "blockworld" ? new Scores(join(WORK, "score"), voice?.path ?? null) : null;
+	const scoreLater = (s: SpecOut) => void scores?.get(s).catch((e) => log("score failed (retried at final):", (e as Error).message));
 	// style "custom": the job's own package, fetched once per pod and again only if the plan's package id changes.
 	let pkg: { id: string; dir: string } | null = null;
 	const stylesFor = async (s: SpecOut): Promise<string> => {
@@ -189,8 +194,10 @@ async function main() {
 		}
 		return pkg.dir;
 	};
-	const input = (s: SpecOut, stylesDir: string): RenderInput => ({
-		plan: planOf(s), stylesDir, workDir: join(WORK, "final"), audioPath: voice.path, audioSeconds: voice.seconds,
+	// Previews only need the length: blockworld times against the episode (its score is exactly that long).
+	const previewAudio = (s: SpecOut) => (scores ? { path: null, seconds: episodeSeconds(s) } : voice!);
+	const input = (s: SpecOut, stylesDir: string, audio: { path: string | null; seconds: number }): RenderInput => ({
+		plan: planOf(s), stylesDir, workDir: join(WORK, "final"), audioPath: audio.path, audioSeconds: audio.seconds,
 		failScene: faults.renderErrorScene,
 		onProgress: (pct, scene) => Object.assign(status, { pct, scene }),
 	});
@@ -221,13 +228,15 @@ async function main() {
 	const doPreviews = (only?: number[]) =>
 		attempt("preview", async () => {
 			const scenes = only && [...new Set([...only, ...spec.scenes.map((s) => s.n).filter((n) => !previewed.has(n))])];
-			await cp.previews(await renderPreviews(input(spec, await stylesFor(spec)), scenes));
+			scoreLater(spec);
+			await cp.previews(await renderPreviews(input(spec, await stylesFor(spec), previewAudio(spec)), scenes));
 			for (const n of scenes ?? spec.scenes.map((s) => s.n)) previewed.add(n);
 		});
 	let resumeReport: Promise<unknown> | null = null;
 	const doFinal = () =>
 		attempt("final_render", async () => {
-			const file = await renderFinal(input(spec, await stylesFor(spec)));
+			const audio = scores ? await scores.forFinal(spec) : voice!; // throws on a stale or wrong-length score
+			const file = await renderFinal(input(spec, await stylesFor(spec), audio));
 			const { md5, size } = await md5File(file);
 			status.stage = "uploading";
 			const fileId = await resumableUpload(file, size, {

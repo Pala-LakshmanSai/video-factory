@@ -5,9 +5,9 @@ sets (streets, cities, rooms, plazas with instanced crowds), cinematic camera mo
 top-left, "YOU ARE <status>" top-right), Libre Caslon italic captions, Inter cards/bubbles/chips, FX (hearts,
 confetti, money rain, fireworks, smoke). Rendered with three.js (WebGL; SwiftShader on CPU). 16:9 `1920x1080`.
 
-**Status: pending** — visuals complete (Linux WebGL fixtures pass). Audio candidate: the kit's own caption-led
-score (below), rendered before rental and delivered as the job's single audio track. Awaiting owner/reviewer
-approval and one end-to-end render in the qualified image before `ready`.
+**Status: pending** — visuals complete (Linux WebGL fixtures pass). Audio candidate: the pod generates the
+kit's caption-led score from the episode for every preview/final (below). Before `ready`: bake the samples
+tarball into a qualified image, render end to end there, owner/reviewer approval.
 
 **Use it for:** escalating hypothetical "what if" stories with a running counter. **Don't use it for:**
 text-heavy explainers, quotes, lists (use `explainer`).
@@ -18,8 +18,8 @@ text-heavy explainers, quotes, lists (use `explainer`).
 - One template: **`episode`**. Write ONE episode object (below), then emit one plan scene per episode scene:
   plan scene `n` plays `episode.scenes[n-1]`. Plan and episode must have the same number of scenes.
 - Every plan scene has `props: {"episode": <the same whole episode object>}`. Do not set `from`.
-- `duration_s` of plan scene `n` = `episode.scenes[n-1].dur` exactly. The episode is caption-led: its timing
-  comes from `dur`, never from a voice. The score is cut to sum(`dur`), so the engine's rescale is the identity.
+- `duration_s` of plan scene `n` = `episode.scenes[n-1].dur` exactly (enforced). The episode is caption-led: its
+  timing comes from `dur`, never from a voice. The score is exactly sum(`dur`), so the engine's rescale is the identity.
 - `narration` = the caption words for that scene (not spoken). If an episode scene has no `captions`/`caption`,
   the narration is shown as its caption.
 - `transition`: always `cut` — scene transitions (`dip`, `flash`, `rewind`, `fade_in`) belong in the episode scene.
@@ -35,7 +35,7 @@ Keep crowds ≤ 600 actors per scene on CPU render pods (2,600 is possible but s
 ## Writing the episode prop
 
 Declarative JSON only: no code, no URLs, no file paths. The visual template ignores the audio fields (`music`,
-`sfx`, `ambience`, `hit`, `musicKey`, `musicSeed`, `audio`); the pre-rental scorer reads them (see **Audio**). Coordinates are metres, y up, ground y=0; an actor with `rot: 0` faces +z (toward a camera at +z).
+`sfx`, `ambience`, `hit`, `musicKey`, `musicSeed`, `audio`); the pod's scorer reads them (see **Audio**). Coordinates are metres, y up, ground y=0; an actor with `rot: 0` faces +z (toward a camera at +z).
 See `renderer/styles/blockworld/example-plan.json` for a complete working example.
 
 ```jsonc
@@ -146,31 +146,46 @@ Counters and status carry over between scenes; only state what changes.
 The original kit has no voiceover: a produced chapter score on recorded instruments, a boom on each chapter
 hit, SFX on cards/status changes, ambience beds, mastered to −15.4 LUFS / −1.2 dBTP. We keep that.
 
-1. Write `music` (a mood: `whimsical normal_life tension threat wonder cold_open heartwarm melancholy …` or
-   aliases `bright curious tense ominous cosmic epic warm sad mystery happy`, or `silence`) and `hit: true` on
-   the scene that starts each chapter; add `sfx` / `ambience` by bundled name only (`boom impact sparkle levelup
-   … wind rain birds`). Cards and status changes add their SFX automatically (`audio.auto`, default on).
-2. Before acquiring a GPU, score it locally (python3 with numpy + scipy, ffmpeg, the kit checkout):
-   `python3 scripts/blockworld_score.py plan.json score.wav`
-3. Upload `score.wav` to Drive and submit the job with `voiceover: {drive_file_id}`. The engine muxes it as the
-   one track; its length equals the episode so scene timing is unchanged.
-4. Every plan scene must carry the identical episode (checked). The scorer prints `episode_sha256`; after any
-   episode change (e.g. `revise_scene`) re-score and replace the Drive audio before rendering, or the audio is stale.
+- **acquire_gpu** with `voiceover: {"none": true}` (allowed only for `episode-score` styles). Timing comes from
+  each scene's `dur`; nothing is retimed. A narrator only if explicitly asked: pass `text` or `drive_file_id`;
+  it is mixed under the score from t=0 (kit ducking) and never changes the episode length.
+- Write `music` (mood: `whimsical normal_life tension threat wonder cold_open heartwarm melancholy …`, aliases
+  `bright curious tense ominous cosmic epic warm sad mystery happy`, or `silence`) and `hit: true` on each
+  chapter's first scene; `sfx` / `ambience` by bundled name only (`boom impact sparkle levelup … wind rain birds`).
+  Cards and status changes add SFX automatically (`audio.auto`, default on). No `file` keys anywhere.
+- **Same episode everywhere.** submit/revise reject a plan whose scenes carry different episodes or whose
+  `duration_s` ≠ `dur`. `revise_scene` with a `props.episode` patch (RFC 7386: arrays such as `scenes` are
+  replaced whole) applies it to **every** scene in one write, resyncs every `duration_s`, and re-previews all scenes.
+- **Score bound to the episode.** The pod (`renderer/agent/score.ts`) keys each score by the sha256 of the
+  episode: it starts scoring when a preview round starts (previews time against the episode length, which the
+  score matches exactly), and the final awaits the score for the *current* episode and refuses to mux one whose
+  sha or length (±1 frame) differs. A revise changes the sha, so an older score can never be muxed.
 
-**Fencing.** The scorer rebuilds a minimal episode holding only the fields the kit's `audio.py` reads, every
-name checked against the kit's own `SFX_NAMES` / `CUES` / `ALIASES`, every number bounded (scene ≤ 60 s,
-episode ≤ 900 s, ≤ 400 scenes, ≤ 32 events per list, gains ≤ 2). `file` entries and `meta.voiceover` are
-rejected, so no path from a plan ever reaches Python or ffmpeg; the kit runs via an argument list (no shell)
-with `PYTHONHASHSEED=0`, so the same plan gives the same bytes. Tests: `python3 scripts/test_blockworld_score.py`
-(length, loudness, determinism, 18 hostile inputs).
+**Why on the pod.** The control plane is a Cloudflare Worker (no numpy/scipy/ffmpeg), so a control-plane step
+would need a new service; a manual Drive upload breaks the Project chat flow. Cost of the pod route:
+- image ≈ +230 MB (python3 ≈ 25 MB, numpy 2.2.6 ≈ 40 MB, scipy 1.15.3 ≈ 100 MB, samples 63 MB tarball / 69 MB
+  unpacked) — estimate, not yet measured on a built image;
+- ≈ 1 s of CPU per second of audio on a Mac (5 s episode in ~5 s; reviewer measured 21 s in a sandbox). Scoring
+  runs in parallel with preview frames, so it only adds wall time to the final when it is the slower of the two;
+- deterministic per image: fixed seeds + `PYTHONHASHSEED=0` give byte-identical WAVs for the same episode
+  (pinned numpy/scipy; a different library version may change bits, not length or loudness).
 
-**Why pre-rental, not on the pod.** Scoring on the pod would add numpy + scipy (~100 MB) and the 69 MB sample
-set to the renderer image and run CPU-bound mixing on rented GPU time. Pre-rental adds 0 bytes to the image,
-reuses the existing Drive-audio path and keeps the engine's one-track contract untouched.
+**Fencing** (`renderer/audio/blockworld/score.py`): rebuilds a minimal episode with only the fields `audio.py`
+reads, names checked against the kit's own `SFX_NAMES`/`CUES`/`ALIASES`, numbers bounded (scene ≤ 60 s, episode
+≤ 900 s, ≤ 400 scenes, ≤ 32 events per list, gains ≤ 2); `file` entries and `meta.voiceover` are rejected before
+Python touches audio or ffmpeg runs. The voice path is the pod's own file, never from the plan.
+`renderer/audio/blockworld/scripts/` is an unmodified copy of the kit's `audio.py`, `cues.py`, `audio_lib.py`,
+`cue_eq.json`. Operators can still run `python3 renderer/audio/blockworld/score.py plan.json out.wav`.
 
-**Optional voice.** Not supported by default. A narrated variant would need the kit's `meta.voiceover` ducking
-plus a fenced voice file; add only if explicitly requested.
+**Samples in the image.** `renderer/Dockerfile` takes `BLOCKWORLD_SAMPLES_URL` (a tarball of the kit's
+`assets/samples` as `samples/…`, built deterministically: sorted, mtime 0) checked against
+`BLOCKWORLD_SAMPLES_SHA256`. Without it the image builds but blockworld scoring fails. Local dev: symlink
+`renderer/audio/blockworld/assets/samples` to the kit's samples (gitignored).
 
-**Sample credits** (bundled in the kit's `assets/samples/CREDITS.txt`; keep with any redistribution):
+**Tests:** `python3 renderer/audio/blockworld/test_score.py` (length, −15.4 LUFS, determinism, hostile inputs,
+explicit voice keeps length); `renderer/test/score.test.ts` (re-score on timing revise, preview/final length =
+episode, stale score refused; set `BLOCKWORLD_PYTHON` for the real-scorer case); `control-plane/test/blockworld-revise.test.ts`.
+
+**Sample credits** (`renderer/audio/blockworld/CREDITS.txt`; keep with any redistribution):
 Salamander Grand Piano by Alexander Holm, CC BY 3.0 · FluidR3_GM by Frank Wen, CC BY 3.0 (per-note renders
 from gleitz/midi-js-soundfonts, MIT) · VSCO 2 Community Edition by Versilian Studios, CC0 1.0.

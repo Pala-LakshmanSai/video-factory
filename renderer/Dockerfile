@@ -68,6 +68,21 @@ COPY renderer/agent ./agent
 COPY renderer/engine ./engine
 COPY renderer/styles ./styles
 
+# ---- stage marker: blockworld score (kit audio.py: python3 + numpy/scipy, bundled instrument samples)
+# Samples (CC BY 3.0 Salamander/FluidR3, CC0 VSCO2; see renderer/audio/blockworld/CREDITS.txt) come from a pinned,
+# sha256-checked tarball. Left empty, the image has no samples and blockworld jobs fail at the score step.
+ARG BLOCKWORLD_SAMPLES_URL=
+ARG BLOCKWORLD_SAMPLES_SHA256=f23f285f4187b56f2d17dcdb6160277747242664c8e755e00e51a245f2cd7e2a
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip \
+ && pip3 install --no-cache-dir numpy==2.2.6 scipy==1.15.3 \
+ && apt-get purge -y python3-pip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /root/.cache
+COPY renderer/audio ./audio
+RUN if [ -n "$BLOCKWORLD_SAMPLES_URL" ]; then \
+      curl -fsSL "$BLOCKWORLD_SAMPLES_URL" -o /tmp/s.tgz && echo "$BLOCKWORLD_SAMPLES_SHA256  /tmp/s.tgz" | sha256sum -c - \
+      && rm -rf audio/blockworld/assets && mkdir -p audio/blockworld/assets && tar -xzf /tmp/s.tgz -C audio/blockworld/assets && rm /tmp/s.tgz \
+      && python3 -c "import numpy, scipy" ; \
+    else echo "WARNING: no BLOCKWORLD_SAMPLES_URL: blockworld scoring unavailable in this image"; fi
+
 # ---- stage marker: TTS model (Kokoro-82M, downloaded once at build, offline at run time)
 # --input-type=module: plain `node -e` defines a global __dirname (".") that makes kokoro-js look for its
 # bundled voices relative to the cwd instead of its own package.

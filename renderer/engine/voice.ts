@@ -16,6 +16,7 @@ export async function prepareVoice(
 	dir: string,
 	fetchDriveAudio: () => Promise<Response>,
 ): Promise<{ path: string; seconds: number }> {
+	if (vo.none) throw new Error("voiceover {none:true} has no voice track (caption-led style)");
 	await mkdir(dir, { recursive: true });
 	const out = join(dir, "voice.wav");
 	if (!existsSync(out)) {

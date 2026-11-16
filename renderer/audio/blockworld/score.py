@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Pre-rental score for a `blockworld` plan: the kit's own procedural score + SFX, on the episode timeline.
 
-    python3 scripts/blockworld_score.py PLAN.json OUT.wav [--kit "style-kits/3d minecraft"]
+    python3 renderer/audio/blockworld/score.py PLAN.json OUT.wav [--kit DIR] [--voice WAV]
+
+The renderer pod runs this for every blockworld preview/final whose episode changed (renderer/agent/score.ts);
+operators can run it locally too. --kit defaults to $BLOCKWORLD_KIT, else this directory (scripts/ is a copy of
+the kit's audio code; assets/samples is baked into the image, or a local symlink to the kit's samples).
+--voice is a TRUSTED path chosen by the caller (the pod's own prepared voice.wav), never taken from a plan: only
+for jobs that explicitly asked for a narrator. It is mixed under the score from t=0 and never retimes it.
 
 Reads the plan, takes the episode from scene 1, keeps ONLY the audio fields the kit's audio.py reads, checks
 them against fixed whitelists and bounds, writes that clean episode to a temp dir and runs the kit's
@@ -15,7 +21,7 @@ Needs python3 with numpy + scipy, ffmpeg, and the kit checkout (style-kits/ is g
 """
 import hashlib, json, math, os, subprocess, sys, tempfile
 
-KIT_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "style-kits", "3d minecraft")
+KIT_DEFAULT = os.environ.get("BLOCKWORLD_KIT") or os.path.dirname(os.path.abspath(__file__))
 
 # Mirrors audio.py SFX_NAMES and cues.py CUES/ALIASES (checked against the kit at run time in load_kit_names).
 MAX_TOTAL_S, MAX_SCENES, MAX_SCENE_S, MAX_EVENTS = 900.0, 400, 60.0, 32
@@ -151,10 +157,12 @@ def episode_hash(plan):
     return hashlib.sha256(json.dumps(plan["scenes"][0]["props"]["episode"], sort_keys=True).encode()).hexdigest()
 
 
-def score(plan, out_wav, kit=KIT_DEFAULT):
+def score(plan, out_wav, kit=KIT_DEFAULT, voice=None):
     kit = os.path.abspath(kit)  # subprocess runs with cwd=tempdir
     sfx, moods = load_kit_names(kit)
     ep, total = sanitize(plan, sfx, moods)
+    if voice:
+        ep["meta"]["voiceover"] = os.path.abspath(voice)
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "episode.json")
         with open(p, "w") as f:
@@ -166,13 +174,14 @@ def score(plan, out_wav, kit=KIT_DEFAULT):
 
 
 if __name__ == "__main__":
-    a = sys.argv[1:]
-    if len(a) not in (2, 4) or (len(a) == 4 and a[2] != "--kit"):
-        sys.exit(__doc__)
+    import argparse
+    ap = argparse.ArgumentParser(usage=__doc__)
+    ap.add_argument("plan"); ap.add_argument("out"); ap.add_argument("--kit", default=KIT_DEFAULT); ap.add_argument("--voice")
+    a = ap.parse_args()
     try:
-        with open(a[0]) as f:
+        with open(a.plan) as f:
             plan = json.load(f)
-        secs = score(plan, a[1], a[3] if len(a) == 4 else KIT_DEFAULT)
+        secs = score(plan, a.out, a.kit, a.voice)
     except Bad as e:
         sys.exit(f"rejected: {e}")
-    print(json.dumps({"audio": a[1], "seconds": round(secs, 3), "episode_sha256": episode_hash(plan)}))
+    print(json.dumps({"audio": a.out, "seconds": round(secs, 3), "episode_sha256": episode_hash(plan)}))

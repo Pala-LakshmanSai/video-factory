@@ -1,0 +1,4 @@
+Instrument samples: FluidR3_GM by Frank Wen, Creative Commons Attribution 3.0 (https://creativecommons.org/licenses/by/3.0/).
+Per-note renders from github.com/gleitz/midi-js-soundfonts (MIT).
+Piano: Salamander Grand Piano by Alexander Holm, Creative Commons Attribution 3.0, via github.com/Tonejs/audio.
+Orchestral samples (assets/samples/hq, except piano): VSCO 2 Community Edition by Versilian Studios, CC0 1.0 (public domain).
