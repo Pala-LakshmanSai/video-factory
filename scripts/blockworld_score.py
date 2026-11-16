@@ -13,7 +13,7 @@ No file inputs are ever passed through: music/sfx `file` entries and `meta.voice
 only audio sources are the kit's bundled instrument samples and its synthesized effects.
 Needs python3 with numpy + scipy, ffmpeg, and the kit checkout (style-kits/ is gitignored; samples ~69 MB).
 """
-import json, math, os, subprocess, sys, tempfile
+import hashlib, json, math, os, subprocess, sys, tempfile
 
 KIT_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "style-kits", "3d minecraft")
 
@@ -50,6 +50,11 @@ def sanitize(plan, sfx_names, moods):
     ep = (pscenes[0].get("props") or {}).get("episode") if isinstance(pscenes[0], dict) else None
     if not isinstance(ep, dict):
         raise Bad("scene 1 props.episode missing")
+    canon = json.dumps(ep, sort_keys=True)
+    for i, ps in enumerate(pscenes[1:], 2):
+        other = (ps.get("props") or {}).get("episode") if isinstance(ps, dict) else None
+        if json.dumps(other, sort_keys=True) != canon:
+            raise Bad(f"scene {i} props.episode differs from scene 1; every scene must carry the scored episode")
     meta = ep.get("meta") or {}
     if not isinstance(meta, dict) or meta.get("voiceover") not in (None, False, ""):
         raise Bad("meta.voiceover: caption-led episodes have no narrator; file inputs are not accepted")
@@ -141,7 +146,13 @@ def load_kit_names(kit):
     return set(sfx), set(moods)
 
 
+def episode_hash(plan):
+    """Re-score whenever this changes (e.g. after revise_scene); audio from an older episode is stale."""
+    return hashlib.sha256(json.dumps(plan["scenes"][0]["props"]["episode"], sort_keys=True).encode()).hexdigest()
+
+
 def score(plan, out_wav, kit=KIT_DEFAULT):
+    kit = os.path.abspath(kit)  # subprocess runs with cwd=tempdir
     sfx, moods = load_kit_names(kit)
     ep, total = sanitize(plan, sfx, moods)
     with tempfile.TemporaryDirectory() as d:
@@ -160,7 +171,8 @@ if __name__ == "__main__":
         sys.exit(__doc__)
     try:
         with open(a[0]) as f:
-            secs = score(json.load(f), a[1], a[3] if len(a) == 4 else KIT_DEFAULT)
+            plan = json.load(f)
+        secs = score(plan, a[1], a[3] if len(a) == 4 else KIT_DEFAULT)
     except Bad as e:
         sys.exit(f"rejected: {e}")
-    print(json.dumps({"audio": a[1], "seconds": round(secs, 3)}))
+    print(json.dumps({"audio": a[1], "seconds": round(secs, 3), "episode_sha256": episode_hash(plan)}))

@@ -35,6 +35,30 @@ def read_wav(p):
         return np.frombuffer(w.readframes(w.getnframes()), "<i2").reshape(-1, 2) / 32768.0
 
 
+def reviewer_plan():
+    """Reviewer's baseline: two caption-only scenes (2.25 s + 2.75 s), whimsical score, one sparkle, no voice."""
+    ep = {"meta": {"title": "t", "voiceover": None}, "hud": {"counters": []},
+          "scenes": [{"id": "a", "dur": 2.25, "music": "whimsical", "hit": True, "captions": [{"t": 0.2, "d": 1.8, "text": "One."}],
+                      "sfx": [{"t": 0.5, "name": "sparkle", "gain": 0.8}]},
+                     {"id": "b", "dur": 2.75, "captions": [{"t": 0.2, "d": 2.3, "text": "Two."}]}]}
+    return {"style": "blockworld", "fps": 30, "resolution": "1920x1080",
+            "scenes": [{"n": i + 1, "template": "episode", "duration_s": s["dur"], "props": {"episode": ep}} for i, s in enumerate(ep["scenes"])]}
+
+
+class Baseline(unittest.TestCase):
+    def test_reviewer_case_exact_5s_deterministic(self):
+        import time
+        d = tempfile.mkdtemp(); a, b = os.path.join(d, "a.wav"), os.path.join(d, "b.wav")
+        t0 = time.time(); total = bs.score(reviewer_plan(), a); el = time.time() - t0
+        bs.score(reviewer_plan(), b)
+        x = read_wav(a)  # asserts stereo, 44.1 kHz, PCM16
+        print(f"\n  baseline: {len(x) / 44100:.3f}s in {el:.1f}s, peak {20 * np.log10(np.abs(x).max()):.3f} dBFS", file=sys.stderr)
+        self.assertEqual(total, 5.0)
+        self.assertEqual(len(x), 5 * 44100)
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            self.assertEqual(fa.read(), fb.read())
+
+
 class Score(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -64,7 +88,8 @@ class Score(unittest.TestCase):
         plan = scored_plan()
         ep = copy.deepcopy(plan["scenes"][0]["props"]["episode"])
         mutate(plan, ep)
-        plan["scenes"][0]["props"]["episode"] = ep
+        for ps in plan["scenes"]:
+            ps["props"] = {**ps.get("props", {}), "episode": ep}
         with self.assertRaises(bs.Bad) as cm:
             bs.sanitize(plan, self.sfx, self.moods)
         self.assertIn(needle, str(cm.exception))
@@ -84,7 +109,7 @@ class Score(unittest.TestCase):
             (lambda p, e: e["scenes"][1]["sfx"][0].update(t=99), "sfx.t"),
             (lambda p, e: e["scenes"][1]["sfx"][0].update(gain=1e6), "gain"),
             (lambda p, e: e["scenes"][1].update(sfx=[{"name": "tick"}] * 33), "at most"),
-            (lambda p, e: e["scenes"].extend([{"dur": 60}] * 20) or p["scenes"].extend([{"duration_s": 60}] * 20), "max 900"),
+            (lambda p, e: e["scenes"].extend([{"dur": 60}] * 20) or p["scenes"].extend({"duration_s": 60} for _ in range(20)), "max 900"),
             (lambda p, e: p["scenes"][1].update(duration_s=9.9), "duration_s"),
             (lambda p, e: p["scenes"].pop(), "same number"),
             (lambda p, e: e.update(audio={"musicGain": 50}), "musicGain"),
@@ -93,6 +118,61 @@ class Score(unittest.TestCase):
         for mutate, needle in cases:
             with self.subTest(needle=needle):
                 self.hostile(mutate, needle)
+
+    def test_file_inputs_refused_before_anything_runs(self):
+        """Each file-backed kind fails validation; only the kit-name lookup ran, never audio.py or ffmpeg."""
+        def m(scene, **kw): return lambda e: e["scenes"][scene].update(**kw)
+        cases = {
+            "score path": m(0, music={"file": "score.mp3"}), "score abs": m(0, music="/tmp/score.mp3"),
+            "score url": m(0, music="https://x.test/s.mp3"),
+            "sfx path": lambda e: e["scenes"][0]["sfx"].append({"file": "../x.wav"}),
+            "sfx url": lambda e: e["scenes"][0]["sfx"].append({"name": "https://x.test/a.wav"}),
+            "ambience path": lambda e: e["scenes"][1].update(ambience=[{"name": "wind", "file": "w.wav"}]),
+            "voice path": lambda e: e["meta"].update(voiceover="vo.mp3"),
+            "voice url": lambda e: e["meta"].update(voiceover="https://x.test/vo.mp3"),
+        }
+        real = bs.subprocess.run
+        for label, mutate in cases.items():
+            with self.subTest(label):
+                plan = reviewer_plan(); ep = copy.deepcopy(plan["scenes"][0]["props"]["episode"]); mutate(ep)
+                for ps in plan["scenes"]: ps["props"]["episode"] = ep
+                calls = []
+                bs.subprocess.run = lambda argv, *a, **k: (calls.append(argv), real(argv, *a, **k))[1]
+                try:
+                    with self.assertRaises(bs.Bad):
+                        bs.score(plan, os.path.join(self.d, "never.wav"))
+                finally:
+                    bs.subprocess.run = real
+                self.assertEqual(len(calls), 1)            # load_kit_names only
+                self.assertEqual(calls[0][1], "-c")
+                self.assertFalse(any("audio.py" in str(x) or "ffmpeg" in str(x) for c in calls for x in c))
+                self.assertFalse(os.path.exists(os.path.join(self.d, "never.wav")))
+
+    def test_later_scene_with_different_episode_rejected(self):
+        plan = scored_plan()
+        ep2 = copy.deepcopy(plan["scenes"][0]["props"]["episode"]); ep2["scenes"][2]["music"] = "threat"
+        plan["scenes"][3]["props"]["episode"] = ep2
+        with self.assertRaises(bs.Bad) as cm:
+            bs.sanitize(plan, self.sfx, self.moods)
+        self.assertIn("scene 4", str(cm.exception))
+
+    def test_timing_change_requires_rescore(self):
+        plan = reviewer_plan(); h0 = bs.episode_hash(plan)
+        ep = copy.deepcopy(plan["scenes"][0]["props"]["episode"]); ep["scenes"][1]["dur"] = 3.75
+        for ps, s in zip(plan["scenes"], ep["scenes"]): ps["props"]["episode"] = ep; ps["duration_s"] = s["dur"]
+        self.assertNotEqual(bs.episode_hash(plan), h0)          # stale score is detectable
+        out = os.path.join(self.d, "rescore.wav")
+        self.assertEqual(bs.score(plan, out), 6.0)
+        self.assertEqual(len(read_wav(out)), 6 * 44100)        # re-score tracks the new timing
+
+    def test_relative_kit_path_cli(self):
+        import subprocess
+        root = os.path.dirname(HERE); plan = os.path.join(self.d, "p.json"); out = os.path.join(self.d, "rel.wav")
+        with open(plan, "w") as f: json.dump(reviewer_plan(), f)
+        r = subprocess.run([sys.executable, "scripts/blockworld_score.py", plan, out, "--kit", "style-kits/3d minecraft"],
+                           cwd=root, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["seconds"], 5.0)
 
     def test_clean_episode_has_only_audio_fields(self):
         ep, _ = bs.sanitize(scored_plan(), self.sfx, self.moods)

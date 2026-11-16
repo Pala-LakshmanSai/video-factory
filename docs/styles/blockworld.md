@@ -154,6 +154,8 @@ hit, SFX on cards/status changes, ambience beds, mastered to −15.4 LUFS / −1
    `python3 scripts/blockworld_score.py plan.json score.wav`
 3. Upload `score.wav` to Drive and submit the job with `voiceover: {drive_file_id}`. The engine muxes it as the
    one track; its length equals the episode so scene timing is unchanged.
+4. Every plan scene must carry the identical episode (checked). The scorer prints `episode_sha256`; after any
+   episode change (e.g. `revise_scene`) re-score and replace the Drive audio before rendering, or the audio is stale.
 
 **Fencing.** The scorer rebuilds a minimal episode holding only the fields the kit's `audio.py` reads, every
 name checked against the kit's own `SFX_NAMES` / `CUES` / `ALIASES`, every number bounded (scene ≤ 60 s,
