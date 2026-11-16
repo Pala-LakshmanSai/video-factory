@@ -43,7 +43,8 @@ agentApp.post("/hello", async (c) => {
 	const job = c.get("job");
 	const body = await c.req.json<HelloIn>();
 	const pod = await activePod(c.env.DB, job.id);
-	if (pod && now() - pod.created_at < 7 * 60_000 && (await hasFault(c.env.DB, job.id, "slow_boot"))) {
+	// No time limit: only the watchdog's boot_timeout replacement consumes slow_boot (watchdog.ts replacePod).
+	if (pod && (await hasFault(c.env.DB, job.id, "slow_boot"))) {
 		return c.json({ error: "slow_boot fault: try again" }, 503);
 	}
 	if (pod) await c.env.DB.prepare("UPDATE pods SET hello_at = ?, last_heartbeat_at = ? WHERE id = ?").bind(now(), now(), pod.id).run();

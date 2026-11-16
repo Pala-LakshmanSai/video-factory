@@ -4,8 +4,8 @@
 // = $ per standard test video. Tested GPUs sorted by score, untested keep their relative order below.
 import { alert } from "./alerts";
 import { GPU_RANK, getConfig, norm, setConfig } from "./config";
-import { activePod, getJob, logEvent, now } from "./db";
-import { acquireGpu } from "./mcp";
+import { activePod, getJob, jobCost, logEvent, now } from "./db";
+import { acquireGpu, release } from "./mcp";
 import { catalog } from "./runpod";
 import { retirePod, selectAndCreate } from "./selector";
 import { isTerminal, transition } from "./state";
@@ -21,6 +21,7 @@ interface BenchRun {
 }
 
 export async function startBench(env: Env, db: D1Database) {
+	if (String(env.BENCH_ENABLED) !== "1") return "bench disabled: benchmark not started";
 	if (String(env.ADMISSION_ENABLED) !== "1") return "admission disabled: benchmark not started";
 	if (await getConfig<BenchRun | null>(db, "bench_run", null)) return "already running";
 	const rank = await getConfig<string[]>(db, "gpu_rank", GPU_RANK);
@@ -34,7 +35,13 @@ export async function startBench(env: Env, db: D1Database) {
 		}, { dev_mode: "bench" });
 		const r = await selectAndCreate(env, db, job_id, { rank: [gpu], gpuOnly: true });
 		const pod = r === "created" ? await activePod(db, job_id) : null;
-		if (!pod) continue;
+		if (!pod) {
+			// Not rented now (queued, held, skipped): cancel so the watchdog can never rent it outside this budget.
+			// A held create's pod, if one appears, belongs to a cancelled job and the reaper deletes it.
+			await release(env, db, job_id);
+			await logEvent(db, job_id, "bench_not_created", { gpu, result: r });
+			continue;
+		}
 		const cost = (pod.cost_per_hr * EST_MIN_PER_RUN) / 60;
 		if (estimate + cost > BUDGET_USD) {
 			// Abort: this run would spend more than $2.
@@ -80,14 +87,19 @@ export async function finishBench(env: Env, db: D1Database) {
 	const run = await getConfig<BenchRun | null>(db, "bench_run", null);
 	if (!run) return;
 	const jobs = await Promise.all(run.jobs.map((j) => getJob(db, j.job_id)));
-	if (!jobs.every((j) => !j || isTerminal(j.state)) && now() - run.started_at < RUN_TIMEOUT_MS) return;
+	// Actual spend of every pod the bench jobs rented (live pods billed to now), not the start-time estimate.
+	const spent = (await Promise.all(run.jobs.map((j) => jobCost(db, j.job_id)))).reduce((s, c) => s + c.cost_usd, 0);
+	const over = spent > BUDGET_USD;
+	if (!over && !jobs.every((j) => !j || isTerminal(j.state)) && now() - run.started_at < RUN_TIMEOUT_MS) return;
+	const reason = over ? "bench_budget" : "bench_timeout";
+	if (over) await logEvent(db, "bench", "bench_budget", { spent_usd: spent, budget_usd: BUDGET_USD });
 	for (const j of jobs) {
 		if (!j || isTerminal(j.state)) continue;
 		const pod = await activePod(db, j.id);
 		if (pod) {
-			await retirePod(env, db, pod.job_id, pod.id, "bench_timeout");
+			await retirePod(env, db, pod.job_id, pod.id, reason);
 		}
-		await transition(db, j, "cancelled", { reason: "bench_timeout" });
+		await transition(db, j, "cancelled", { reason });
 	}
 	const rank = await getConfig<string[]>(db, "gpu_rank", GPU_RANK);
 	const next = rerank(rank, run.results);

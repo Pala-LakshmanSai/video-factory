@@ -307,7 +307,7 @@ describe("review 4: fencing, no replay, admission switch", () => {
 	});
 
 	it("ADMISSION_ENABLED != 1: no catalog read, no claim, no POST; benchmark refuses to start", async () => {
-		env = { ...makeEnv(), ADMISSION_ENABLED: "0" } as Env;
+		env = { ...makeEnv(), ADMISSION_ENABLED: "0", BENCH_ENABLED: "1" } as Env;
 		await job("j1");
 		const calls = mockFetch();
 		expect(await selectAndCreate(env, env.DB, "j1")).toBe("skipped");
@@ -429,5 +429,97 @@ describe("upload-resume telemetry never touches the command channel", () => {
 		expect(ev.map((e) => JSON.parse(e.data_json))).toEqual([{ offset: 1048576 }]);
 		expect(await hb("uploading")).toEqual({ cmd: "render_final" }); // the real heartbeat still receives it
 		expect((await getJob(env.DB, "j1"))!.pending_cmd).toBeNull();
+	});
+});
+
+describe("slow_boot holds /hello until the watchdog's boot timeout replaces the pod", () => {
+	it("hello at 8-9.9 min stays 503 with the fault armed; >=10 min watchdog replaces + consumes; replacement boots", async () => {
+		const { agentApp } = await import("../src/agent");
+		const { sha256Hex } = await import("../src/db");
+		await job("j1", "booting");
+		await env.DB.prepare("UPDATE jobs SET job_token_sha256 = ?, token_expires_at = ? WHERE id = 'j1'").bind(await sha256Hex("tok"), Date.now() + 60 * MIN).run();
+		await env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('faults:j1', '[\"slow_boot\"]')").run();
+		const faults = async () => JSON.parse((await env.DB.prepare("SELECT value_json FROM config WHERE key = 'faults:j1'").first<{ value_json: string }>())!.value_json);
+		const hello = () => agentApp.fetch(new Request("https://cp.test/agent/j1/hello", { method: "POST", headers: { Authorization: "Bearer tok", "Content-Type": "application/json" }, body: "{}" }), env);
+		for (const age of [8 * MIN, 9.9 * MIN]) {
+			await env.DB.prepare("DELETE FROM pods").run();
+			await pod("p1", "j1", age);
+			expect((await hello()).status).toBe(503);
+			expect(await faults()).toEqual(["slow_boot"]);
+		}
+		await env.DB.prepare("DELETE FROM pods").run();
+		await pod("p1", "j1", 10 * MIN + 1000);
+		mockFetch(
+			(u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: "p2", costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "EU-RO-1" } }, 201) : undefined),
+		);
+		await watchdog(env, env.DB);
+		expect((await row("p1"))!.delete_reason).toBe("boot_timeout");
+		expect(await faults()).toEqual([]);
+		// Replacement has a fresh token (one per selection): reuse ours for the test.
+		await env.DB.prepare("UPDATE jobs SET job_token_sha256 = ? WHERE id = 'j1'").bind(await sha256Hex("tok")).run();
+		const r = await hello();
+		expect(r.status).toBe(200);
+		expect((await getJob(env.DB, "j1"))!.state).toBe("waiting_for_plan");
+	});
+});
+
+describe("Sunday benchmark accounting", () => {
+	const benchEnv = () => ({ ...makeEnv(), BENCH_ENABLED: "1" }) as Env;
+
+	it("BENCH_ENABLED != 1 (admission on): no jobs, no fetch", async () => {
+		const { startBench } = await import("../src/bench");
+		const calls = mockFetch();
+		expect(await startBench(env, env.DB)).toMatch(/bench disabled/);
+		expect(calls).toHaveLength(0);
+		expect(await env.DB.prepare("SELECT COUNT(*) n FROM jobs").first<{ n: number }>()).toEqual({ n: 0 });
+	});
+
+	it("a queued bench job (all slots busy) is cancelled at once and the watchdog never rents it", async () => {
+		env = benchEnv();
+		const { startBench } = await import("../src/bench");
+		const { MAX_PODS_AT_ONCE } = await import("../src/config");
+		for (let i = 0; i < MAX_PODS_AT_ONCE; i++) await job(`busy${i}`, "provisioning", "create_claim='c_held'");
+		const calls = mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined),
+		);
+		expect(await startBench(env, env.DB)).toMatch(/0 GPUs/);
+		const bench = (await env.DB.prepare("SELECT * FROM jobs WHERE dev_mode = 'bench'").all<{ id: string; state: string }>()).results;
+		expect(bench.length).toBeGreaterThan(0);
+		for (const b of bench) expect(b.state).toBe("cancelled");
+		expect(await env.DB.prepare("SELECT 1 FROM events WHERE kind = 'bench_not_created'").first()).toBeTruthy();
+		await env.DB.prepare("DELETE FROM jobs WHERE id LIKE 'busy%'").run(); // slots free up
+		await watchdog(env, env.DB);
+		expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+		expect(await env.DB.prepare("SELECT COUNT(*) n FROM pods").first<{ n: number }>()).toEqual({ n: 0 });
+	});
+
+	it("finishBench aborts remaining bench jobs once actual pod cost exceeds $2", async () => {
+		const { finishBench } = await import("../src/bench");
+		await job("b1", "rendering", "dev_mode='bench'");
+		await job("b2", "booting", "dev_mode='bench'");
+		// b1: a pod at $0.6/h for 3 h = $1.80; b2: a second at $0.6/h for 30 min = $0.30 -> $2.10 > $2.
+		await pod("p1", "b1", 180 * MIN, { hello: Date.now() - 170 * MIN });
+		await pod("p2", "b2", 30 * MIN);
+		await env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('bench_run', ?)").bind(JSON.stringify({ started_at: Date.now() - 5 * MIN, jobs: [{ job_id: "b1", gpu: RTX4090, cost_per_hr: 0.6 }, { job_id: "b2", gpu: "NVIDIA L40S", cost_per_hr: 0.6 }], results: {} })).run();
+		mockFetch((u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined));
+		await finishBench(env, env.DB);
+		expect((await getJob(env.DB, "b1"))!.state).toBe("cancelled");
+		expect((await getJob(env.DB, "b2"))!.state).toBe("cancelled");
+		expect((await row("p1"))!.delete_reason).toBe("bench_budget");
+		expect((await row("p2"))!.delete_reason).toBe("bench_budget");
+		expect(await env.DB.prepare("SELECT 1 FROM config WHERE key = 'bench_run'").first()).toBeNull();
+	});
+
+	it("finishBench under budget with live jobs leaves them running", async () => {
+		const { finishBench } = await import("../src/bench");
+		await job("b1", "rendering", "dev_mode='bench'");
+		await pod("p1", "b1", 10 * MIN, { hello: Date.now() - 8 * MIN });
+		await env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('bench_run', ?)").bind(JSON.stringify({ started_at: Date.now() - 10 * MIN, jobs: [{ job_id: "b1", gpu: RTX4090, cost_per_hr: 0.6 }], results: {} })).run();
+		mockFetch();
+		await finishBench(env, env.DB);
+		expect((await getJob(env.DB, "b1"))!.state).toBe("rendering");
 	});
 });

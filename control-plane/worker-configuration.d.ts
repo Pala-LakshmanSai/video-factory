@@ -11,6 +11,7 @@ interface __BaseEnv_Env {
 	FAULTS_ENABLED: "0";
 	DEV_ROUTES: "0";
 	ADMISSION_ENABLED: "0";
+	BENCH_ENABLED: "0";
 	GITHUB_CLIENT_ID: string;
 	GITHUB_CLIENT_SECRET: string;
 	COOKIE_ENCRYPTION_KEY: string;
@@ -34,7 +35,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "CP_URL" | "MCP_RESOURCE" | "RENDERER_IMAGE" | "ALLOWED_GITHUB_LOGIN" | "FAULTS_ENABLED" | "DEV_ROUTES" | "ADMISSION_ENABLED" | "GITHUB_CLIENT_ID" | "GITHUB_CLIENT_SECRET" | "COOKIE_ENCRYPTION_KEY" | "RUNPOD_API_KEY" | "RUNPOD_REGISTRY_AUTH_ID" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REFRESH_TOKEN" | "DRIVE_FOLDER_ID" | "TELEGRAM_BOT_TOKEN" | "TELEGRAM_CHAT_ID">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "CP_URL" | "MCP_RESOURCE" | "RENDERER_IMAGE" | "ALLOWED_GITHUB_LOGIN" | "FAULTS_ENABLED" | "DEV_ROUTES" | "ADMISSION_ENABLED" | "BENCH_ENABLED" | "GITHUB_CLIENT_ID" | "GITHUB_CLIENT_SECRET" | "COOKIE_ENCRYPTION_KEY" | "RUNPOD_API_KEY" | "RUNPOD_REGISTRY_AUTH_ID" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REFRESH_TOKEN" | "DRIVE_FOLDER_ID" | "TELEGRAM_BOT_TOKEN" | "TELEGRAM_CHAT_ID">> {}
 }
 declare module "*.txt" {
 	const value: string;

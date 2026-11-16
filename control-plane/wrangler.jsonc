@@ -20,8 +20,10 @@
     "FAULTS_ENABLED": "0",
     // "1" only in .dev.vars (local): enables POST /dev/acquire
     "DEV_ROUTES": "0",
-    // "1" lets the selector rent pods (paid) and the weekly benchmark run. Keep "0" until a paid test is approved.
-    "ADMISSION_ENABLED": "1"
+    // "1" lets the selector rent pods (paid); the weekly benchmark also needs BENCH_ENABLED. Keep "0" until a paid test is approved.
+    "ADMISSION_ENABLED": "1",
+    // "1" lets the Sunday 03:00 UTC benchmark rent pods (needs ADMISSION_ENABLED too). Separate paid switch.
+    "BENCH_ENABLED": "0"
   },
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "d9e36eb3a77c4ebdb5140d77b9aae89a" }],
   "d1_databases": [
