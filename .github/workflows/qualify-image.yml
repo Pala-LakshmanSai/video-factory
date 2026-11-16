@@ -1,5 +1,5 @@
 # Qualify an already-pushed renderer image by digest: run a custom-package FINAL render and a pov WebGL
-# preview inside that exact image (its default non-root user, --network none).
+# preview (and optionally a blockworld scored final) inside that exact image (its default non-root user, --network none).
 name: qualify-image
 on:
   workflow_dispatch:
@@ -8,6 +8,10 @@ on:
         description: "Image digest to qualify (sha256:...)"
         required: true
         type: string
+      blockworld:
+        description: "Also run the blockworld scored FINAL render check (~3-5 min CPU)"
+        type: boolean
+        default: false
 
 jobs:
   qualify:
@@ -124,3 +128,45 @@ jobs:
           docker run --rm --network none -v "$PWD/qualify:/q:ro" -e R=/app/renderer --entrypoint node "$IMG" /q/pov.mjs > pov.log
           { echo '```'; cat pov.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           grep -q '^pov packaged preview ok: [0-9]* previews$' pov.log
+      - name: Blockworld scored final render
+        if: inputs.blockworld
+        timeout-minutes: 30
+        run: |
+          mkdir -p bw
+          cat > bw/check.mjs <<'EOF'
+          const R = '/app/renderer';
+          process.chdir(R);
+          const { readFileSync } = await import('node:fs');
+          const { Scores, episodeSeconds } = await import(R + '/agent/score.ts');
+          const { renderFinal, renderPreviews } = await import(R + '/engine/render.ts');
+          const { run } = await import(R + '/engine/ffmpeg.ts');
+          const plan = JSON.parse(readFileSync(R + '/styles/blockworld/example-plan.json', 'utf8'));
+          const ep = plan.scenes[0].props.episode;
+          ep.scenes = ep.scenes.slice(0, 2); ep.scenes[0].music = 'whimsical'; ep.scenes[0].hit = true; ep.scenes[1].sfx = [{ t: 1.2, name: 'sparkle' }];
+          plan.scenes = plan.scenes.slice(0, 2).map((s, i) => ({ ...s, props: { ...s.props, episode: ep }, duration_s: ep.scenes[i].dur }));
+          const spec = { ...plan, voiceover: { none: true } };
+          const pv = await renderPreviews({ plan, stylesDir: R + '/styles', workDir: '/tmp/bw/pv', audioPath: null, audioSeconds: episodeSeconds(spec) });
+          if (!(pv.size > 0)) throw new Error('no previews');
+          for (const [k, j] of pv) if (!j || j.length < 1000 || j[0] !== 0xff || j[1] !== 0xd8) throw new Error(k + ': bad jpeg');
+          console.log('previews', pv.size);
+          const sc = await new Scores('/tmp/bw/score', null).forFinal(spec);
+          if (sc.seconds !== 7.8 || !String(sc.sha).startsWith('ec8c9600595f')) throw new Error('score ' + sc.seconds + ' s sha ' + sc.sha);
+          const file = await renderFinal({ plan, stylesDir: R + '/styles', workDir: '/tmp/bw/final', audioPath: sc.path, audioSeconds: sc.seconds });
+          const p = await run('ffprobe', ['-v', 'error', '-count_frames', '-show_entries', 'stream=codec_type,duration,nb_read_frames', '-of', 'json', file]);
+          if (p.code !== 0) throw new Error('ffprobe failed: ' + p.stderr);
+          const st = JSON.parse(p.stdout).streams;
+          const v = st.find((s) => s.codec_type === 'video'), a = st.find((s) => s.codec_type === 'audio');
+          if (!v || !a) throw new Error('missing stream: ' + JSON.stringify(st));
+          const vd = Number(v.duration), ad = Number(a.duration), n = Number(v.nb_read_frames);
+          if (!(Math.abs(vd - 7.8) <= 1 / 30) || !(Math.abs(ad - 7.8) <= 1 / 30)) throw new Error('durations video ' + vd + ' audio ' + ad);
+          if (n !== 234) throw new Error('frames ' + n);
+          const dec = await run('ffmpeg', ['-v', 'error', '-i', file, '-f', 'null', '-']);
+          if (dec.code !== 0 || dec.stderr.trim() !== '') throw new Error('decode errors (' + dec.code + '): ' + dec.stderr.slice(-1500));
+          const lu = await run('ffmpeg', ['-hide_banner', '-nostats', '-i', file, '-af', 'ebur128', '-f', 'null', '-']);
+          const I = Number([...lu.stderr.matchAll(/I:\s+(-?[\d.]+) LUFS/g)].at(-1)?.[1] ?? NaN);
+          if (!(I >= -16.5 && I <= -14.5)) throw new Error('integrated loudness ' + I);
+          console.log('blockworld final ok: video ' + vd + ' s audio ' + ad + ' s frames ' + n + ' I ' + I + ' LUFS sha ' + String(sc.sha).slice(0, 12));
+          EOF
+          docker run --rm --network none -v "$PWD/bw:/x:ro" --entrypoint node "$IMG" /x/check.mjs > bw.log
+          { echo '```'; cat bw.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          grep -q '^blockworld final ok: video [0-9.]* s audio [0-9.]* s frames 234 I -[0-9.]* LUFS sha ec8c9600595f$' bw.log
