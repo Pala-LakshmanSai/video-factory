@@ -65,7 +65,7 @@ describe("selectAndCreate against a fake RunPod", () => {
 		expect(job.job_token_sha256).toMatch(/^[0-9a-f]{64}$/);
 		const body = calls.find((c) => c.method === "POST")!.body as Record<string, any>;
 		expect(body).toMatchObject({ name: "vf-j1", computeType: "GPU", cloudType: "SECURE", gpuTypePriority: "custom", dataCenterPriority: "custom", volumeInGb: 0, ports: [], minVCPUPerGPU: 8 });
-		expect(body.env).toMatchObject({ JOB_ID: "j1", CP_URL: "https://cp.test", TTL_MIN: "30", NVIDIA_DRIVER_CAPABILITIES: "compute,utility,video" });
+		expect(body.env).toMatchObject({ JOB_ID: "j1", CP_URL: "https://cp.test", TTL_MIN: "1800", NVIDIA_DRIVER_CAPABILITIES: "compute,utility,video" });
 		const kinds = (await env.DB.prepare("SELECT kind FROM events").all<{ kind: string }>()).results.map((e) => e.kind);
 		expect(kinds).toEqual(["cost_reject", "pod_created", "state"]);
 	});

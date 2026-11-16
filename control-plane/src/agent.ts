@@ -113,16 +113,17 @@ agentApp.post("/previews", async (c) => {
 	const job = c.get("job");
 	const form = await c.req.formData();
 	const round = job.qa_rounds;
+	// Batched: one D1 round trip per 40 frames (~2 MB). Row-by-row inserts of a long video's ~800 frames outran the agent's 70 s timeout.
+	const ins = c.env.DB.prepare("INSERT OR REPLACE INTO previews (job_id, round, scene, idx, jpeg) VALUES (?, ?, ?, ?, ?)");
+	const rows: D1PreparedStatement[] = [];
 	for (const [name, value] of form.entries()) {
 		const m = /^scene-(\d+)-(\d+)$/.exec(name);
 		if (!m || typeof value === "string") continue;
 		const bytes = new Uint8Array(await (value as File).arrayBuffer());
 		if (bytes.byteLength > 500 * 1024) return c.json({ error: `${name} is ${bytes.byteLength} bytes; max 500 KB` }, 413);
-		await c.env.DB
-			.prepare("INSERT OR REPLACE INTO previews (job_id, round, scene, idx, jpeg) VALUES (?, ?, ?, ?, ?)")
-			.bind(job.id, round, +m[1], +m[2], bytes)
-			.run();
+		rows.push(ins.bind(job.id, round, +m[1], +m[2], bytes));
 	}
+	for (let i = 0; i < rows.length; i += 40) await c.env.DB.batch(rows.slice(i, i + 40));
 	// Round complete? rendering: every scene has 3 frames this round. rerendering: the revised scene does.
 	const p = plan(job);
 	const need = job.state === "rerendering" && job.rerender_scene ? [job.rerender_scene] : (p?.scenes ?? []).map((s) => s.n);

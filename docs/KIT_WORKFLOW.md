@@ -27,7 +27,7 @@ cast or sets unless asked (a series' Part 2 keeps Part 1's cast on purpose).
    (`window.__scene`, synchronous pure `window.__seek(t)`, optional `__ready`, no network, `data:` images only)
    + `tokens.json`.
 3. Write `scene_plan.json` with `"style": "custom"`, template ids = your html names, transitions cut|fade|slide,
-   ≤ 3 min per job (longer → parts).
+   one job (one GPU) per video, any length.
 4. Check stills locally (render a few frames through `renderer/engine` with `stylesDir` = parent of the package).
 5. `node scripts/pack-style.mjs <package-dir> scene_plan.json` → `.tar.gz` + `.b64` (≤ 8 MiB, no symlinks, no URLs).
 6. MCP: `upload_package {name, data_b64}` → `package_id`; `acquire_gpu {style: "custom", …}`;

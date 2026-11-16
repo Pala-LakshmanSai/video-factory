@@ -184,3 +184,9 @@ sampled cutoff, not a hard cap: the check runs every 5 min on actual job cost, a
 time is outside `run.jobs`. `recordBench` writes one row per result (`INSERT OR IGNORE`), and bench/`release` cancels
 move the job to `cancelled` (retried until terminal) before deleting the pod.
 
+
+## Operator upload routes (local CLI, not MCP)
+`UPLOAD_TOKEN` is a wrangler secret; unset turns both routes off.
+- `POST /upload/input?name=<file>` with audio bytes → `{drive_file_id}` for `acquire_gpu`'s voiceover. The Worker's `drive.file` token reads only files it uploaded itself.
+- `POST /upload/plan?job=<id>` with scene_plan JSON → same as MCP `submit_job`, for long-video plans too big to paste into a tool call.
+Both need `Authorization: Bearer $UPLOAD_TOKEN`.

@@ -88,6 +88,11 @@ describe("happy path: acquire -> submit -> hello -> previews -> approve -> uploa
 
 		// Claude submits while the pod boots (§3 step 4): state stays booting.
 		expect(await submitJob(env.DB, id, PLAN)).toEqual({ state: "booting", gpu: "RTX 4090 · AP-IN-1" });
+		// One pod renders any length: a 24 min plan stretches the job's TTL to ttlMinFor(1460 s) = 240 min.
+		const long = { ...PLAN, scenes: [{ ...PLAN.scenes[0], duration_s: 1460 }] };
+		await submitJob(env.DB, id, long);
+		expect((await getJob(env.DB, id))!.ttl_min).toBeGreaterThanOrEqual(240);
+		await submitJob(env.DB, id, PLAN);
 
 		// Pod says hello with a plan already stored -> rendering (Contradiction #3).
 		const hello = await agent(id, "/hello", { gpu: RTX4090, vcpu: 16, ram_gb: 62, pod_id: "pod1", data_center: "AP-IN-1" });
@@ -176,7 +181,7 @@ describe("agent auth", () => {
 	it("rejects a wrong token and an expired token", async () => {
 		const id = await newJob();
 		expect((await agent(id, "/heartbeat", { stage: "x", pct: 0 }, "nope")).status).toBe(401);
-		vi.advanceTimersByTime(31 * 60_000);
+		vi.advanceTimersByTime(301 * 60_000); // TTL = ttlMinFor(MAX_VIDEO_MIN)
 		expect((await agent(id, "/heartbeat", { stage: "x", pct: 0 })).status).toBe(401);
 	});
 
@@ -272,7 +277,7 @@ describe("watchdog (fake time)", () => {
 	it("cost over max per job -> failed (budget)", async () => {
 		const id = await newJob();
 		await agent(id, "/hello", { gpu: "g", vcpu: 8, ram_gb: 32, pod_id: "pod1", data_center: "AP-IN-1" });
-		for (let m = 0; m < 101; m++) {
+		for (let m = 0; m < 301; m++) {
 			vi.advanceTimersByTime(60_000);
 			await agent(id, "/heartbeat", { stage: "x", pct: 0 }).catch(() => undefined);
 		}

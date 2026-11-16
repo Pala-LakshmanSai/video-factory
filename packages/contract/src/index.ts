@@ -192,10 +192,14 @@ export const CONSTANTS = {
   SPEC_LONG_POLL_S: 50,
   WAIT_JOB_TIMEOUT_MAX_S: 50,
   MAX_PODS_AT_ONCE: 15,              // Decision
-  MAX_COST_PER_JOB_USD: 1.0,         // Decision
-  MAX_VIDEO_MIN: 3,                  // Decision
+  MAX_COST_PER_JOB_USD: 1.0,         // Decision: base budget; costCapFor adds per video minute
+  MAX_VIDEO_MIN: 180,                // Decision: one job = one pod = the whole video, any length (sanity cap only)
 } as const;
 
 /** Decision: TTL_MIN = 30, +10 per started minute of video beyond 3. */
 export const ttlMinFor = (videoSeconds: number): number =>
   30 + 10 * Math.max(0, Math.ceil(videoSeconds / 60) - 3);
+
+/** Decision: budget per job = $1 + $0.15 per started minute of video (one GPU renders the whole video). */
+export const costCapFor = (videoSeconds: number): number =>
+  CONSTANTS.MAX_COST_PER_JOB_USD + 0.15 * Math.ceil(videoSeconds / 60);

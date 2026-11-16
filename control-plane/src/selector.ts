@@ -1,6 +1,6 @@
 // SPEC §8 literally: compute tier OUTER (GPU/SECURE, GPU/COMMUNITY, CPU), region tier inner,
 // intersect with the live catalog, skip GPUs with availability NONE, cost check > $2/hr -> DELETE, continue.
-import type { Catalog, CreatePodBody, ErrorCode } from "../../packages/contract/src/index";
+import { CONSTANTS as C, ttlMinFor, type Catalog, type CreatePodBody, type ErrorCode } from "../../packages/contract/src/index";
 import { alert } from "./alerts";
 import {
 	COMPUTE_TIERS, CONSTANTS, CPU_FLAVORS, DEV_DUMMY_IMAGE, EXCLUDED_GPUS, GPU_RANK, MAX_REPLACEMENTS, REGION_TIERS, getConfig, norm,
@@ -60,7 +60,7 @@ export function podBody(env: Env, job: JobRow, a: Attempt, token: string): Creat
 			JOB_ID: job.id,
 			JOB_TOKEN: token,
 			CP_URL: env.CP_URL,
-			TTL_MIN: String(job.ttl_min),
+			TTL_MIN: String(Math.max(job.ttl_min, ttlMinFor(C.MAX_VIDEO_MIN * 60))), // backstop only; reaper + token use job.ttl_min
 			...(a.computeTier === "CPU" ? {} : { NVIDIA_DRIVER_CAPABILITIES: "compute,utility,video" as const }),
 			...(job.dev_mode === "bench" ? { BENCH: "1" as const } : {}),
 		},

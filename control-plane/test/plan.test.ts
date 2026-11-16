@@ -14,7 +14,7 @@ describe("scene_plan validation", () => {
 		expect(errs.join("\n")).toMatch(/template "nope"/);
 		expect(errs.join("\n")).toMatch(/transition/);
 	});
-	it("rejects videos over 3 min", () => expect(validatePlan({ ...ok, scenes: [{ ...ok.scenes[0], duration_s: 181 }] }, "explainer")[0]).toMatch(/exceeds/));
+	it("rejects videos over the 180 min sanity cap", () => expect(validatePlan({ ...ok, scenes: [{ ...ok.scenes[0], duration_s: 10801 }] }, "explainer")[0]).toMatch(/exceeds/));
 });
 
 describe("helpers", () => {

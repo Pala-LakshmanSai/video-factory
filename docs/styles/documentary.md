@@ -9,7 +9,7 @@ Calm, serif, cinematic. Near-black warm background, ivory **Noto Serif** text, a
 ## Plan rules (all styles)
 
 - `style: "documentary"`, `fps: 30`, `resolution: "1920x1080"` (preferred) or `"1080x1920"`.
-- `scenes[].n` runs 1..N with no gaps, in playback order. Total length ≤ 3 minutes.
+- `scenes[].n` runs 1..N with no gaps, in playback order. Any length: one job (one GPU) renders the whole video. Never split a video into parts.
 - `template` is one of the six ids below; `transition` is one of `cut`, `fade`, `slide` (into the next scene; use `fade` on the last scene for a fade-out).
 - `narration` is the exact voiceover text the scene covers; every voiceover word belongs to exactly one scene, in order.
 - `duration_s` is your estimate; the renderer rescales all durations proportionally to the real audio.

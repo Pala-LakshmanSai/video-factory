@@ -9,7 +9,7 @@ Stickman Explainer: flat vector stick figures (round heads, thick limbs, a hoodi
 ## Plan rules (all styles)
 
 - `style: "stickman"`, `fps: 24` (the kit's rate), `resolution: "1920x1080"`.
-- `scenes[].n` runs 1..N with no gaps, in playback order. Total length ≤ 3 minutes.
+- `scenes[].n` runs 1..N with no gaps, in playback order. Any length: one job (one GPU) renders the whole video. Never split a video into parts.
 - `template` is one of the five ids below; `transition` is `cut`, `fade` or `slide` (the transition *into the next scene*; `cut` on the last scene).
 - `narration` is the exact voiceover text the scene covers. Every word belongs to exactly one scene, in order.
 - `duration_s` is your estimate; the renderer rescales all durations proportionally to the real audio, so keep the *ratios* right.

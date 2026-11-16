@@ -3,7 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { env, waitUntil } from "cloudflare:workers";
 import { z } from "zod";
-import type { JobState, PreviewLabel, Scene, ScenePlan, Voiceover, WaitJobOut } from "../../packages/contract/src/index";
+import { ttlMinFor, type JobState, type PreviewLabel, type Scene, type ScenePlan, type Voiceover, type WaitJobOut } from "../../packages/contract/src/index";
 import { CONSTANTS, MAX_PODS_AT_ONCE, STYLES } from "./config";
 import { STYLE_REGISTRY } from "../../packages/contract/src/styles";
 import { activePod, getJob, jobCost, logEvent, now, plan, randomId, updateJob, type JobRow } from "./db";
@@ -67,11 +67,16 @@ export async function submitJob(db: D1Database, jobId: string, scenePlan: unknow
 	// Compare-and-set on the state, never an unconditional write: a concurrent submit that already moved the job to
 	// rendering must win, or /spec and /input/package could disagree about which plan (and package) the pod renders.
 	const planJson = JSON.stringify(scenePlan);
+	// One pod renders the whole video, so its TTL follows the plan's length: minutes already spent + ttlMinFor(total).
+	// The reaper and the job token enforce it; the pod's own env timer is the max-length backstop (selector.ts).
+	const total = (scenePlan as ScenePlan).scenes.reduce((a, s) => a + s.duration_s, 0);
+	const ttl = Math.ceil((now() - job.created_at) / 60_000) + ttlMinFor(total);
+	const tokenExp = now() + ttlMinFor(total) * 60_000;
 	for (let cur = job; ; ) {
 		if (cur.state === "waiting_for_plan") {
 			const r = await db
-				.prepare("UPDATE jobs SET plan_json = ?, state = 'rendering', updated_at = ? WHERE id = ? AND state = 'waiting_for_plan'")
-				.bind(planJson, now(), cur.id)
+				.prepare("UPDATE jobs SET plan_json = ?, ttl_min = ?, token_expires_at = MAX(COALESCE(token_expires_at, 0), ?), state = 'rendering', updated_at = ? WHERE id = ? AND state = 'waiting_for_plan'")
+				.bind(planJson, ttl, tokenExp, now(), cur.id)
 				.run();
 			if (r.meta.changes) {
 				await logEvent(db, cur.id, "plan_submitted", { scenes: (scenePlan as ScenePlan).scenes.length });
@@ -80,8 +85,8 @@ export async function submitJob(db: D1Database, jobId: string, scenePlan: unknow
 			}
 		} else if (PRE_POD.includes(cur.state)) {
 			const r = await db
-				.prepare(`UPDATE jobs SET plan_json = ?, updated_at = ? WHERE id = ? AND state IN (${PRE_POD.map(() => "?").join(", ")})`)
-				.bind(planJson, now(), cur.id, ...PRE_POD)
+				.prepare(`UPDATE jobs SET plan_json = ?, ttl_min = ?, token_expires_at = CASE WHEN token_expires_at IS NULL THEN NULL ELSE MAX(token_expires_at, ?) END, updated_at = ? WHERE id = ? AND state IN (${PRE_POD.map(() => "?").join(", ")})`)
+				.bind(planJson, ttl, tokenExp, now(), cur.id, ...PRE_POD)
 				.run();
 			if (r.meta.changes) {
 				await logEvent(db, cur.id, "plan_submitted", { scenes: (scenePlan as ScenePlan).scenes.length });
@@ -92,6 +97,8 @@ export async function submitJob(db: D1Database, jobId: string, scenePlan: unknow
 		cur = (await getJob(db, jobId))!; // lost the race: re-read and apply the rule to the new state
 	}
 }
+
+const PREVIEW_IMAGES_MAX = 90;
 
 /** States before a pod is asking for the plan: a resubmitted plan simply replaces the stored one. */
 const PRE_POD: JobState[] = ["queued", "provisioning", "booting", "retrying"];
@@ -118,7 +125,13 @@ export async function waitJob(db: D1Database, jobId: string, until: "preview" | 
 						.bind(job.id, job.id)
 						.all<{ round: number; scene: number; idx: number; jpeg: ArrayBuffer | number[] }>()
 				).results;
-				for (const r of rows) {
+				// Long videos (one pod, any length) have ~3 frames x hundreds of scenes: send at most PREVIEW_IMAGES_MAX,
+				// mid frames only, evenly spread. Every frame stays in D1.
+				const mids = rows.length > PREVIEW_IMAGES_MAX ? rows.filter((r) => r.idx === 1) : rows;
+				const step = Math.max(1, mids.length / PREVIEW_IMAGES_MAX);
+				const shown = mids.length > PREVIEW_IMAGES_MAX ? Array.from({ length: PREVIEW_IMAGES_MAX }, (_, i) => mids[Math.floor(i * step)]) : mids;
+				if (shown.length < rows.length) images.push({ type: "text", text: `${rows.length} preview frames; showing ${shown.length} mid-scene frames evenly spread. revise_scene any scene that needs it.` });
+				for (const r of shown) {
 					const label: PreviewLabel = { scene: r.scene, idx: r.idx, round: r.round };
 					out.previews.push(label);
 					images.push({ type: "text", text: `scene ${r.scene} frame ${r.idx} (round ${r.round})` });

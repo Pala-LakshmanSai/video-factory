@@ -79,3 +79,17 @@ export async function streamFile(env: Env, fileId: string): Promise<Response> {
 	if (!res.ok) return new Response(`drive ${res.status}`, { status: 502 });
 	return new Response(res.body, { headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/octet-stream" } });
 }
+
+/** Upload an input file (voiceover audio) into DRIVE_FOLDER_ID so the app's drive.file token can read it back. */
+export async function uploadInput(env: Env, name: string, type: string, body: ArrayBuffer): Promise<string> {
+	const res = await g(env, "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id", {
+		method: "POST",
+		headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Length": String(body.byteLength), "X-Upload-Content-Type": type },
+		body: JSON.stringify({ name, parents: [env.DRIVE_FOLDER_ID] }),
+	});
+	const loc = res.headers.get("Location");
+	if (!res.ok || !loc) throw new Error(`drive session ${res.status}: ${(await res.text()).slice(0, 200)}`);
+	const put = await fetch(loc, { method: "PUT", headers: { "Content-Type": type }, body });
+	if (!put.ok) throw new Error(`drive upload ${put.status}: ${(await put.text()).slice(0, 200)}`);
+	return ((await put.json()) as { id: string }).id;
+}

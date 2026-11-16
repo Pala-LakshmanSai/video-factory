@@ -9,7 +9,7 @@ Kurzgesagt-like narrated science animation, ported from the audited Flatglow Exp
 
 ## Plan rules
 - `style: "flatglow"`, `fps: 30` (any fps from 12 to 60 is accepted), `resolution: "1920x1080"` (preferred) or `"1080x1920"`.
-- `n` runs 1..N. The total must be ≤ 3 min. `transition` is `cut`, `fade` or `slide`; use `cut` on the last scene. `narration` holds the exact voiceover words.
+- `n` runs 1..N. Any length: one job (one GPU) renders the whole video; never split it into parts. `transition` is `cut`, `fade` or `slide`; use `cut` on the last scene. `narration` holds the exact voiceover words.
 - Audio is one track (`voiceover`). Score and SFX only work if they are pre-mixed into the job's Drive audio file.
 - Every text prop is a plain string. Text wraps and shrinks to fit. A missing required prop shows a visible `[missing …]` placeholder.
 - **Shared optional props:** `world`: `space` | `bio` | `tech` | `day` | `dusk` (each template has a default) and `seed` (a number that varies the decoration).

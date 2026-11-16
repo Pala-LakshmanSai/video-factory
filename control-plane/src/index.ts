@@ -13,6 +13,9 @@ import { GitHubHandler } from "./github-handler";
 import { createServer } from "./mcp";
 import { balanceCheck, reaper } from "./reaper";
 import { watchdog } from "./watchdog";
+import { constantTimeEqual } from "./db";
+import { uploadInput } from "./drive";
+import { submitJob } from "./mcp";
 
 const mcpHandler = createMcpHandler(createServer);
 
@@ -26,11 +29,26 @@ const oauth = new OAuthProvider<Env>({
 	resourceMetadata: { resource: env.MCP_RESOURCE },
 });
 
+// POST /upload/plan?job=<id> (scene_plan JSON) or /upload/input?name=<file name>, body = audio bytes, Bearer UPLOAD_TOKEN (wrangler secret; unset = route off).
+// Returns {drive_file_id} for acquire_gpu's voiceover. Drive's drive.file scope only reads files this app created.
+async function uploadRoute(req: Request, e: Env) {
+	const token = (e as unknown as Record<string, string | undefined>).UPLOAD_TOKEN;
+	const got = req.headers.get("Authorization")?.replace(/^Bearer /, "") ?? "";
+	if (!token || !constantTimeEqual(got, token)) return new Response("unauthorized", { status: 401 });
+	const q = new URL(req.url).searchParams;
+	// /upload/plan?job=<id>, body = scene_plan JSON: same as MCP submit_job, for plans too big to paste into a tool call.
+	if (new URL(req.url).pathname === "/upload/plan") return Response.json(await submitJob(e.DB, q.get("job") ?? "", await req.json(), e.OAUTH_KV));
+	const name = q.get("name") || "voiceover.mp3";
+	const id = await uploadInput(e, name, req.headers.get("Content-Type") || "audio/mpeg", await req.arrayBuffer());
+	return Response.json({ drive_file_id: id });
+}
+
 export default {
 	fetch(req: Request, e: Env, ctx: ExecutionContext) {
 		const path = new URL(req.url).pathname;
 		if (path.startsWith("/agent/")) return agentApp.fetch(req, e, ctx);
 		if (path.startsWith("/admin") || path === "/callback/admin") return adminApp.fetch(req, e, ctx);
+		if ((path === "/upload/input" || path === "/upload/plan") && req.method === "POST") return uploadRoute(req, e);
 		return oauth.fetch(req, e, ctx);
 	},
 

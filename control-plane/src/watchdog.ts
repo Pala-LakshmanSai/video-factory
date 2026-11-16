@@ -1,6 +1,7 @@
 // Every-minute cron (Prompt 4a): queue, boot timeout, heartbeat loss, stranded jobs, budget, dev pods.
 import { CONSTANTS, MAX_COST_PER_JOB_USD, MAX_PODS_AT_ONCE, MAX_REPLACEMENTS } from "./config";
-import { getJob, jobCost, logEvent, markPodDeleted, now, writeCost, type JobRow, type PodRow } from "./db";
+import { getJob, jobCost, logEvent, markPodDeleted, now, plan, writeCost, type JobRow, type PodRow } from "./db";
+import { costCapFor } from "../../packages/contract/src/index";
 import { alert } from "./alerts";
 import { busySlots } from "./mcp";
 import { deletePod, podAbsent } from "./runpod";
@@ -94,7 +95,9 @@ export async function watchdog(env: Env, db: D1Database) {
 	await each(active, "budget", async (job) => {
 		const c = await jobCost(db, job.id);
 		await writeCost(db, job.id, c);
-		if (c.cost_usd > MAX_COST_PER_JOB_USD) await failJob(env, db, job, "budget", `$${c.cost_usd} > $${MAX_COST_PER_JOB_USD}`);
+		const p = plan(job);
+		const cap = p ? costCapFor(p.scenes.reduce((a, s) => a + s.duration_s, 0)) : MAX_COST_PER_JOB_USD;
+		if (c.cost_usd > cap) await failJob(env, db, job, "budget", `$${c.cost_usd} > $${cap}`);
 	});
 
 	// 3. Admissions: held jobs (create claim set) are re-checked every minute; unclaimed ones are retried 90 s after

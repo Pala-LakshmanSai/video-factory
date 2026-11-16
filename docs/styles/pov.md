@@ -8,7 +8,7 @@ POV Escalation ("What if you ___ and couldn't stop?"). A first-person ride throu
 ## Plan rules
 
 - `style: "pov"`, `fps: 30` (24 is fine for long videos: rendering is software WebGL, ~0.3 s per frame per worker), `resolution: "1920x1080"`. `1080x1920` renders (HUD keeps its 16:9 size at the top) but 16:9 is the designed format.
-- `scenes[].n` 1..N, total ≤ 3 minutes. `transition`: use `cut` almost always (the journey is meant to be continuous; consecutive scenes in the next biome read as one ride). `fade` for a time jump. Avoid `slide`.
+- `scenes[].n` 1..N, any length (one job, one GPU, per video). `transition`: use `cut` almost always (the journey is meant to be continuous; consecutive scenes in the next biome read as one ride). `fade` for a time jump. Avoid `slide`.
 - `narration` = the exact voiceover words of the scene. `duration_s` ≈ words / 2.4, **3–10 s**.
 - Audio: exactly one track. A score must be pre-mixed into the job's Drive audio; the style makes no sound.
 - Every number on screen must be true (physics or a sourced fact). Never invent records.

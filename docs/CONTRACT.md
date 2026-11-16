@@ -128,7 +128,7 @@ export interface Scene {
 }
 ```
 
-Validation (submit_job rejects with precise errors): `style` matches the job; `n` runs 1..N with no gaps; every `template` and `transition` exists in that style (`packages/contract/src/styles.ts`); total ≤ 3 min. The control plane never decodes audio, so for BOTH voiceover kinds `duration_s` are Claude's best estimate and the renderer rescales them proportionally to the real audio length (see Contradictions #6).
+Validation (submit_job rejects with precise errors): `style` matches the job; `n` runs 1..N with no gaps; every `template` and `transition` exists in that style (`packages/contract/src/styles.ts`); total ≤ 180 min (sanity cap; one job = one GPU = the whole video, never split). The control plane never decodes audio, so for BOTH voiceover kinds `duration_s` are Claude's best estimate and the renderer rescales them proportionally to the real audio length (see Contradictions #6).
 
 ## §5 Contract B — Agent API (pod → control plane)
 
@@ -295,8 +295,8 @@ export const CONSTANTS = {
   SPEC_LONG_POLL_S: 50,
   WAIT_JOB_TIMEOUT_MAX_S: 50,
   MAX_PODS_AT_ONCE: 15,              // Decision
-  MAX_COST_PER_JOB_USD: 1.0,         // Decision
-  MAX_VIDEO_MIN: 3,                  // Decision
+  MAX_COST_PER_JOB_USD: 1.0,         // Decision: base budget; costCapFor adds $0.15 per video minute
+  MAX_VIDEO_MIN: 180,                // Decision: one job = one pod = the whole video, any length (sanity cap only)
 } as const;
 
 /** Decision: TTL_MIN = 30, +10 per started minute of video beyond 3. */
@@ -309,7 +309,7 @@ export const ttlMinFor = (videoSeconds: number): number =>
 | Item | Value |
 |---|---|
 | Voiceover input | Both. Drive audio file streamed via `GET /input/voiceover`; or text → on-pod TTS with **Kokoro-82M**, weights baked into the image (no extra service, SPEC §1). |
-| Max video length | 3 min |
+| Max video length | 180 min sanity cap, one GPU per video (TTL = ttlMinFor(length), budget = costCapFor(length)) |
 | Pod TTL | `TTL_MIN` = 30, +10 per extra minute (`ttlMinFor`) |
 | Max pods at once | 15; extra jobs wait in state `queued` before provisioning |
 | Max cost per job | $1.00 → cancel + report (`budget`) |

@@ -9,7 +9,7 @@ Calm, real-media documentary for an older (55+) audience watching on a TV: archi
 ## Plan rules
 
 - `style: "discovery"`, `fps: 30`, `resolution: "1920x1080"`.
-- `scenes[].n` runs 1..N, playback order. **Total ≤ 3 minutes per job.** A long-form film (the style's natural 18–25 min) must be split into parts at chapter cards: one plan + one voiceover file + one job per part, joined afterwards (`ffmpeg -f concat -c copy`).
+- `scenes[].n` runs 1..N, playback order. **One job (one GPU) per film, any length**: the style's natural 18–25 min film is one plan, one voiceover file, one job. Never split it into parts.
 - `template` is one of the seven ids below. `transition` (into the next scene) is `cut`, `fade` or `slide`. Default `cut` between shots; `fade` into/out of title, chapter and quote cards (the engine fades from black, 0.35 s; there are no cross-dissolves); `slide` sparingly; `cut` on the last scene.
 - `narration` = the exact words spoken over the scene; every voiceover word belongs to exactly one scene.
 - `duration_s` is rescaled to the real audio length, but **overlay/caption times inside props are NOT rescaled**: keep `duration_s` close to the real spoken time so `at`/`dur` land on the words.
@@ -60,7 +60,7 @@ Fades up 0.5–1.6 s, out over the last 0.7 s: give it ≥ 3 s.
 | `num` | string | no | e.g. `"CHAPTER 2"`, gold, letter-spaced. |
 | `src`, `grade` | | no | dimmed, blurred background. |
 
-2–4 s. A good place to split a long film into ≤ 3-min parts.
+2–4 s.
 
 ### `photo` — a photo or footage still, moved slowly
 | prop | type | req | notes |

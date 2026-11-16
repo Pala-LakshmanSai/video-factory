@@ -9,7 +9,7 @@ Loud, high-contrast, fast. Black background, white **Bebas Neue** all-caps type,
 ## Plan rules (all styles)
 
 - `style: "bold-shorts"`, `fps: 30`, `resolution: "1080x1920"` (preferred) or `"1920x1080"`.
-- `scenes[].n` runs 1..N with no gaps, in playback order. Total length ≤ 3 minutes (shorts: keep it ≤ 60 s).
+- `scenes[].n` runs 1..N with no gaps, in playback order. Any length, one job (one GPU) per video (shorts: keep it ≤ 60 s).
 - `template` is one of the six ids below; `transition` is one of `cut`, `fade`, `slide` (into the next scene; use `cut` on the last scene).
 - `narration` is the exact voiceover text the scene covers; every voiceover word belongs to exactly one scene, in order.
 - `duration_s` is your estimate; the renderer rescales all durations proportionally to the real audio.
