@@ -16,36 +16,50 @@ const RUN_TIMEOUT_MS = 60 * 60_000;
 
 interface BenchRun {
 	started_at: number;
-	jobs: { job_id: string; gpu: string; cost_per_hr: number }[];
+	jobs: { job_id: string; gpu: string }[];
 }
 type BenchResult = { boot_s: number; render_s: number; cost_per_hr: number; score: number };
 /** One row per bench job, written once (INSERT OR IGNORE): concurrent pod reports never overwrite each other. */
 const resultKey = (jobId: string) => `bench_result:${jobId}`;
 
-/** Cancel unless already terminal; a concurrent cancel (lost the SQL state guard) is fine. */
+/**
+ * Drive the job to a terminal state; returns only once a re-read shows it terminal (throws otherwise), so callers
+ * may retire the pod afterwards. A lost compare-and-set (a concurrent /hello moved booting -> waiting_for_plan)
+ * re-reads and retries; transition() keeps the state event history coherent (from = the state actually replaced).
+ */
 async function cancel(db: D1Database, jobId: string, reason: string) {
-	const job = await getJob(db, jobId);
-	if (!job || isTerminal(job.state)) return;
-	try {
-		await transition(db, job, "cancelled", { reason });
-	} catch (e) {
-		if (!(e instanceof IllegalTransition)) throw e;
+	for (let i = 0; i < 20; i++) {
+		const job = await getJob(db, jobId);
+		if (!job || isTerminal(job.state)) return;
+		try {
+			await transition(db, job, "cancelled", { reason });
+			return;
+		} catch (e) {
+			if (!(e instanceof IllegalTransition)) throw e;
+		}
 	}
+	throw new Error(`bench: job ${jobId} still not terminal after 20 cancel attempts`);
 }
 
 export async function startBench(env: Env, db: D1Database) {
 	if (String(env.BENCH_ENABLED) !== "1") return "bench disabled: benchmark not started";
 	if (String(env.ADMISSION_ENABLED) !== "1") return "admission disabled: benchmark not started";
-	if (await getConfig<BenchRun | null>(db, "bench_run", null)) return "already running";
+	// Reserve the run BEFORE renting (atomically: two starts cannot both win), so an early pod report finds it.
+	const run: BenchRun = { started_at: now(), jobs: [] };
+	const reserved = await db.prepare("INSERT OR IGNORE INTO config (key, value_json) VALUES ('bench_run', ?)").bind(JSON.stringify(run)).run();
+	if (!reserved.meta.changes) return "already running";
 	const rank = await getConfig<string[]>(db, "gpu_rank", GPU_RANK);
 	const cat = await catalog(env, db);
 	const available = rank.filter((g) => cat.dataCenters.some((dc) => dc.gpuAvailability?.some((a) => norm(a.id) === norm(g) && a.availability !== "NONE")));
-	const run: BenchRun = { started_at: now(), jobs: [] };
+	let rented = 0;
 	let estimate = 0;
 	for (const gpu of available) {
 		const { job_id } = await acquireGpu(env, db, {
 			style: "explainer", title: `bench ${gpu}`, voiceover: { text: "bench" }, chat_key: `bench-${now()}-${norm(gpu).replace(/\W+/g, "-")}`,
 		}, { dev_mode: "bench" });
+		// Register the job in the run before its pod can exist (single-statement append, no read-modify-write).
+		await db.prepare("UPDATE config SET value_json = json_insert(value_json, '$.jobs[#]', json(?)) WHERE key = 'bench_run'")
+			.bind(JSON.stringify({ job_id, gpu })).run();
 		const r = await selectAndCreate(env, db, job_id, { rank: [gpu], gpuOnly: true });
 		const pod = r === "created" ? await activePod(db, job_id) : null;
 		if (!pod) {
@@ -63,10 +77,9 @@ export async function startBench(env: Env, db: D1Database) {
 			break;
 		}
 		estimate += cost;
-		run.jobs.push({ job_id, gpu, cost_per_hr: pod.cost_per_hr });
+		rented++;
 	}
-	await setConfig(db, "bench_run", run);
-	return `bench started: ${run.jobs.length} GPUs, est $${estimate.toFixed(2)}`;
+	return `bench started: ${rented} GPUs, est $${estimate.toFixed(2)}`;
 }
 
 /**
@@ -80,8 +93,8 @@ export async function recordBench(env: Env, db: D1Database, jobId: string, rende
 	let result: BenchResult | null = null;
 	if (entry && pod?.hello_at) {
 		const boot_s = (pod.hello_at - pod.created_at) / 1000;
-		const score = (entry.cost_per_hr * (boot_s + renderS)) / 3600;
-		result = { boot_s: Math.round(boot_s), render_s: Math.round(renderS), cost_per_hr: entry.cost_per_hr, score: Math.round(score * 10000) / 10000 };
+		const score = (pod.cost_per_hr * (boot_s + renderS)) / 3600;
+		result = { boot_s: Math.round(boot_s), render_s: Math.round(renderS), cost_per_hr: pod.cost_per_hr, score: Math.round(score * 10000) / 10000 };
 		await db.prepare("INSERT OR IGNORE INTO config (key, value_json) VALUES (?, ?)").bind(resultKey(jobId), JSON.stringify(result)).run();
 	}
 	await cancel(db, jobId, "bench_done");

@@ -594,4 +594,68 @@ describe("Sunday benchmark accounting", () => {
 		const cancels = await env.DB.prepare("SELECT COUNT(*) n FROM events WHERE job_id = 'b1' AND kind = 'state'").first<{ n: number }>();
 		expect(cancels).toEqual({ n: 1 });
 	});
+
+	/** D1 wrapper that runs `before`/`after` around every statement's run(): injects a concurrent request at an exact SQL step. */
+	const hooked = (db: D1Database, hook: { before?: (sql: string, a: unknown[]) => Promise<void>; after?: (sql: string, a: unknown[]) => Promise<void> }) => {
+		const wrap = (st: D1PreparedStatement, sql: string, a: unknown[] = []): D1PreparedStatement => new Proxy(st, {
+			get: (t, k) => k === "bind" ? (...b: unknown[]) => wrap(t.bind(...b), sql, b)
+				: k === "run" ? async () => { await hook.before?.(sql, a); const r = await t.run(); await hook.after?.(sql, a); return r; }
+				: (t as never)[k],
+		});
+		return { prepare: (sql: string) => wrap(db.prepare(sql), sql) } as unknown as D1Database;
+	};
+
+	it("/hello advancing booting -> waiting_for_plan during cancel: job still ends cancelled, pod retired only after", async () => {
+		const { finishBench } = await import("../src/bench");
+		await job("b1", "booting", "dev_mode='bench'");
+		await pod("p1", "b1", 10 * MIN);
+		await env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('bench_run', ?)").bind(JSON.stringify({ started_at: Date.now() - 2 * 60 * MIN, jobs: [{ job_id: "b1", gpu: RTX4090 }] })).run();
+		const raw = env.DB;
+		let raced = false;
+		env = { ...env, DB: hooked(raw, { before: async (sql, a) => {
+			if (!raced && sql.startsWith("UPDATE jobs SET state = ?") && a[0] === "cancelled") {
+				raced = true; // the concurrent /hello lands between finishBench's read and its compare-and-set
+				await raw.prepare("UPDATE jobs SET state = 'waiting_for_plan' WHERE id = 'b1'").run();
+			}
+		} }) } as Env;
+		const atDelete: string[] = [];
+		mockFetch(async (u, i) => {
+			if (i.method !== "DELETE") return undefined;
+			atDelete.push((await getJob(raw, "b1"))!.state);
+			return new Response(null, { status: 204 });
+		});
+		await finishBench(env, env.DB);
+		expect(raced).toBe(true);
+		expect(atDelete).toEqual(["cancelled"]);
+		expect((await getJob(raw, "b1"))!.state).toBe("cancelled");
+		expect((await row("p1"))!.delete_reason).toBe("bench_timeout");
+		const ev = (await raw.prepare("SELECT data_json FROM events WHERE job_id = 'b1' AND kind = 'state'").all<{ data_json: string }>()).results.map((r) => JSON.parse(r.data_json));
+		expect(ev).toEqual([{ from: "waiting_for_plan", to: "cancelled", reason: "bench_timeout" }]);
+	});
+
+	it("a bench report arriving while startBench is still renting keeps its score through finishBench", async () => {
+		env = benchEnv();
+		const { startBench, recordBench, finishBench } = await import("../src/bench");
+		const raw = env.DB;
+		let reported = "";
+		env = { ...env, DB: hooked(raw, { after: async (sql, a) => {
+			// Right after selectAndCreate moves the job to booting: the pod says /hello and reports at once.
+			if (reported || !sql.startsWith("INSERT INTO events") || !String(a[3]).includes('"to":"booting"')) return;
+			reported = String(a[0]);
+			await raw.prepare("UPDATE pods SET hello_at = created_at + 30000 WHERE job_id = ?").bind(reported).run();
+			await recordBench(env, raw, reported, 60);
+		} }) } as Env;
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
+			(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined),
+			(u, i) => (u.endsWith("/v1/pods") && i.method === "POST" ? json({ id: "pb1", costPerHr: 0.6, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
+			(u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
+		);
+		await startBench(env, env.DB);
+		expect(reported).toBeTruthy();
+		await finishBench(env, raw);
+		const last = JSON.parse((await raw.prepare("SELECT value_json FROM config WHERE key = 'bench_last'").first<{ value_json: string }>())!.value_json);
+		expect(last.results[RTX4090]).toMatchObject({ boot_s: 30, render_s: 60, cost_per_hr: 0.6 });
+		expect(last.rank[0]).toBe(RTX4090);
+	});
 });
