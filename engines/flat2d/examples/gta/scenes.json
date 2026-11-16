@@ -11,10 +11,10 @@
 { "n": 2, "start": 3.4, "duration": 4.4, "narration": "Our guy walks down to the dock, where Rico is waiting by the boat, and the two old friends make the deal.", "spec": {
   "set": "marina", "camera": [[0, {"x": 960, "zoom": 1}], [4.4, {"x": 1010, "zoom": 1.08}, "ioS"]],
   "items": [
-    { "id": "palm1", "type": "prop", "prop": "palm", "at": [70, 680], "depth": 0.6, "z": -2 },
-    { "id": "palm2", "type": "prop", "prop": "palm", "at": [310, 680], "scale": 0.8, "depth": 0.6, "z": -2 },
-    { "id": "palm3", "type": "prop", "prop": "palm", "at": [1840, 680], "scale": 0.9, "depth": 0.6, "z": -2 },
-    { "id": "boat", "type": "prop", "prop": "speedboat", "at": [1560, 730], "z": -1, "depth": 0.6, "anim": {"rot": [[0, 0], [1.1, 1.5, "ioS"], [2.2, 0, "ioS"], [3.3, 1.5, "ioS"], [4.4, 0, "ioS"]]} },
+    { "id": "palm1", "type": "prop", "scenery": true, "prop": "palm", "at": [70, 680], "depth": 0.6, "z": -2 },
+    { "id": "palm2", "type": "prop", "scenery": true, "prop": "palm", "at": [310, 680], "scale": 0.8, "depth": 0.6, "z": -2 },
+    { "id": "palm3", "type": "prop", "scenery": true, "prop": "palm", "at": [1840, 680], "scale": 0.9, "depth": 0.6, "z": -2 },
+    { "id": "boat", "type": "prop", "scenery": true, "prop": "speedboat", "at": [1560, 730], "z": -1, "depth": 0.6, "anim": {"rot": [[0, 0], [1.1, 1.5, "ioS"], [2.2, 0, "ioS"], [3.3, 1.5, "ioS"], [4.4, 0, "ioS"]]} },
     { "id": "host", "type": "actor", "cast": "host", "at": [-160, 930], "do": [[0, "walk", {"to": 1010, "dur": 1.7}], [1.75, "pose", {"name": "wave"}], [2.4, "pose", {"name": "talk"}], [3.3, "pose", {"name": "hug"}], [3.3, "face", {"eyes": "happy", "mouth": "grin"}]], "say": [[2.4, 3.2]] },
     { "id": "rico", "type": "actor", "cast": "rico", "at": [1260, 930], "face": -1, "do": [[0, "pose", {"name": "hands-hips"}], [1.4, "pose", {"name": "point"}], [3.3, "pose", {"name": "hug"}]] },
     { "id": "where", "type": "pill", "str": "vice beach marina", "at": [960, 170], "enter": {"t": 0.3, "how": "pop"}, "exit": {"t": 3.9, "how": "fade"} }
@@ -77,8 +77,8 @@
   "camera": [[0, {"x": 960, "zoom": 1.06}], [1.0, {"x": 900, "zoom": 1.12}, "outC"], [4.6, {"x": 1000, "zoom": 1.0}, "ioS"]],
   "items": [
     { "id": "sign", "type": "prop", "prop": "neon-sign", "at": [520, 430], "depth": 0.8, "z": -2 },
-    { "id": "car", "type": "prop", "prop": "police-car", "at": [1680, 905], "z": -1, "enter": {"t": 2.5, "how": "slide-r", "dur": 0.5} },
-    { "id": "siren", "type": "custom", "fn": "siren", "at": [1680, 768], "params": {"color": "@coral"}, "enter": {"t": 2.9, "how": "pop"} },
+    { "id": "car", "type": "prop", "scenery": true, "prop": "police-car", "at": [1680, 905], "z": -1, "enter": {"t": 2.5, "how": "slide-r", "dur": 0.5} },
+    { "id": "siren", "type": "custom", "scenery": true, "fn": "siren", "at": [1680, 768], "params": {"color": "@coral"}, "enter": {"t": 2.9, "how": "pop"} },
     { "id": "kid", "type": "actor", "cast": "kid", "at": [560, 900], "do": [[0, "pose", {"name": "fight"}], [0.75, "pose", {"name": "punch"}], [1.5, "pose", {"name": "celebrate"}], [3.4, "pose", {"name": "shrug"}]] },
     { "id": "cole", "type": "actor", "cast": "cole", "at": [790, 900], "face": -1, "do": [[0, "pose", {"name": "fight"}], [0.45, "pose", {"name": "kick"}], [0.9, "pose", {"name": "fall"}], [1.6, "pose", {"name": "lie"}]] },
     { "id": "rico", "type": "actor", "cast": "rico", "at": [1320, 900], "face": -1, "do": [[0, "pose", {"name": "cheer"}], [1.3, "pose", {"name": "jump"}], [2.7, "pose", {"name": "hands-up"}]] },

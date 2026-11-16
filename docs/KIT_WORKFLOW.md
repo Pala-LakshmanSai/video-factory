@@ -19,6 +19,11 @@ future-city video draws its developer, planners, desert and skyline. Kit "recurr
 (e.g. the hoodie figure) appear only when the owner asks for a recurring host. Never reuse a previous video's
 cast or sets unless asked (a series' Part 2 keeps Part 1's cast on purpose).
 
+## Layout rule (owner, every style)
+
+Layout rule for EVERY style (owner, 2026-11-16): never overlap two or more infographics or texts (titles, labels, numbers/counters, charts, boards, cards, arrows, props used as graphics, images); give each its own clear space, fully inside the safe area and never under the letterbox bars; every text must stand out clearly from what is behind it (contrast at least 4.5:1, use a solid plate behind text on light or busy backgrounds).
+For flat2d videos this is enforced by `engines/flat2d/tools/qa.mjs`: packing waits until it reports 0 errors; failing scenes go back to their scene writer with the QA lines, then QA runs again.
+
 ## Steps per video (run from Claude Code, which can read `style-kits/`)
 
 1. Read the chosen kit and its AUDIT file. Write the voiceover (or take the user's) and a shot list.

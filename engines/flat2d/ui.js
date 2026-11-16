@@ -12,6 +12,41 @@ const DEF = { text: 48, label: 32, pill: 32, tag: 40, quote: 40 };
 // ---------- text ----------
 function setFont(ctx, size, weight, spacing) { ctx.font = `${weight} ${size}px "${font()}"`; ctx.letterSpacing = `${(spacing ?? 0) * size}px`; }
 function textW(ctx, str, size, spacing = F.look.label.spacing, weight = 800) { ctx.save(); setFont(ctx, size, weight, spacing); const w = ctx.measureText(str).width - (spacing ?? 0) * size; ctx.restore(); return w; }
+// ---------- contrast (owner rule 2026-11-16: every text clearly readable against what is behind it) ----------
+const lin = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+const lum = (r, g, b) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+function colorLum(c) {
+  const h = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(c || ''));
+  if (h) { const x = h[1].length === 3 ? h[1].replace(/./g, '$&$&') : h[1]; return lum(parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16)); }
+  const m = /rgba?\(([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)/.exec(String(c || ''));
+  return m ? lum(+m[1], +m[2], +m[3]) : 1;
+}
+// Sample the pixels already drawn under a text box; if the text would read below 4.5:1 against the worst fifth
+// of them, draw the look's plate behind it first (dark plate for light text, light plate for dark text).
+function contrastPlate(ctx, x0, yTop, w, h, color) {
+  if (F.look.text && F.look.text.plate === false) return;
+  const b = F.base, [sx, sy, sw, sh] = F.screenBox(ctx, x0, yTop, w, h).map(v => v * b);
+  const X = Math.max(0, Math.floor(sx)), Y = Math.max(0, Math.floor(sy));
+  const Wd = Math.min(ctx.canvas.width - X, Math.ceil(sw)), Hd = Math.min(ctx.canvas.height - Y, Math.ceil(sh));
+  if (Wd < 2 || Hd < 2) return;
+  const d = ctx.getImageData(X, Y, Wd, Hd).data, tl = colorLum(color), ratios = [];
+  for (let gy = 0; gy < 6; gy++) for (let gx = 0; gx < 16; gx++) {
+    const i = (Math.floor((gy + 0.5) / 6 * Hd) * Wd + Math.floor((gx + 0.5) / 16 * Wd)) * 4;
+    if (d[i + 3] < 128) continue; // nothing drawn there on this layer
+    const bl = lum(d[i], d[i + 1], d[i + 2]);
+    ratios.push((Math.max(tl, bl) + 0.05) / (Math.min(tl, bl) + 0.05));
+  }
+  if (!ratios.length) return;
+  ratios.sort((a, b2) => a - b2);
+  if (ratios[Math.floor(ratios.length * 0.2)] >= 4.5) return;
+  const pad = h * 0.28, light = tl > 0.4;
+  ctx.save();
+  ctx.shadowColor = 'transparent';
+  const fill = light ? (P().plate || 'rgba(14,18,40,0.86)') : (P().plateLight || 'rgba(255,255,255,0.9)');
+  fillRR(ctx, x0 - pad, yTop - pad * 0.45, w + pad * 2, h + pad * 0.9, (h + pad * 0.9) * 0.3, fill);
+  ctx.restore();
+}
+
 // one line, baseline middle; returns its width. o: {size, weight, color, align, spacing, glow, glowColor, qa}
 function txt(ctx, str, x, y, o = {}) {
   const size = o.size || 32, sp = o.spacing ?? 0.02, align = o.align || 'center';
@@ -20,6 +55,7 @@ function txt(ctx, str, x, y, o = {}) {
   const w = ctx.measureText(str).width - sp * size;
   const x0 = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  if (o.qa !== false && str.trim() && o.plate !== false) contrastPlate(ctx, x0, y - size * 0.55, w, size * 1.1, o.color || '#fff');
   if (o.glow) { ctx.shadowColor = o.glowColor || 'rgba(8,10,28,.85)'; ctx.shadowBlur = o.glow; }
   ctx.fillStyle = o.color || '#fff';
   if (str) ctx.fillText(str, x0, y + size * 0.04);
@@ -55,6 +91,7 @@ function block(ctx, str, o) {
     // measure the whole line so typing does not shift it
     const full = textW(ctx, ln, size, sp, weight);
     let x = align === 'center' ? -full / 2 : align === 'right' ? -full : 0;
+    if (shown.trim() && o.plate !== false) contrastPlate(ctx, x, y - size * 0.55, full, size * 1.1, o.color || '#fff');
     if (!hi.size) { txt(ctx, shown, x, y, { ...o, size, weight, spacing: sp, align: 'left', qa: false }); }
     else {
       const words = shown.split(/(\s+)/);

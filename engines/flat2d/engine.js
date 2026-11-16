@@ -188,7 +188,8 @@ function grow(box) {
   const b = cur.box, x0 = Math.min(b[0], box[0]), y0 = Math.min(b[1], box[1]);
   cur.box = [x0, y0, Math.max(b[0] + b[2], box[0] + box[2]) - x0, Math.max(b[1] + b[3], box[1] + box[3]) - y0];
 }
-function qaGrow(ctx, x, y, w, h) { grow(screenBox(ctx, x, y, w, h)); }
+// mostly transparent drawing (fading in/out) does not count toward an item's box: overlap QA judges what is seen
+function qaGrow(ctx, x, y, w, h) { if (ctx.globalAlpha >= 0.5 && !F._noQA) grow(screenBox(ctx, x, y, w, h)); }
 function qaText(ctx, str, x, y, w, h, size) {
   if (ctx.globalAlpha < 0.05 || F._noQA) return;
   const m = ctx.getTransform(), s = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) / F.base;
@@ -317,7 +318,7 @@ function drawItem(ctx, it, t, env) {
   const nm = `${env.where} ${itemName(it)}`;
   const st = itemState(it, t, nm);
   if (!st) return;
-  const rec = { id: env.prefix + (it.id ?? `#${env.idx}`), type: it.type, box: null };
+  const rec = { id: env.prefix + (it.id ?? `#${env.idx}`), type: it.type, box: null, ...(it.scenery ? { scenery: true } : {}) };
   QA.stack.push(rec);
   const body = (c) => {
     c.save();
@@ -345,7 +346,7 @@ function drawItem(ctx, it, t, env) {
     }
   } else body(ctx);
   QA.stack.pop();
-  if (rec.box) { rec.box = rec.box.map(v => Math.round(v)); QA.items.push(rec); }
+  if (rec.box) { rec.box = rec.box.map(v => Math.round(v)); rec.top = QA.stack.length === 0; QA.items.push(rec); }
 }
 
 const RENDER = {
@@ -555,7 +556,7 @@ Object.assign(F, {
   clamp, lerp, inv, E, ease, k, pop, rng, hashStr, noise1, D2R,
   hex2rgb, rgba, mix, shade, col,
   rr, circ, ell, fillC, fillE, fillRR, poly, line, stroke, smoothPath, polyLen, partial, drawOn, bez, glowDot, sparkle, layerCanvas,
-  track, trackObj, applyCam, qaGrow, QA, qaText, lookupCast, lookupProp, lookupImage, renderScene, drawItem,
+  track, trackObj, applyCam, qaGrow, QA, qaText, screenBox, lookupCast, lookupProp, lookupImage, renderScene, drawItem,
   ITEM_TYPES, HOWS, FX,
 });
 // what custom.js functions get as `api`

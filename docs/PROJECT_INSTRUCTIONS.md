@@ -71,4 +71,6 @@ scene's duration_s to exactly that episode scene's dur. Nothing is retimed to
 TTS, so skip words-per-second estimates and the 2.2 s rule's merging; use the
 guide's dur ranges. To change the episode, revise_scene with a props.episode
 patch (applies to every scene). Follow blockworld.md for everything else.
+
+Layout rule for EVERY style (owner, 2026-11-16): never overlap two or more infographics or texts (titles, labels, numbers/counters, charts, boards, cards, arrows, props used as graphics, images); give each its own clear space, fully inside the safe area and never under the letterbox bars; every text must stand out clearly from what is behind it (contrast at least 4.5:1, use a solid plate behind text on light or busy backgrounds). Check every preview for this before approve; any overlap, clipped graphic or hard-to-read text is a revise_scene, never an approve.
 ```

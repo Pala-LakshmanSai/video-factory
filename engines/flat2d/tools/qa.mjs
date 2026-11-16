@@ -77,6 +77,22 @@ export function checkQa(qa, { W, H, letterbox = LETTERBOX, mid }) {
 			if (ix > 0 && iy > 0 && ix * iy > 0.05 * Math.min(aw * ah, bw * bh))
 				E(`texts "${String(texts[i].str).slice(0, 30)}" and "${String(texts[j].str).slice(0, 30)}" overlap`);
 		}
+	// Owner rule 2026-11-16 (all styles): never overlap two or more infographics or texts, and keep every one fully
+	// inside the safe area. Top-level non-actor items only (a board's own children are laid out inside it); an
+	// item's box already contains its texts, so this also catches text over a chart, calendar, receipt or arrow.
+	const graphics = (qa.items ?? []).filter((it) => it.type !== "actor" && it.type !== "split" && !it.scenery && it.top !== false && it.box);
+	for (let i = 0; i < graphics.length; i++)
+		for (let j = i + 1; j < graphics.length; j++) {
+			const a = graphics[i], b = graphics[j], [ax, ay, aw, ah] = a.box, [bx, by, bw, bh] = b.box;
+			const ix = Math.min(ax + aw, bx + bw) - Math.max(ax, bx), iy = Math.min(ay + ah, by + bh) - Math.max(ay, by);
+			if (ix > 0 && iy > 0 && ix * iy > 0.05 * Math.min(aw * ah, bw * bh))
+				E(`${a.type} "${a.id}" and ${b.type} "${b.id}" overlap (${a.box.map(Math.round)} / ${b.box.map(Math.round)})`);
+		}
+	if (mid)
+		for (const it of graphics) {
+			const [x, y, w, h] = it.box;
+			if (x < sx0 - 2 || x + w > sx1 + 2 || y < sy0 - 2 || y + h > sy1 + 2) E(`${it.type} "${it.id}" not fully inside the safe area (box ${it.box.map(Math.round)})`);
+		}
 	if (mid)
 		for (const it of qa.items ?? []) {
 			if (it.type !== "actor") continue;

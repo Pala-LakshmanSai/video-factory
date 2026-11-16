@@ -9,7 +9,7 @@
 { "n": 2, "start": 3.6, "duration": 4.4, "narration": "Mara has three plants on her shelf, and every one of them is dying.", "spec": {
   "set": "flat", "camera": [[0, {"x": 940, "zoom": 1.0}], [4.4, {"x": 990, "zoom": 1.03}, "ioS"]],
   "items": [
-    { "id": "plant", "type": "prop", "prop": "plant-sad", "at": [1180, 930], "scale": 1.2 },
+    { "id": "plant", "type": "prop", "scenery": true, "prop": "plant-sad", "at": [1180, 930], "scale": 1.2 },
     { "id": "mara", "type": "actor", "cast": "mara", "at": [-120, 930], "scale": 1.15, "do": [[0, "walk", {"to": 820, "dur": 1.6}], [1.6, "look", {"dir": 1}], [1.7, "pose", {"name": "hands-hips"}], [2.6, "pose", {"name": "facepalm"}], [2.6, "face", {"eyes": "sleepy", "mouth": "frown"}]] },
     { "id": "p1", "type": "pill", "str": "3 plants", "at": [1500, 300], "accent": "@teal", "size": 40, "enter": {"t": 1.2, "how": "pop", "dur": 0.3} },
     { "id": "p2", "type": "pill", "str": "all dying", "at": [1500, 420], "accent": "@red", "size": 40, "enter": {"t": 2.6, "how": "pop", "dur": 0.3} }
@@ -26,10 +26,10 @@
 { "n": 4, "start": 12.0, "duration": 4.6, "narration": "Ollie drowns his every morning, then wonders why the roots go soft.", "spec": {
   "set": "flat", "camera": [[0, {"x": 900, "y": 560, "zoom": 1.08}], [4.6, {"x": 960, "y": 560, "zoom": 1.13}, "ioS"]],
   "items": [
-    { "id": "plant", "type": "prop", "prop": "plant-sad", "at": [1240, 930], "scale": 1.1 },
+    { "id": "plant", "type": "prop", "scenery": true, "prop": "plant-sad", "at": [1240, 930], "scale": 1.1 },
     { "id": "ollie", "type": "actor", "cast": "ollie", "at": [860, 930], "scale": 1.1, "do": [[0, "hold", {"prop": "watering-can", "hand": "R"}], [0, "pose", {"name": "point"}], [0, "face", {"eyes": "happy", "mouth": "grin"}], [2.6, "drop", {"hand": "R"}], [2.6, "pose", {"name": "shrug"}], [2.6, "face", {"eyes": "wide", "mouth": "o", "brows": "worried"}]] },
-    { "id": "w1", "type": "prop", "prop": "drop", "at": [1160, 640], "enter": {"t": 0.3, "how": "fade", "dur": 0.1}, "exit": {"t": 1.3, "how": "fade", "dur": 0.1}, "anim": {"dy": [[0.3, 0], [1.4, 170, "inQ"]]} },
-    { "id": "w2", "type": "prop", "prop": "drop", "at": [1172, 640], "scale": 0.8, "enter": {"t": 1.2, "how": "fade", "dur": 0.1}, "exit": {"t": 2.3, "how": "fade", "dur": 0.1}, "anim": {"dy": [[1.2, 0], [2.4, 170, "inQ"]]} },
+    { "id": "w1", "type": "prop", "scenery": true, "prop": "drop", "at": [1160, 640], "enter": {"t": 0.3, "how": "fade", "dur": 0.1}, "exit": {"t": 1.3, "how": "fade", "dur": 0.1}, "anim": {"dy": [[0.3, 0], [1.4, 170, "inQ"]]} },
+    { "id": "w2", "type": "prop", "scenery": true, "prop": "drop", "at": [1172, 640], "scale": 0.8, "enter": {"t": 1.2, "how": "fade", "dur": 0.1}, "exit": {"t": 2.3, "how": "fade", "dur": 0.1}, "anim": {"dy": [[1.2, 0], [2.4, 170, "inQ"]]} },
     { "id": "lbl", "type": "label", "str": "soft roots", "at": [1560, 640], "point": [1250, 880], "size": 40, "enter": {"t": 2.8, "how": "draw", "dur": 0.5} }
   ] } },
 { "n": 5, "start": 16.6, "duration": 4.4, "narration": "Everyone looks it up, and everyone gets a different answer.", "spec": {
@@ -48,7 +48,7 @@
   "set": "sill", "camera": [[0, {"x": 960, "zoom": 1.0}], [4.8, {"x": 920, "zoom": 1.05}, "ioS"]],
   "items": [
     { "id": "doc", "type": "actor", "cast": "doc", "at": [620, 930], "scale": 1.12, "do": [[0, "pose", {"name": "talk"}], [2.4, "pose", {"name": "point"}]], "say": [[0.2, 2.2]] },
-    { "id": "plant", "type": "prop", "prop": "plant-happy", "at": [1040, 930], "scale": 1.15 },
+    { "id": "plant", "type": "prop", "scenery": true, "prop": "plant-happy", "at": [1040, 930], "scale": 1.15 },
     { "id": "rule", "type": "board", "at": [1480, 420], "w": 560, "h": 360, "title": "the finger test", "enter": {"t": 0.4, "how": "draw", "dur": 0.6}, "items": [
       { "id": "r1", "type": "pill", "str": "soil dry", "accent": "@gold", "size": 34, "enter": {"t": 1.3, "how": "pop", "dur": 0.3} },
       { "id": "r2", "type": "pill", "str": "then water", "accent": "@teal", "size": 34, "enter": {"t": 2.4, "how": "pop", "dur": 0.3} } ] }

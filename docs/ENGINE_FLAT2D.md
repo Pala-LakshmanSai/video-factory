@@ -180,6 +180,21 @@ subagents of ~20 scenes each, all reading the same `video.json`.
 - `look.motion.push` (slow push-in on every camera), `look.text.glowColor`, `look.board.outline`, `tokens.letterbox` (0 = none).
 - Actors may face front: `face: 0`, `look {dir: 0}`. Rotations are in degrees. A prop's `at` is its bottom-centre.
 
+## Layout and contrast (owner rule, 2026-11-16, every style)
+- **No overlaps:** QA errors when any two top-level non-actor items (text, label, pill, tag, counter, chart, board, quote,
+  card, map, arrow, web, image, prop, custom) overlap by more than 5% of the smaller, at any sampled time. An item's box
+  includes its own texts, so text over a chart/calendar/receipt/arrow is caught. Mark world dressing that is not an
+  infographic with `"scenery": true` (furniture, trees, a car on the street, a cup on a table): scenery is exempt.
+  `split` is a container and exempt. Items under 50% opacity (fading in/out) do not count.
+- **Fully in frame:** every non-scenery graphic must sit inside the safe area at the middle sample (no bars clipped by
+  the top edge, no counters sliding off the side).
+- **Contrast:** the engine samples the pixels behind each text line and, below 4.5:1, draws the look's plate
+  (`palette.plate` dark / `palette.plateLight` light) behind it first. `look.text.plate: false` or an item's
+  `plate: false` turns it off.
+- **Authoring:** lay a scene out in zones (title band top, main graphic centre, character band bottom-left or
+  bottom-right); one main infographic per scene, or put several inside one `board`; arrows run between items, never
+  across them.
+
 ## Footage (open)
 Packages are capped at 8 MiB and render time has no network, so trailer/gameplay *video* inserts (gta kit)
 cannot ride in a package yet. Stills work as `images`. Video inserts need a media channel (upload clips with
