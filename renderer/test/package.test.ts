@@ -36,9 +36,14 @@ test("good package extracts to <root>/custom", async () => {
 });
 
 test("archive with a ../ entry is rejected", async () => {
-	// Member "sub/../tokens.json" keeps the ".." component in the stored name.
-	const a = pack((d) => { good(d); mkdirSync(join(d, "sub")); }, ["sub/../tokens.json"]);
-	await assert.rejects(extractPackage(a, join(tmp(), "pkg")), /unsafe path/);
+	// Raw ustar headers: GNU tar normalizes "sub/../x" when creating, so build the hostile names by hand.
+	for (const name of ["sub/../tokens.json", "../escape.txt", "/etc/evil"]) {
+		const dir = tmp();
+		const a = join(dir, "evil.tar.gz");
+		writeFileSync(a, ustar([{ name: "tokens.json", size: 2 }, { name, size: 1 }]));
+		await assert.rejects(extractPackage(a, join(dir, "pkg")), /unsafe path/, name);
+		assert.equal(existsSync(join(dir, "pkg", "custom")), false);
+	}
 });
 
 test("symlink is rejected", async () => {
