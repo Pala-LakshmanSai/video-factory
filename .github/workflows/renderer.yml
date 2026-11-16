@@ -59,12 +59,15 @@ jobs:
           cache-to: type=gha,mode=max,ignore-error=true
       - name: Smoke test the image
         env: { IMG: "${{ steps.hub.outputs.image }}" }
+        shell: bash # -eo pipefail: a failing docker run piped into tee fails the step
         run: |
           echo "image size: $(( $(docker image inspect -f '{{.Size}}' "$IMG") / 1000000 )) MB" | tee -a "$GITHUB_STEP_SUMMARY"
           test "$(docker run --rm --entrypoint id "$IMG" -u)" != 0
-          docker run --rm --entrypoint ffmpeg "$IMG" -hide_banner -encoders | grep -E 'h264_nvenc|libx264'
+          docker run --rm --entrypoint ffmpeg "$IMG" -hide_banner -encoders > encoders.txt
+          grep -q ' h264_nvenc ' encoders.txt && grep -q ' libx264 ' encoders.txt
           docker run --rm "$IMG" --selftest | tee selftest.log
           grep -q 'encoder: libx264' selftest.log
+          grep -q 'encoded 150 frames of 1080p with libx264' selftest.log
           docker run --rm --network none --entrypoint node "$IMG" --input-type=module -e "const m = await import('/app/renderer/engine/voice.ts'); await m.tts('Offline check.', '/tmp/t.wav'); console.log('offline TTS ok')"
           # Offline preview render through the real engine (image's non-root user, no network).
           mkdir -m 777 smoke
@@ -96,14 +99,22 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - if: steps.hub.outputs.push == 'true'
         id: push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: renderer/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.hub.outputs.image }}
-          cache-from: type=gha
+        name: Push the tested image (no rebuild)
+        env: { IMG: "${{ steps.hub.outputs.image }}" }
+        shell: bash
+        run: |
+          local_id=$(docker image inspect -f '{{.Id}}' "$IMG")
+          docker push "$IMG"
+          digest=$(docker image inspect -f '{{index .RepoDigests 0}}' "$IMG" | cut -d@ -f2)
+          m=$(docker buildx imagetools inspect --raw "${IMG%:*}@$digest")
+          d=$(jq -r '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64")][0].digest // empty' <<<"$m")
+          [ -n "$d" ] && m=$(docker buildx imagetools inspect --raw "${IMG%:*}@$d")
+          pushed_cfg=$(jq -r '.config.digest' <<<"$m")
+          echo "local image id $local_id; pushed $digest (amd64 manifest ${d:-same}) config $pushed_cfg" | tee -a "$GITHUB_STEP_SUMMARY"
+          # The pinned digest must be exactly the image the smoke test ran (classic store: id = config digest;
+          # containerd store: id = manifest/index digest).
+          test "$pushed_cfg" = "$local_id" || test "$digest" = "$local_id" || test "${d:-x}" = "$local_id"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - if: steps.hub.outputs.push == 'true'
         run: |
           echo "### Renderer image" >> "$GITHUB_STEP_SUMMARY"
