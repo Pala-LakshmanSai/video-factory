@@ -11,7 +11,7 @@
 | Secrets | `COOKIE_ENCRYPTION_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` set. The other eight hold the placeholder `UNSET` until you replace them below |
 | GitHub OAuth App | Registered: https://github.com/settings/applications/4023620 (homepage `URL`, callbacks below); live `/admin/login` reaches GitHub consent |
 | Claude Project | **Video Factory** (private): instructions saved; knowledge complete: `explainer.md`, `bold-shorts.md`, `documentary.md`, `scene-plan-contract.md` |
-| Renderer image | Builds in CI (6.2 GB): ffmpeg has h264_nvenc + libx264, `--selftest` works as non-root, Kokoro TTS works offline |
+| Renderer image | Builds in CI (slim, 922 MB compressed): ffmpeg has h264_nvenc + libx264; smoke runs as non-root (`--selftest`, offline previews, offline Kokoro `prepareVoice`), then CI pushes that exact image (no rebuild) |
 
 Until the secrets are real, GitHub sign-in to `/mcp` and `/admin` fails and the 5-min reaper logs RunPod 401s. Harmless.
 
@@ -49,8 +49,8 @@ cd control-plane && for s in RUNPOD_API_KEY RUNPOD_REGISTRY_AUTH_ID GOOGLE_CLIEN
 ## 4. Renderer image to Docker Hub (Phase 4)
 
 GitHub repo → Settings → Secrets and variables → Actions: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (`gha-push`).
-Re-run the latest `renderer` workflow (or push). Its summary prints `docker.io/<user>/video-renderer:<sha>`:
-put that in `RENDERER_IMAGE` in `control-plane/wrangler.jsonc`, then `npx wrangler deploy`.
+Re-run the latest `renderer` workflow (or push). Its summary prints the pushed digest (checked equal to the smoke-tested image):
+put `docker.io/<user>/video-renderer@sha256:<digest>` from that run in `RENDERER_IMAGE` in `control-plane/wrangler.jsonc`, then `npx wrangler deploy`.
 In the RunPod console, start one pod on a cheap NVENC GPU with start command `--selftest`; its log must show
 `encoder: h264_nvenc`. Terminate it. (Done 2026-11-16 on an A40: see Phase 9 below.)
 
@@ -70,7 +70,8 @@ CP_URL=https://video-factory.lakshmansai121.workers.dev ADMIN_COOKIE='vf_admin=�
 ```
 Faults: `kill_pod`, `silence_heartbeat`, `slow_boot`, `price_cap:0.01`, `block_region:AP-IN-1`,
 `drop_upload_after_chunk:1`, `expire_upload_session`, `corrupt_md5`, `render_error:2`, `revoke_drive`.
-`slow_boot`, `price_cap`, `block_region` must be armed before the pod exists: use `*` as job id (applies to the
+`slow_boot` makes `/hello` answer 503 + `X-VF-Hold` (agent keeps retrying) until the 10-min boot timeout replaces the pod.
+Arming returns 409 while the job has a queued command. `slow_boot`, `price_cap`, `block_region` must be armed before the pod exists: use `*` as job id (applies to the
 next job). Set `FAULTS_ENABLED` back to `"0"` afterwards. Status page: `URL/admin/status`.
 
 ## Deploying a control-plane change
@@ -79,8 +80,8 @@ Order matters: the code needs the new columns.
 ```bash
 cd control-plane && npx wrangler d1 migrations apply video-factory --remote && npx wrangler deploy
 ```
-`ADMISSION_ENABLED` stays `"0"` in `wrangler.jsonc` (no pod is ever rented, no benchmark runs) until a paid test is
-explicitly approved; then set it to `"1"` and deploy.
+Production gates in `wrangler.jsonc`: `ADMISSION_ENABLED="1"` (jobs may rent pods), `FAULTS_ENABLED`/`DEV_ROUTES` `"0"`,
+`BENCH_ENABLED="0"` (the weekly benchmark needs it and admission both).
 
 ## Local dev (optional)
 
@@ -108,7 +109,7 @@ Visual follow-up, resolved: the one-frame black flash at each `fade` scene join 
 Single operator, owner-approved, $3 cap; spent **$0.5556** tracked (incl. B8, B9). Every drill pod has a RunPod Audit Log deletion
 receipt (independent check). After the drills: `FAULTS_ENABLED`/`DEV_ROUTES` `"0"`; `ADMISSION_ENABLED` `"1"` since 3ec4bdd (owner-requested
 regular use). The Sunday 03:00 UTC benchmark is separately gated by `BENCH_ENABLED` (`"0"`, keep off; see below),
-zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2913b893…926b` (a9e41fa); then `sha256:1ad06161…79be` (912a8c0, NVENC fallback diagnostics); now `sha256:65af4b0b…66af` (05d866c).
+zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2913b893…926b` (a9e41fa); then `sha256:1ad06161…79be` (912a8c0, NVENC fallback diagnostics); then `sha256:65af4b0b…66af` (05d866c); now `sha256:b48d0590…7d87` (421382a, B10).
 
 **Exact injection (named fault fired and the observed event matches):**
 
@@ -180,6 +181,6 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
 **Production status (2026-11-16):** `ADMISSION_ENABLED="1"` committed in `wrangler.jsonc`; faults and dev routes stay
 `"0"`. The Sunday 03:00 UTC benchmark needs `BENCH_ENABLED="1"` as well (619d8f8) and stays **off**. Its $2 is a
 sampled cutoff, not a hard cap: the check runs every 5 min on actual job cost, and held or estimate-rejected pod
-time is outside `run.jobs`. Before enabling it, `recordBench` needs atomic per-result writes and must record the
-terminal state before deleting the pod.
+time is outside `run.jobs`. `recordBench` writes one row per result (`INSERT OR IGNORE`), and bench/`release` cancels
+move the job to `cancelled` (retried until terminal) before deleting the pod.
 

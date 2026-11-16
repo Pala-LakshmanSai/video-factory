@@ -271,17 +271,17 @@ Every change writes an `events` row. Illegal transitions throw. Terminal: `done`
 | uploading | verifying | agent `POST /done` | — |
 | verifying | uploading | control plane | md5/size mismatch → cmd `reupload` (max 2) |
 | verifying | done | control plane | md5 + size match, shared anyone/reader, pod DELETEd |
-| any non-terminal with a pod | retrying | cron watchdog | no /hello 6 min after create, or heartbeat silent 60 s in rendering/final_render/uploading |
+| any non-terminal with a pod | retrying | cron watchdog | no /hello 10 min after create, or heartbeat silent 60 s in rendering/final_render/uploading |
 | retrying | booting | selector | replacement pod created (same plan) |
 | retrying | failed | selector / watchdog | no capacity, or more than 2 replacements (`pod_replacements`) |
 | any non-terminal | failed | agent `POST /error` / watchdog / Drive broker | 3 render errors (`render_errors`), cost > max (`budget`), `invalid_grant` (`drive_auth`); pod DELETEd |
-| any non-terminal | cancelled | MCP `release` | pod DELETEd |
+| any non-terminal | cancelled | MCP `release` | job `cancelled` first (retried until terminal), then pod DELETEd |
 
 ## §11 Constants
 
 ```ts
 export const CONSTANTS = {
-  BOOT_TIMEOUT_S: 6 * 60,            // create -> /hello, then DELETE, skip that data center
+  BOOT_TIMEOUT_S: 10 * 60,           // 6.2 GB image cold pulls; create -> /hello, then DELETE, skip that data center
   HEARTBEAT_INTERVAL_S: 15,
   HEARTBEAT_DEAD_S: 60,
   POD_TTL_MIN: 30,                   // see Decisions for the per-length formula
@@ -337,6 +337,7 @@ export const ttlMinFor = (videoSeconds: number): number =>
     - Diagnostics: provider bodies are reduced to problem-detail strings with token-shaped values masked; raw pod JSON (which carries `env`) never reaches events, alerts or errors.
     - Pod self-destruct: v1 DELETE → v2 DELETE → v1 stop.
 8. **Replacement after approve** — if a pod dies after `approve`, the new pod re-renders previews and the job moves straight on to `final_render` without asking Claude again (`jobs.approved`).
+11. **Fault hold and arming** (`FAULTS_ENABLED="1"` only) — under `slow_boot`, `/hello` returns 503 with header `X-VF-Hold`; the agent treats it as reachable and retries until the watchdog's boot_timeout replacement consumes the fault. Arming a fault returns 409 while `pending_cmd` is busy.
 
 ## Contradictions and gaps in SPEC.md
 

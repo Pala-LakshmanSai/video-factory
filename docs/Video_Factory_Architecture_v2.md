@@ -52,7 +52,7 @@ Lanes: Claude chat · Control plane (Worker) · RunPod API · Pod agent · Googl
 - pull image from Docker Hub · start container
 - agent starts · nothing to install
 - `POST /agent/{job}/hello` · Bearer JOB_TOKEN · {gpu, vcpu}
-- 200 {state: "waiting_for_plan"} · no hello in 6 min → DELETE pod, next tier
+- 200 {state: "waiting_for_plan"} · no hello in 10 min → DELETE pod, next tier
 
 ### B · Render
 - tools/call · `submit_job {job_id, scene_plan}`
@@ -148,7 +148,7 @@ Lanes: Claude chat · Control plane (Worker) · RunPod API · Pod agent · Googl
 | Nearest region has no GPU | next region tier, nearest first (Secure → Community) |
 | No GPU ≤ $2/hr anywhere | RunPod CPU pod renders with x264 (slower, still finishes) |
 | Pod created above $2/hr | DELETE at once, try next option |
-| Pod stuck booting > 6 min | DELETE, skip that data center, retry |
+| Pod stuck booting > 10 min | DELETE, skip that data center, retry |
 | Pod dies mid-render | heartbeat silent 60 s → new pod, same job spec, re-render |
 | Docker Hub pull limit / outage | authenticated pulls · backoff, retry in next data center |
 | RunPod API 429 / 5xx | exponential backoff with jitter, 3 tries per tier |
