@@ -91,6 +91,56 @@ jobs:
             const v = await prepareVoice({ text: 'This is the offline voice check. It should last more than one second.' }, '/tmp/v', () => { throw new Error('no drive'); });
             if (!(v.seconds > 1)) throw new Error('voice too short: ' + v.seconds);
             console.log('offline prepareVoice ok:', v.path, v.seconds.toFixed(2), 's');" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Offline custom style package (agent/package.ts): fetchPackage verifies sha256 + id, extracts, then
+          # renderPreviews with style "custom" must draw the magenta box; wrong sha256 / wrong id must reject
+          # before anything is written.
+          mkdir -p smoke-pkg/style
+          echo '{"palette":{"bg":"#ffffff"}}' > smoke-pkg/style/tokens.json
+          cat > smoke-pkg/style/title.html <<'EOF'
+          <!doctype html><html><body style="margin:0;background:#fff">
+          <div id="box" style="position:absolute;left:10%;top:10%;width:50%;height:50%;background:#e0218a"></div>
+          <script>window.__seek = (t) => { document.getElementById("box").style.transform = "translateX(" + t * 10 + "px)"; };</script>
+          </body></html>
+          EOF
+          node scripts/pack-style.mjs smoke-pkg/style
+          cat > smoke-pkg/check.mjs <<'EOF'
+          const R = process.env.R, P = process.env.P;
+          const { fetchPackage } = await import(R + '/agent/package.ts');
+          const { renderPreviews } = await import(R + '/engine/render.ts');
+          const { run } = await import(R + '/engine/ffmpeg.ts');
+          const { createHash } = await import('node:crypto');
+          const { existsSync } = await import('node:fs');
+          const { readFile, writeFile, mkdtemp } = await import('node:fs/promises');
+          const tmp = await mkdtemp('/tmp/pkgsmoke-');
+          const bytes = await readFile(P + '/style.tar.gz');
+          const get = async () => new Response(new Uint8Array(bytes));
+          const sha = createHash('sha256').update(bytes).digest('hex');
+          const id = 'pk_' + sha.slice(0, 24);
+          for (const [label, i, h] of [['wrong sha256', id, '0'.repeat(64)], ['wrong id', 'pk_' + '0'.repeat(24), sha], ['wrong id, no sha256', 'pk_' + '0'.repeat(24), undefined]]) {
+            const w = tmp + '/bad-' + label.replace(/\W+/g, '-');
+            const err = await fetchPackage(i, h, w, get).then(() => null, (e) => e);
+            if (!err || !/content hash mismatch/.test(err.message)) throw new Error(label + ': not rejected (' + err + ')');
+            if (existsSync(w)) throw new Error(label + ': ' + w + ' was created');
+          }
+          console.log('custom package wrong-bytes rejected ok');
+          const stylesDir = await fetchPackage(id, sha, tmp + '/w', get);
+          const plan = { style: 'custom', fps: 30, resolution: '640x360', scenes: [{ n: 1, template: 'title', props: {}, duration_s: 3, narration: 'hi', transition: 'cut' }] };
+          const f = await renderPreviews({ plan, stylesDir, workDir: tmp + '/r', audioPath: '', audioSeconds: 3 });
+          if (f.size !== 3) throw new Error('got ' + f.size + ' previews');
+          for (const [n, j] of f) {
+            if (j.length < 1000 || j[0] !== 0xff || j[1] !== 0xd8) throw new Error(n + ': bad jpeg, ' + j.length + ' bytes');
+            await writeFile(tmp + '/' + n + '.jpg', j);
+            const r = await run('ffmpeg', ['-hide_banner', '-i', tmp + '/' + n + '.jpg', '-vf', 'signalstats,metadata=print', '-f', 'null', '-']);
+            const sat = Number(/SATAVG=([\d.]+)/.exec(r.stderr)?.[1]);
+            if (!(sat > 5)) throw new Error(n + ': frame looks blank (SATAVG=' + sat + ')');
+            console.log(n, j.length, 'bytes, SATAVG', sat);
+          }
+          console.log('custom package render ok:', f.size, 'previews');
+          EOF
+          docker run --rm --network none -v "$PWD/smoke-pkg:/pkg:ro" -e R=/app/renderer -e P=/pkg --entrypoint node "$IMG" /pkg/check.mjs > pkg.log
+          cat pkg.log >> "$GITHUB_STEP_SUMMARY"
+          grep -q '^custom package wrong-bytes rejected ok$' pkg.log
+          grep -q '^custom package render ok: 3 previews$' pkg.log
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: smoke-previews, path: smoke, if-no-files-found: ignore }
