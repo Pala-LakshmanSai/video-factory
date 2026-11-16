@@ -5,9 +5,9 @@ sets (streets, cities, rooms, plazas with instanced crowds), cinematic camera mo
 top-left, "YOU ARE <status>" top-right), Libre Caslon italic captions, Inter cards/bubbles/chips, FX (hearts,
 confetti, money rain, fireworks, smoke). Rendered with three.js (WebGL; SwiftShader on CPU). 16:9 `1920x1080`.
 
-**Status: pending** — visuals complete (Linux WebGL fixtures pass). Audio candidate: the pod generates the
-kit's caption-led score from the episode for every preview/final (below). Before `ready`: bake the samples
-tarball into a qualified image, render end to end there, owner/reviewer approval.
+**Status: ready** (v1, 2026-11-16) — the pod generates the kit's caption-led episode score for every
+preview/final (below); samples are baked into the image. Qualified on image `sha256:def0de88…4c67`
+(qualify-image 43823951935: 2-scene scored final, video = audio = 7.8 s), live on Worker 30f0f4be.
 
 **Use it for:** escalating hypothetical "what if" stories with a running counter. **Don't use it for:**
 text-heavy explainers, quotes, lists (use `explainer`).
