@@ -154,18 +154,26 @@ agentApp.post("/upload-session", async (c) => {
 });
 
 agentApp.post("/done", async (c) => {
-	let job = c.get("job");
+	// The hash this request authenticated with: a replacement pod rotates it, so an old pod's slow /done can't
+	// claim or verify on the new pod's behalf (claim CAS, re-read and every verify write are bound to it).
+	const auth = c.get("job").job_token_sha256;
 	const body = await c.req.json<DoneIn>();
 	// Idempotent for agent retries (timeout/network). The claim writes the file AND state=verifying in one
 	// statement, so "uploading with this file_id" can only mean verify already rejected it -> no-op.
-	if (job.state === "uploading") {
-		const r = await c.env.DB
-			.prepare("UPDATE jobs SET drive_file_id = ?, md5 = ?, size = ?, state = 'verifying', updated_at = ? WHERE id = ? AND state = 'uploading' AND drive_file_id IS NOT ?")
-			.bind(body.file_id, body.md5, body.size, now(), job.id, body.file_id)
-			.run();
-		if (r.meta.changes) await logEvent(c.env.DB, job.id, "state", { from: "uploading", to: "verifying" });
-		job = (await getJob(c.env.DB, job.id))!;
-	}
+	// A file verify ever rejected for this job (recorded on its md5_mismatch event) is never claimed again.
+	const id = c.get("job").id;
+	await updateWithEvent(
+		c.env.DB,
+		c.env.DB
+			.prepare(
+				"UPDATE jobs SET drive_file_id = ?, md5 = ?, size = ?, state = 'verifying', updated_at = ? WHERE id = ? AND state = 'uploading' AND drive_file_id IS NOT ? AND job_token_sha256 = ? " +
+				"AND NOT EXISTS (SELECT 1 FROM events WHERE job_id = ? AND kind = 'state' AND json_extract(data_json, '$.rejected') = ?)",
+			)
+			.bind(body.file_id, body.md5, body.size, now(), id, body.file_id, auth, id, body.file_id),
+		id, { from: "uploading", to: "verifying" },
+	);
+	const job = (await getJob(c.env.DB, id))!;
+	if (job.job_token_sha256 !== auth) return c.json({ error: "job token rotated (pod replaced)", cmd: "cancel" }, 410);
 	// verifying: claimed above, or a first /done was cut off / is still running -> (re)verify; verify() fences its effects.
 	if (job.state !== "verifying") return c.json({});
 	// Only the persisted claim is ever verified: a /done for any other file (lost the claim race) changes nothing.
@@ -174,6 +182,15 @@ agentApp.post("/done", async (c) => {
 	}
 	return c.json(await verify(c.env, job, body, deferOf(c)));
 });
+
+/** One atomic D1 batch: a conditional UPDATE and its state event, the event written only if the UPDATE changed a row. */
+async function updateWithEvent(db: D1Database, update: D1PreparedStatement, jobId: string, data: object): Promise<boolean> {
+	const [r] = await db.batch([
+		update,
+		db.prepare("INSERT INTO events (job_id, ts, kind, data_json) SELECT ?, ?, 'state', ? WHERE changes() > 0").bind(jobId, now(), JSON.stringify(data)),
+	]);
+	return !!r.meta.changes;
+}
 
 /** §7 verification: size + md5 must match, else re-upload (max 2); match -> share, DELETE pod, done. */
 /**
@@ -185,8 +202,9 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 	const db = env.DB;
 	// Every side effect is fenced on the claim tuple of `job` (as read from D1), so a slow verifier for an older
 	// claim (ABA: A rejected -> B claimed) can't touch B. The /done handler ensures body matches that tuple.
-	const CLAIM = "id = ? AND state = 'verifying' AND drive_file_id IS ? AND md5 IS ? AND size IS ?";
-	const claim = [job.id, job.drive_file_id, job.md5, job.size];
+	// Also bound to the job token of `job`: a replaced pod's verifier can't act on the new pod's claim.
+	const CLAIM = "id = ? AND state = 'verifying' AND drive_file_id IS ? AND md5 IS ? AND size IS ? AND job_token_sha256 IS ?";
+	const claim = [job.id, job.drive_file_id, job.md5, job.size, job.job_token_sha256];
 	const owned = async () => !!(await db.prepare(`SELECT 1 FROM jobs WHERE ${CLAIM}`).bind(...claim).first());
 	/** failJob, but only if this claim still holds: one conditional write; only the winner records and retires. */
 	const failClaim = async (code: ErrorCode, message: string) => {
@@ -214,11 +232,11 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 		if (!ok) {
 			if (job.reuploads >= MAX_REUPLOADS) return failClaim("md5_mismatch", "md5 mismatch after 2 re-uploads"); // pod deleted last
 			// Only the request that wins verifying -> uploading queues the re-upload (concurrent /done retries).
-			const r = await db
-				.prepare(`UPDATE jobs SET reuploads = reuploads + 1, pending_cmd = 'reupload', state = 'uploading', updated_at = ? WHERE ${CLAIM}`)
-				.bind(now(), ...claim)
-				.run();
-			if (r.meta.changes) await logEvent(db, job.id, "state", { from: "verifying", to: "uploading", reason: "md5_mismatch" });
+			await updateWithEvent(
+				db,
+				db.prepare(`UPDATE jobs SET reuploads = reuploads + 1, pending_cmd = 'reupload', state = 'uploading', updated_at = ? WHERE ${CLAIM}`).bind(now(), ...claim),
+				job.id, { from: "verifying", to: "uploading", reason: "md5_mismatch", rejected: body.file_id },
+			);
 			return {};
 		}
 		// Publish only while this claim still holds; link + done are one conditional write on the same claim.

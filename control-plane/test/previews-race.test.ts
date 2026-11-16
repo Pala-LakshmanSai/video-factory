@@ -205,4 +205,64 @@ describe("/done idempotent", () => {
 		expect(j.state).toBe("failed");
 		expect(JSON.parse(j.error_json!).code).toBe("md5_mismatch");
 	});
+
+	it("old pod's /done stalls after auth, pod is replaced (token rotated) -> no claim; the new pod claims normally", async () => {
+		await job("uploading");
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		const stalled = new ReadableStream({
+			async start(ctl) {
+				await gate;
+				ctl.enqueue(new TextEncoder().encode(JSON.stringify({ file_id: "fold", md5: "abc", size: 100 })));
+				ctl.close();
+			},
+		});
+		const old = agentApp.fetch(
+			new Request("https://cp.test/agent/j1/done", { method: "POST", headers: { Authorization: "Bearer tok", "Content-Type": "application/json" }, body: stalled, duplex: "half" } as RequestInit),
+			env,
+		);
+		await new Promise((r) => setTimeout(r, 20)); // authenticated, now waiting on its body
+		// Watchdog replacement: new token, new pod got back to uploading.
+		await env.DB.prepare("UPDATE jobs SET job_token_sha256 = ?, state = 'uploading' WHERE id = 'j1'").bind(await sha256Hex("tok2")).run();
+		const calls = drive("abc");
+		release();
+		expect((await old).status).toBe(410);
+		let j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.drive_file_id]).toEqual(["uploading", null]);
+		expect(shares(calls)).toEqual([]);
+
+		const res = await agentApp.fetch(
+			new Request("https://cp.test/agent/j1/done", { method: "POST", headers: { Authorization: "Bearer tok2", "Content-Type": "application/json" }, body: JSON.stringify({ file_id: "f1", md5: "abc", size: 100 }) }),
+			env,
+		);
+		expect(res.status).toBe(200);
+		j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.drive_file_id]).toEqual(["done", "f1"]);
+		expect(shares(calls)).toEqual(["f1"]);
+	});
+
+	it("claim and its verifying event are one atomic batch: if the event write fails, nothing is claimed", async () => {
+		await job("uploading");
+		const prepare = env.DB.prepare.bind(env.DB);
+		env.DB.prepare = ((sql: string) => (sql.startsWith("INSERT INTO events (job_id, ts, kind, data_json) SELECT") ? prepare("INSERT INTO no_such_table VALUES (1)") : prepare(sql))) as typeof env.DB.prepare;
+		expect((await call("/done", body)).status).toBe(500);
+		const j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.drive_file_id]).toEqual(["uploading", null]);
+	});
+
+	it("a file rejected earlier (f1, then f2) can't be claimed again", async () => {
+		await job("uploading");
+		const calls = drive("bad");
+		const done = (f: string) => call("/done", JSON.stringify({ file_id: f, md5: "abc", size: 100 }));
+		await done("f1");
+		await done("f2");
+		let j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.reuploads, j.drive_file_id]).toEqual(["uploading", 2, "f2"]);
+		const lookups = calls.length;
+		expect((await done("f1")).status).toBe(200);
+		j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.reuploads, j.drive_file_id, j.error_json]).toEqual(["uploading", 2, "f2", null]);
+		expect(calls.length).toBe(lookups); // not re-verified
+		expect(await stateEvents()).toEqual(["verifying", "uploading", "verifying", "uploading"]);
+	});
 });

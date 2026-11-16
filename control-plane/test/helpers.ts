@@ -10,14 +10,27 @@ class Stmt {
 	bind(...a: unknown[]) { return new Stmt(this.db, this.sql, a); }
 	async first<T>() { return (this.db.prepare(this.sql).get(...norm(this.args)) ?? null) as T | null; }
 	async all<T>() { return { results: this.db.prepare(this.sql).all(...norm(this.args)) as T[] }; }
-	async run() { const r = this.db.prepare(this.sql).run(...norm(this.args)); return { meta: { changes: Number(r.changes) } }; }
+	runSync() { const r = this.db.prepare(this.sql).run(...norm(this.args)); return { meta: { changes: Number(r.changes) } }; }
+	async run() { return this.runSync(); }
 }
 
 export function makeDb(): D1Database {
 	const db = new DatabaseSync(":memory:");
 	const dir = new URL("../migrations/", import.meta.url);
 	for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(f, dir), "utf8"));
-	return { prepare: (sql: string) => new Stmt(db, sql) } as unknown as D1Database;
+	// batch: one transaction, statements run back to back (as D1 does), so changes() sees the previous statement.
+	const batch = async (stmts: Stmt[]) => {
+		db.exec("BEGIN");
+		try {
+			const out = stmts.map((s) => s.runSync());
+			db.exec("COMMIT");
+			return out;
+		} catch (e) {
+			db.exec("ROLLBACK");
+			throw e;
+		}
+	};
+	return { prepare: (sql: string) => new Stmt(db, sql), batch } as unknown as D1Database;
 }
 
 export function makeEnv(db = makeDb()): Env {
