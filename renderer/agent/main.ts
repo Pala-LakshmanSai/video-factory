@@ -13,7 +13,7 @@ import { CONSTANTS } from "../../packages/contract/src/index.ts";
 import { encoderArgs, pickEncoder, run } from "../engine/ffmpeg.ts";
 import { md5File, renderFinal, renderPreviews, TemplateError, type RenderInput } from "../engine/render.ts";
 import { prepareVoice, silence } from "../engine/voice.ts";
-import { ControlPlane, Gone } from "./cp.ts";
+import { ControlPlane, Gone, Held } from "./cp.ts";
 import { resumableUpload } from "./upload.ts";
 
 const env = process.env;
@@ -148,6 +148,7 @@ async function main() {
 			break;
 		} catch (e) {
 			if (e instanceof Gone) return selfDestruct(e.message);
+			if (e instanceof Held) reached = true; // deliberate hold (slow_boot): not an outage; TTL still applies
 			log("hello failed, retrying:", (e as Error).message);
 			await sleep(10_000);
 		}

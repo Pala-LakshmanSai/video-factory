@@ -45,7 +45,7 @@ agentApp.post("/hello", async (c) => {
 	const pod = await activePod(c.env.DB, job.id);
 	// No time limit: only the watchdog's boot_timeout replacement consumes slow_boot (watchdog.ts replacePod).
 	if (pod && (await hasFault(c.env.DB, job.id, "slow_boot"))) {
-		return c.json({ error: "slow_boot fault: try again" }, 503);
+		return c.json({ error: "slow_boot fault: try again" }, 503, { "X-VF-Hold": "slow_boot" }); // agent: reachable, keep retrying
 	}
 	if (pod) await c.env.DB.prepare("UPDATE pods SET hello_at = ?, last_heartbeat_at = ? WHERE id = ?").bind(now(), now(), pod.id).run();
 	await logEvent(c.env.DB, job.id, "hello", body);

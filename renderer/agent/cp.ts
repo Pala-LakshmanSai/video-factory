@@ -4,6 +4,7 @@ import type {
 } from "../../packages/contract/src/index.ts";
 
 export class Gone extends Error {} // job terminal or token rejected: stop and self-destruct
+export class Held extends Error {} // control plane answered but deliberately held us (X-VF-Hold): reachable, retry
 
 export class ControlPlane {
 	base: string;
@@ -24,7 +25,10 @@ export class ControlPlane {
 	}
 	async post<T>(path: string, body: unknown): Promise<T> {
 		const res = await this.req(path, { method: "POST", body: JSON.stringify(body) });
-		if (!res.ok) throw new Error(`${path}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+		if (!res.ok) {
+			const msg = `${path}: ${res.status} ${(await res.text()).slice(0, 300)}`;
+			throw res.headers.get("X-VF-Hold") ? new Held(msg) : new Error(msg);
+		}
 		return (await res.json()) as T;
 	}
 

@@ -444,7 +444,9 @@ describe("slow_boot holds /hello until the watchdog's boot timeout replaces the 
 		for (const age of [8 * MIN, 9.9 * MIN]) {
 			await env.DB.prepare("DELETE FROM pods").run();
 			await pod("p1", "j1", age);
-			expect((await hello()).status).toBe(503);
+			const held = await hello();
+			expect(held.status).toBe(503);
+			expect(held.headers.get("X-VF-Hold")).toBe("slow_boot"); // agent treats this as reachable
 			expect(await faults()).toEqual(["slow_boot"]);
 		}
 		await env.DB.prepare("DELETE FROM pods").run();

@@ -107,7 +107,7 @@ Visual follow-up, resolved: the one-frame black flash at each `fade` scene join 
 
 Single operator, owner-approved, $3 cap; spent **$0.5556** tracked (incl. B8, B9). Every drill pod has a RunPod Audit Log deletion
 receipt (independent check). After the drills: `FAULTS_ENABLED`/`DEV_ROUTES` `"0"`; `ADMISSION_ENABLED` `"1"` since 3ec4bdd (owner-requested
-regular use; note the Sunday 03:00 UTC benchmark also runs when admission is on, budget $2),
+regular use). The Sunday 03:00 UTC benchmark is separately gated by `BENCH_ENABLED` (`"0"`, keep off; see below),
 zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2913b893…926b` (a9e41fa); then `sha256:1ad06161…79be` (912a8c0, NVENC fallback diagnostics); now `sha256:65af4b0b…66af` (05d866c).
 
 **Exact injection (named fault fired and the observed event matches):**
@@ -171,5 +171,8 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
   falls back to libx264 and still completes (B8). A40-class GPUs encode with NVENC. Revisit only if render speed matters.
 
 **Production status (2026-11-16):** `ADMISSION_ENABLED="1"` committed in `wrangler.jsonc`; faults and dev routes stay
-`"0"`. Admission also lets the Sunday 03:00 UTC benchmark run (capped at $2 per run).
+`"0"`. The Sunday 03:00 UTC benchmark needs `BENCH_ENABLED="1"` as well (619d8f8) and stays **off**. Its $2 is a
+sampled cutoff, not a hard cap: the check runs every 5 min on actual job cost, and held or estimate-rejected pod
+time is outside `run.jobs`. Before enabling it, `recordBench` needs atomic per-result writes and must record the
+terminal state before deleting the pod.
 
