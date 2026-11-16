@@ -107,8 +107,9 @@ async function takeClaim(db: D1Database, jobId: string): Promise<string | null> 
 }
 const holdsClaim = async (db: D1Database, jobId: string, c: string) =>
 	(await db.prepare("SELECT create_claim FROM jobs WHERE id = ?").bind(jobId).first<{ create_claim: string | null }>())?.create_claim === c;
-export const releaseClaim = (db: D1Database, jobId: string, c: string) =>
-	db.prepare("UPDATE jobs SET create_claim = NULL, create_uncertain_at = NULL WHERE id = ? AND create_claim = ?").bind(jobId, c).run();
+const releaseClaimStmt = (db: D1Database, jobId: string, c: string) =>
+	db.prepare("UPDATE jobs SET create_claim = NULL, create_uncertain_at = NULL WHERE id = ? AND create_claim = ?").bind(jobId, c);
+export const releaseClaim = (db: D1Database, jobId: string, c: string) => releaseClaimStmt(db, jobId, c).run();
 
 /**
  * Rent a pod for `jobId` (state provisioning or retrying). On success: pod recorded, JOB_TOKEN hash stored
@@ -179,8 +180,9 @@ export async function selectAndCreate(
 	}
 	const blocked = faultArg(await hasFault(db, job.id, "block_region"));
 
-	const c = await takeClaim(db, job.id);
-	if (!c) return "held";
+	const first = await takeClaim(db, job.id);
+	if (!first) return "held";
+	let c: string = first;
 
 	// Defense in depth, from the row as it is now that we hold the claim (not the snapshot above): never rent past
 	// the replacement cap, never in a data center this job must skip.
@@ -224,7 +226,14 @@ export async function selectAndCreate(
 		}
 		known.push(res.pod.id);
 		const r = await accept(env, db, job, res.pod, a, cap, c);
-		if (r === "rejected") continue;
+		if (r === "rejected") {
+			// accept() released claim c with the rejected pod's INSERT (that generation is over). The pod is confirmed
+			// gone, so a fresh claim (same no-undeleted-pod fence) may continue to the next attempt.
+			const next = await takeClaim(db, job.id);
+			if (!next) return "held";
+			c = next;
+			continue;
+		}
 		if (r === "rejected_pending") return "held";
 		return r;
 	}
@@ -249,18 +258,18 @@ async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a:
 	const reject = !costOk || pod.costPerHr > cap ? (costOk ? "cost_reject" : "cost_invalid") : null;
 	// A rejected pod is recorded already delete-pending (same statement): its row never looks like an active,
 	// valid-priced pod, so a crash before the DELETE leaves it to the pending-delete retry, never to repair/boot.
-	await db
+	// Its create is resolved, so claim c is released in the SAME batch: no crash can leave a stale claim behind
+	// (that would read as an ambiguous create and fail the job). The undeleted pod alone holds further admission.
+	const insert = db
 		.prepare("INSERT OR IGNORE INTO pods (id, job_id, gpu_type_id, data_center_id, cloud_type, compute_type, cost_per_hr, created_at, delete_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-		.bind(pod.id, job.id, pod.gpuTypeId, pod.dataCenterId, a?.computeTier.split("/")[1] ?? null, compute, Number.isFinite(pod.costPerHr) ? pod.costPerHr : CONSTANTS.PRICE_CAP_USD_PER_HR, t, reject)
-		.run();
+		.bind(pod.id, job.id, pod.gpuTypeId, pod.dataCenterId, a?.computeTier.split("/")[1] ?? null, compute, Number.isFinite(pod.costPerHr) ? pod.costPerHr : CONSTANTS.PRICE_CAP_USD_PER_HR, t, reject);
+	if (reject && c) await db.batch([insert, releaseClaimStmt(db, job.id, c)]);
+	else await insert.run();
 	if (reject) {
 		await logEvent(db, job.id, "cost_reject", { pod: pod.id, costPerHr: Number.isFinite(pod.costPerHr) ? pod.costPerHr : String(pod.costPerHr), reason: costOk ? "over_cap" : "cost_invalid", gpu: pod.gpuTypeId });
 		const gone = await retirePod(env, db, job.id, pod.id, reject);
-		if (gone) return "rejected";
-		// The create itself is resolved (the pod is known and tracked), so release the claim; the pending delete
-		// alone keeps the job held (selectAndCreate's `undeleted` gate) until the pod is confirmed gone.
-		if (c) await releaseClaim(db, job.id, c);
-		return "rejected_pending";
+		// Not confirmed gone: the pending delete keeps the job held (`undeleted` gate) until it is.
+		return gone ? "rejected" : "rejected_pending";
 	}
 	// booting + claim release in ONE compare-and-set (fenced on state and claim): no window where the claim is
 	// free but the job still looks admissible. The pod INSERT above is separate; selectAndCreate repairs that gap.

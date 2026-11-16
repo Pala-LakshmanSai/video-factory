@@ -11,21 +11,24 @@ let env: Env;
 let raw: D1Database;
 
 /** D1 wrapper that runs `before`/`after` around every statement's run(): injects a concurrent actor at an exact SQL step. */
-const hooked = (db: D1Database, hook: { before?: (sql: string, a: unknown[]) => Promise<void>; after?: (sql: string, a: unknown[]) => Promise<void> }) => {
+const hooked = (db: D1Database, hook: { before?: (sql: string, a: unknown[]) => Promise<void>; after?: (sql: string, a: unknown[]) => Promise<void>; afterBatch?: () => Promise<void> }) => {
 	const wrap = (st: D1PreparedStatement, sql: string, a: unknown[] = []): D1PreparedStatement => new Proxy(st, {
 		get: (t, k) => k === "bind" ? (...b: unknown[]) => wrap(t.bind(...b), sql, b)
 			: k === "run" ? async () => { await hook.before?.(sql, a); const r = await t.run(); await hook.after?.(sql, a); return r; }
 			: (t as never)[k],
 	});
-	return { prepare: (sql: string) => wrap(db.prepare(sql), sql) } as unknown as D1Database;
+	const batch = async (st: D1PreparedStatement[]) => { const r = await db.batch(st); await hook.afterBatch?.(); return r; };
+	return { prepare: (sql: string) => wrap(db.prepare(sql), sql), batch } as unknown as D1Database;
 };
 const isTakeClaim = (sql: string) => sql.startsWith("UPDATE jobs SET create_claim = ?");
 
-function runpod(price: number | null = 0.6) {
+/** prices: one per POST in order, the last repeats. null = provider sent no price. */
+function runpod(...prices: (number | null)[]) {
 	let n = 0;
+	const price = () => (prices.length ? prices[Math.min(n - 1, prices.length - 1)] : 0.6);
 	const calls = mockFetch(
 		(u) => (u.includes("/v2/catalog/datacenters") ? json(cat) : undefined),
-		(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? json({ id: `p${++n}`, costPerHr: price, machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201) : undefined),
+		(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? (++n, json({ id: `p${n}`, costPerHr: price(), machine: { gpuTypeId: RTX4090, dataCenterId: "AP-IN-1" } }, 201)) : undefined),
 		(u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined),
 	);
 	return { posts: () => calls.filter((c) => c.method === "POST" && c.url.endsWith("/v1/pods")) };
@@ -100,20 +103,26 @@ describe("create claim vs an accepted pod", () => {
 
 describe("price check survives a crash between pod INSERT and acceptance", () => {
 	for (const [label, price, reason] of [["unpriced", null, "cost_invalid"], ["over-cap", 2.4, "cost_reject"]] as const) {
-		it(`${label} pod: recorded delete-pending in the INSERT; repair never boots it, no second POST`, async () => {
-			const rp = runpod(price);
-			const dying = hooked(raw, { after: async (sql) => {
-				if (sql.startsWith("INSERT OR IGNORE INTO pods")) throw new Error("worker died");
-			} });
+		it(`${label} pod: INSERT + claim release in one batch; crash after it holds admission until the pod is confirmed gone`, async () => {
+			const rp = runpod(price, 0.6);
+			const dying = hooked(raw, { afterBatch: async () => { throw new Error("worker died"); } });
 			await expect(selectAndCreate(env, dying, "j1")).rejects.toThrow("worker died");
-			for (const claim of ["kept", "cleared"]) {
-				if (claim === "cleared") await raw.prepare("UPDATE jobs SET create_claim = NULL, create_uncertain_at = NULL WHERE id = 'j1'").run();
+			const pod = () => raw.prepare("SELECT deleted_at, delete_reason FROM pods WHERE id = 'p1'").first<{ deleted_at: number | null; delete_reason: string | null }>();
+			expect(await pod()).toEqual({ deleted_at: null, delete_reason: reason }); // watchdog's pending-delete retry owns it
+			expect(await getJob(raw, "j1")).toMatchObject({ state: "provisioning", create_claim: null, create_uncertain_at: null }); // released WITH the INSERT
+
+			// Pod not yet confirmed gone: repeated admissions take no claim, POST nothing, never boot it.
+			for (let k = 0; k < 2; k++) {
 				expect(await selectAndCreate(env, raw, "j1")).toBe("held");
-				expect((await getJob(raw, "j1"))!.state).toBe("provisioning");
+				expect(await getJob(raw, "j1")).toMatchObject({ state: "provisioning", create_claim: null });
 			}
-			const p = await raw.prepare("SELECT deleted_at, delete_reason FROM pods WHERE id = 'p1'").first<{ deleted_at: number | null; delete_reason: string | null }>();
-			expect(p).toEqual({ deleted_at: null, delete_reason: reason }); // watchdog's pending-delete retry owns it now
 			expect(rp.posts()).toHaveLength(1);
+
+			// Watchdog confirms absence (markPodDeleted) -> next admission proceeds normally.
+			await raw.prepare("UPDATE pods SET deleted_at = ? WHERE id = 'p1'").bind(Date.now()).run();
+			expect(await selectAndCreate(env, raw, "j1")).toBe("created");
+			expect(rp.posts()).toHaveLength(2);
+			expect(await getJob(raw, "j1")).toMatchObject({ state: "booting", create_claim: null });
 		});
 	}
 });
