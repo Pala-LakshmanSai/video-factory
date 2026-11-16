@@ -2,13 +2,14 @@
 // Auth: Bearer JOB_TOKEN, SHA-256 compared in constant time; rejected after TTL or once the job is terminal.
 import { Hono } from "hono";
 import type {
-	DoneIn, ErrorIn, HeartbeatIn, HelloIn, ScenePlan, SpecOut, UploadSessionIn,
+	DoneIn, ErrorCode, ErrorIn, HeartbeatIn, HelloIn, ScenePlan, SpecOut, UploadSessionIn,
 } from "../../packages/contract/src/index";
 import { CONSTANTS, MAX_REUPLOADS } from "./config";
 import {
 	activePod, constantTimeEqual, getJob, jobCost, logEvent, now, plan, sha256Hex, updateJob, voiceover, type JobRow,
 } from "./db";
 import { DriveAuthError, createSession, fileMeta, shareAnyone, streamFile } from "./drive";
+import { alert } from "./alerts";
 import { recordBench } from "./bench";
 import { hasFault } from "./faults";
 import { failJob, retirePod } from "./selector";
@@ -186,17 +187,31 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 	const CLAIM = "id = ? AND state = 'verifying' AND drive_file_id IS ? AND md5 IS ? AND size IS ?";
 	const claim = [job.id, job.drive_file_id, job.md5, job.size];
 	const owned = async () => !!(await db.prepare(`SELECT 1 FROM jobs WHERE ${CLAIM}`).bind(...claim).first());
+	/** failJob, but only if this claim still holds: one conditional write; only the winner records and retires. */
+	const failClaim = async (code: ErrorCode, message: string) => {
+		const pod = await activePod(db, job.id);
+		const r = await db
+			.prepare(`UPDATE jobs SET state = 'failed', error_json = ?, updated_at = ? WHERE ${CLAIM}`)
+			.bind(JSON.stringify({ code, message }), now(), ...claim)
+			.run();
+		if (!r.meta.changes) return {};
+		await logEvent(db, job.id, "state", { from: "verifying", to: "failed", code });
+		await updateJob(db, job.id, await jobCost(db, job.id));
+		await alert(env, db, `job failed: ${code}: ${message}`, job.id);
+		if (pod) {
+			const retire = retirePod(env, db, job.id, pod.id, `failed:${code}`).then(async () => updateJob(db, job.id, await jobCost(db, job.id)));
+			defer(retire);
+			await retire;
+		}
+		return {};
+	};
 	try {
 		const meta = await fileMeta(env, body.file_id);
 		const corrupt = await hasFault(db, job.id, "corrupt_md5", true);
 		const ok = Number(meta.size) === body.size && meta.md5Checksum === body.md5 && !corrupt;
 		await logEvent(db, job.id, "verify", { ok, size: meta.size, md5: meta.md5Checksum, corrupt });
 		if (!ok) {
-			if (job.reuploads >= MAX_REUPLOADS) {
-				if (!(await owned())) return {};
-				await failJob(env, db, job, "md5_mismatch", "md5 mismatch after 2 re-uploads", defer); // pod deleted last, inside
-				return {};
-			}
+			if (job.reuploads >= MAX_REUPLOADS) return failClaim("md5_mismatch", "md5 mismatch after 2 re-uploads"); // pod deleted last
 			// Only the request that wins verifying -> uploading queues the re-upload (concurrent /done retries).
 			const r = await db
 				.prepare(`UPDATE jobs SET reuploads = reuploads + 1, pending_cmd = 'reupload', state = 'uploading', updated_at = ? WHERE ${CLAIM}`)
@@ -224,9 +239,8 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 		}
 		return {};
 	} catch (e) {
-		if (e instanceof DriveAuthError) await failJob(env, db, job, "drive_auth", e.message, defer);
-		else throw e;
-		return {};
+		if (e instanceof DriveAuthError) return failClaim("drive_auth", e.message);
+		throw e;
 	}
 }
 

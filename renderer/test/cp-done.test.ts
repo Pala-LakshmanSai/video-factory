@@ -38,3 +38,18 @@ test("/done: 409 (another file holds the claim) -> resolves, no retry", () =>
 		await cp.done(body, 0);
 		assert.equal(calls(), 1);
 	}));
+
+const badBody = (status: number) => () =>
+	new Response(new ReadableStream({ pull(c) { c.error(new Error("stream broke")); } }), { status });
+
+test("/done: 409 with an erroring body -> resolves (no /error, no re-render)", () =>
+	withFetch([badBody(409)], async (cp, calls) => {
+		await cp.done(body, 0);
+		assert.equal(calls(), 1);
+	}));
+
+test("/done: 500 with an erroring body -> retried", () =>
+	withFetch([badBody(500), () => new Response("{}")], async (cp, calls) => {
+		await cp.done(body, 0);
+		assert.equal(calls(), 2);
+	}));

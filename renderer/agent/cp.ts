@@ -20,13 +20,13 @@ export class ControlPlane {
 			signal: AbortSignal.timeout(timeoutMs),
 			headers: { Authorization: `Bearer ${this.token}`, ...(init.body && typeof init.body === "string" ? { "Content-Type": "application/json" } : {}), ...init.headers },
 		});
-		if (res.status === 401 || res.status === 410) throw new Gone(`${path}: ${res.status} ${await res.text()}`);
+		if (res.status === 401 || res.status === 410) throw new Gone(`${path}: ${res.status} ${await res.text().catch(() => "")}`);
 		return res;
 	}
 	async post<T>(path: string, body: unknown): Promise<T> {
 		const res = await this.req(path, { method: "POST", body: JSON.stringify(body) });
 		if (!res.ok) {
-			const msg = `${path}: ${res.status} ${(await res.text()).slice(0, 300)}`;
+			const msg = `${path}: ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`;
 			throw res.headers.get("X-VF-Hold") ? new Held(msg) : new Error(msg);
 		}
 		return (await res.json()) as T;
@@ -56,7 +56,8 @@ export class ControlPlane {
 				continue;
 			}
 			if (res.ok) return;
-			const msg = `/done: ${res.status} ${(await res.text()).slice(0, 300)}`;
+			// Status decides; the body is diagnostics only and may itself fail to read.
+			const msg = `/done: ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`;
 			// 409: another file holds the verify claim; not a render failure. The control plane drives what's next.
 			if (res.status === 409) return void console.log(msg);
 			if (res.status < 500) throw new Error(msg);
@@ -79,6 +80,6 @@ export class ControlPlane {
 		const form = new FormData();
 		for (const [name, jpeg] of frames) form.append(name, new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }), `${name}.jpg`);
 		const res = await this.req("/previews", { method: "POST", body: form });
-		if (res.status !== 201) throw new Error(`/previews: ${res.status} ${(await res.text()).slice(0, 300)}`);
+		if (res.status !== 201) throw new Error(`/previews: ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`);
 	}
 }

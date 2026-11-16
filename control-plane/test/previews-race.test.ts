@@ -166,4 +166,43 @@ describe("/done idempotent", () => {
 		expect([j.state, j.drive_link]).toEqual(["verifying", null]);
 		expect(shares(calls)).toEqual([]);
 	});
+
+	const stale = async () => {
+		await job("verifying", { drive_file_id: "f2", md5: "abc", size: 100, reuploads: 2 });
+		await env.DB.prepare("INSERT INTO pods (id, job_id, cost_per_hr, created_at) VALUES ('p1', 'j1', 0.6, ?)").bind(Date.now()).run();
+		return { ...(await getJob(env.DB, "j1"))!, drive_file_id: "f1" };
+	};
+	const untouched = async (calls: { method: string }[]) => {
+		const j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.error_json, j.drive_file_id]).toEqual(["verifying", null, "f2"]);
+		expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(0); // pod not retired
+	};
+
+	it("delayed DriveAuthError from a stale verifier (f2 now claimed) does not fail the job", async () => {
+		const old = await stale();
+		const calls = mockFetch((u) => (u === "https://oauth2.googleapis.com/token" ? json({ error: "invalid_grant" }, 400) : undefined));
+		await verify(env, old, { file_id: "f1", md5: "abc", size: 100 });
+		await untouched(calls);
+	});
+
+	it("terminal md5 mismatch from a stale verifier does not fail the newer claim", async () => {
+		const old = await stale();
+		const calls = drive("bad");
+		await verify(env, old, { file_id: "f1", md5: "abc", size: 100 });
+		await untouched(calls);
+	});
+
+	it("terminal md5 mismatch on the live claim fails the job once and retires the pod", async () => {
+		const cur = await stale();
+		cur.drive_file_id = "f2";
+		mockFetch(
+			(u) => (u === "https://oauth2.googleapis.com/token" ? json({ access_token: "at", expires_in: 3599 }) : undefined),
+			(u) => (u.includes("/files/f2?fields") ? json({ size: "100", md5Checksum: "bad", webViewLink: "x" }) : undefined),
+			(_u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),
+		);
+		await verify(env, cur, { file_id: "f2", md5: "abc", size: 100 });
+		const j = (await getJob(env.DB, "j1"))!;
+		expect(j.state).toBe("failed");
+		expect(JSON.parse(j.error_json!).code).toBe("md5_mismatch");
+	});
 });
