@@ -77,6 +77,44 @@ describe("/done idempotent", () => {
 		expect(calls.length).toBe(n); // no second Drive lookup
 	});
 
+	const body = JSON.stringify({ file_id: "f1", md5: "abc", size: 100 });
+	const stateEvents = async () => (await env.DB.prepare("SELECT data_json FROM events WHERE job_id = 'j1' AND kind = 'state'").all<{ data_json: string }>()).results.map((e) => JSON.parse(e.data_json).to);
+
+	it("first /done cut off after the claim -> state is verifying (claim is atomic); the retry resumes and re-uploads once", async () => {
+		await job("uploading");
+		mockFetch((u) => (u === "https://oauth2.googleapis.com/token" ? json({ access_token: "at", expires_in: 3599 }) : undefined)); // Drive metadata unrouted -> throws
+		expect((await call("/done", body)).status).toBe(500);
+		let j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.drive_file_id]).toEqual(["verifying", "f1"]);
+		routes();
+		expect((await call("/done", body)).status).toBe(200);
+		j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.reuploads, j.pending_cmd]).toEqual(["uploading", 1, "reupload"]);
+		expect(await stateEvents()).toEqual(["verifying", "uploading"]);
+	});
+
+	it("retry while verifying with a matching file -> resumes to done", async () => {
+		await job("verifying", { drive_file_id: "f1", md5: "abc", size: 100 });
+		mockFetch(
+			(u) => (u === "https://oauth2.googleapis.com/token" ? json({ access_token: "at", expires_in: 3599 }) : undefined),
+			(u) => (u.includes("/files/f1?fields") ? json({ size: "100", md5Checksum: "abc", webViewLink: "https://drive.test/f1" }) : undefined),
+			(u) => (u.includes("/files/f1/permissions") ? json({ id: "anyone" }) : undefined),
+		);
+		expect((await call("/done", body)).status).toBe(200);
+		expect((await getJob(env.DB, "j1"))!.state).toBe("done");
+		expect(await stateEvents()).toEqual(["done"]);
+	});
+
+	it("two concurrent /done -> exactly one verify side effect (one re-upload queued)", async () => {
+		await job("uploading");
+		routes();
+		const rs = await Promise.all([call("/done", body), call("/done", body)]);
+		expect(rs.map((r) => r.status)).toEqual([200, 200]);
+		const j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.reuploads, j.pending_cmd]).toEqual(["uploading", 1, "reupload"]);
+		expect(await stateEvents()).toEqual(["verifying", "uploading"]);
+	});
+
 	it("a repeated /done after the job is done -> 410 (agent stops)", async () => {
 		await job("done");
 		expect((await call("/done", JSON.stringify({ file_id: "f1", md5: "abc", size: 100 }))).status).toBe(410);

@@ -36,7 +36,30 @@ export class ControlPlane {
 	heartbeat = (b: HeartbeatIn) => this.post<{ cmd: Cmd | `fault:${string}` }>("/heartbeat", b);
 	error = (b: ErrorIn) => this.post<ErrorOut>("/error", b);
 	uploadSession = (b: UploadSessionIn) => this.post<UploadSessionOut>("/upload-session", b);
-	done = (b: DoneIn) => this.post<unknown>("/done", b);
+	/**
+	 * /done verifies on Drive and retires the pod server-side, which can outlast the default timeout. It is
+	 * idempotent there, so a network error, timeout or 5xx is retried instead of surfacing as a render failure
+	 * (which would re-render). A 410 after a retry means our earlier /done (or a failure path) finished the job.
+	 * ponytail: retries until the pod TTL self-destructs it; add a cap if a stuck control plane must fail sooner.
+	 */
+	async done(b: DoneIn, pauseMs = 10_000): Promise<void> {
+		for (let i = 0; ; i++) {
+			if (i) await new Promise((r) => setTimeout(r, pauseMs));
+			let res: Response;
+			try {
+				res = await this.req("/done", { method: "POST", body: JSON.stringify(b) }, 300_000);
+			} catch (e) {
+				if (e instanceof Gone && i > 0) return;
+				if (e instanceof Gone) throw e;
+				console.log(`/done attempt ${i + 1} failed, retrying:`, (e as Error).message);
+				continue;
+			}
+			if (res.ok) return;
+			const msg = `/done: ${res.status} ${(await res.text()).slice(0, 300)}`;
+			if (res.status < 500) throw new Error(msg);
+			console.log(`${msg}; retrying`);
+		}
+	}
 	bench = (render_s: number) => this.post<unknown>("/bench", { render_s });
 	voiceover = () => this.req("/input/voiceover", {}, 600_000);
 

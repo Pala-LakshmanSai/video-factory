@@ -152,13 +152,20 @@ agentApp.post("/upload-session", async (c) => {
 });
 
 agentApp.post("/done", async (c) => {
-	const job = c.get("job");
+	let job = c.get("job");
 	const body = await c.req.json<DoneIn>();
-	// Idempotent for agent retries (timeout/network): this file was already verified and rejected -> no-op.
-	if (job.state === "uploading" && job.drive_file_id === body.file_id) return c.json({});
-	await updateJob(c.env.DB, job.id, { drive_file_id: body.file_id, md5: body.md5, size: body.size });
-	if (job.state === "uploading") await transition(c.env.DB, job, "verifying");
-	// state verifying: a first /done was cut off (or is still running); re-verifying is safe, see verify().
+	// Idempotent for agent retries (timeout/network). The claim writes the file AND state=verifying in one
+	// statement, so "uploading with this file_id" can only mean verify already rejected it -> no-op.
+	if (job.state === "uploading") {
+		const r = await c.env.DB
+			.prepare("UPDATE jobs SET drive_file_id = ?, md5 = ?, size = ?, state = 'verifying', updated_at = ? WHERE id = ? AND state = 'uploading' AND drive_file_id IS NOT ?")
+			.bind(body.file_id, body.md5, body.size, now(), job.id, body.file_id)
+			.run();
+		if (r.meta.changes) await logEvent(c.env.DB, job.id, "state", { from: "uploading", to: "verifying" });
+		job = (await getJob(c.env.DB, job.id))!;
+	}
+	// verifying: claimed above, or a first /done was cut off / is still running -> (re)verify; verify() fences its effects.
+	if (job.state !== "verifying") return c.json({});
 	return c.json(await verify(c.env, job, body, deferOf(c)));
 });
 
@@ -180,8 +187,12 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 				await failJob(env, db, job, "md5_mismatch", "md5 mismatch after 2 re-uploads", defer); // pod deleted last, inside
 				return {};
 			}
-			await updateJob(db, job.id, { reuploads: job.reuploads + 1, pending_cmd: "reupload" });
-			await transition(db, job, "uploading", { reason: "md5_mismatch" });
+			// Only the request that wins verifying -> uploading queues the re-upload (concurrent /done retries).
+			const r = await db
+				.prepare("UPDATE jobs SET reuploads = reuploads + 1, pending_cmd = 'reupload', state = 'uploading', updated_at = ? WHERE id = ? AND state = 'verifying'")
+				.bind(now(), job.id)
+				.run();
+			if (r.meta.changes) await logEvent(db, job.id, "state", { from: "verifying", to: "uploading", reason: "md5_mismatch" });
 			return {};
 		}
 		await shareAnyone(env, body.file_id);
