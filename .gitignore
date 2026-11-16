@@ -11,3 +11,4 @@ dist/
 __pycache__/
 renderer/test/out/
 .venv/
+style-kits/

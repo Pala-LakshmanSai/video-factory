@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getJob } from "../src/db";
 import { createServer } from "../src/mcp";
 import { RTX4090, catalogOf, json, makeEnv, mockFetch } from "./helpers";
+import { READY_STYLES, STYLE_REGISTRY } from "../../packages/contract/src/styles";
 
 const handler = createMcpHandler(createServer);
 const ctx = { waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
@@ -78,6 +79,15 @@ afterEach(async () => {
 	for (const r of await Promise.allSettled(pending.splice(0))) expect(r.status).toBe("fulfilled");
 });
 
+describe("list_styles", () => {
+	it("lists every registered style with status and rents nothing", async () => {
+		const r = await call("list_styles", {});
+		const styles = (JSON.parse((r as { content: { text: string }[] }).content[0].text) as { styles: { id: string; status: string }[] }).styles;
+		expect(styles.map((s) => s.id)).toEqual(Object.keys(STYLE_REGISTRY));
+		expect(styles.filter((s) => s.status === "ready").map((s) => s.id)).toEqual(READY_STYLES);
+	});
+});
+
 describe("tools/list", () => {
 	let tools: Record<string, Tool>;
 	beforeEach(async () => {
@@ -85,8 +95,8 @@ describe("tools/list", () => {
 		tools = Object.fromEntries(list.map((t) => [t.name, t]));
 	});
 
-	it("registers exactly the six SPEC §4 tools", () => {
-		expect(Object.keys(tools).sort()).toEqual(["acquire_gpu", "approve", "release", "revise_scene", "submit_job", "wait_job"]);
+	it("registers the six SPEC §4 tools plus list_styles", () => {
+		expect(Object.keys(tools).sort()).toEqual(["acquire_gpu", "approve", "list_styles", "release", "revise_scene", "submit_job", "wait_job"]);
 	});
 
 	it("input schemas are JSON Schema objects with the SPEC field names", () => {
@@ -96,7 +106,7 @@ describe("tools/list", () => {
 		}
 		const a = tools.acquire_gpu.inputSchema;
 		expect(a.required!.sort()).toEqual(["chat_key", "style", "title", "voiceover"]);
-		expect(a.properties!.style.enum).toEqual(["explainer", "bold-shorts", "documentary"]);
+		expect(a.properties!.style.enum).toEqual(READY_STYLES); // only ready styles can be rented for
 		expect(a.properties!.voiceover.anyOf!.map((s) => s.required)).toEqual([["text"], ["drive_file_id"]]);
 		expect(a.properties!.voiceover.anyOf!.every((s) => s.additionalProperties === false)).toBe(true); // never both
 

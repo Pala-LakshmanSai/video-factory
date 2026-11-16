@@ -1,6 +1,7 @@
 // SPEC §9, §11 + CONTRACT Decisions. Defaults live here; the `config` table overrides them
 // (the weekly benchmark writes `gpu_rank`, see bench.ts).
 import { CONSTANTS } from "../../packages/contract/src/index";
+import { READY_STYLES } from "../../packages/contract/src/styles";
 
 export { CONSTANTS };
 
@@ -45,7 +46,7 @@ export const COMPUTE_TIERS = ["GPU/SECURE", "GPU/COMMUNITY", "CPU"] as const;
 export const CPU_FLAVORS = ["cpu5c", "cpu3c"] as const;
 
 /** Decisions. */
-export const STYLES = ["explainer", "bold-shorts", "documentary"];
+export const STYLES = READY_STYLES;
 export const MAX_PODS_AT_ONCE = CONSTANTS.MAX_PODS_AT_ONCE;
 export const MAX_COST_PER_JOB_USD = CONSTANTS.MAX_COST_PER_JOB_USD;
 export const MAX_REPLACEMENTS = 2;

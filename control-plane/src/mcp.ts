@@ -5,6 +5,7 @@ import { env, waitUntil } from "cloudflare:workers";
 import { z } from "zod";
 import type { JobState, PreviewLabel, Scene, ScenePlan, Voiceover, WaitJobOut } from "../../packages/contract/src/index";
 import { CONSTANTS, MAX_PODS_AT_ONCE, STYLES } from "./config";
+import { STYLE_REGISTRY } from "../../packages/contract/src/styles";
 import { activePod, getJob, jobCost, logEvent, now, plan, randomId, updateJob, type JobRow } from "./db";
 import { mergePatch, validatePlan } from "./plan";
 import { retirePod, selectAndCreate } from "./selector";
@@ -189,6 +190,20 @@ const voiceoverSchema = z.union([
 export function createServer() {
 	const server = new McpServer({ name: "Video Factory", version: "2.0.0" });
 	const db = env.DB;
+
+	server.registerTool(
+		"list_styles",
+		{
+			description:
+				"List the video styles before asking the user to pick one (call before acquire_gpu when the user hasn't named a ready style). Read-only, rents nothing. Only status \"ready\" styles can be used; \"pending\" ones are imported but not yet qualified (see blocked).",
+			inputSchema: z.object({}),
+		},
+		async () =>
+			json({
+				styles: Object.entries(STYLE_REGISTRY).map(([id, s]) => ({ id, version: s.version, status: s.status, label: s.label, summary: s.summary, templates: s.templates, ...(s.blocked ? { blocked: s.blocked } : {}) })),
+				new_style: "To add a new style, the user uploads the kit (.md/.zip) to the operator; it appears here as pending, then ready after its preview + final fixture pass.",
+			}),
+	);
 
 	server.registerTool(
 		"acquire_gpu",

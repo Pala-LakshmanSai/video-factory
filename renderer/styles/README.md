@@ -34,7 +34,7 @@ Shared helpers live in `renderer/styles/_shared/runtime.js` (load with `<script 
 - Text auto-fits inside the safe margins from `tokens.safe` (fractions of width/height); never clipped, never overlapping.
 - Works at both 16:9 and 9:16.
 - Missing optional props fall back to sensible defaults; missing required props render a visible placeholder rather than throwing.
-- Fonts come only from the image: `Inter`, `Noto Serif`, `Noto Sans CJK`, `Noto Color Emoji`, `Bebas Neue` (installed system-wide in the Dockerfile). No web fonts, no network.
+- Fonts come from the image (`Inter`, `Noto Serif`, `Noto Sans CJK`, `Noto Color Emoji`, `Bebas Neue`, installed system-wide) or from OFL font files inside the style folder (`fonts/`, loaded by relative `@font-face`, licence file included). No web fonts, no network.
 - `b-roll-caption` takes an optional `image` prop: an `https:` URL is NOT allowed (no network at render time); it takes a `data:` URI or omits the image and draws a tokens-coloured backdrop.
 
 ## tokens.json shape
