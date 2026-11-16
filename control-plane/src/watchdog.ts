@@ -12,8 +12,9 @@ import { verify } from "./agent";
 const DELETE_STUCK_ALERT_MS = 10 * 60_000;
 const LIVE_STATES = ["waiting_for_plan", "rendering", "preview_ready", "rerendering", "final_render", "uploading", "verifying"];
 const POD_STATES = ["booting", ...LIVE_STATES];
-const DONE_IN_FLIGHT_MS = 2 * 60_000; // after entering verifying, the pod's own /done gets this long before the watchdog verifies
-const VERIFY_GIVE_UP_MS = 15 * 60_000; // persisted upload still unverifiable after this -> replace the pod (re-render)
+// Only for a verifying job whose pod is gone or heartbeat-dead (a heartbeating verifier is never touched here):
+const DONE_IN_FLIGHT_MS = 2 * 60_000; // since entering verifying: the pod's own /done may still be running -> wait
+const VERIFY_GIVE_UP_MS = 15 * 60_000; // since entering verifying: persisted upload still unverifiable -> replace (re-render)
 
 /** One bad row must not stop the tick: log it and move on to the next job/pod. */
 async function each<T extends { id: string }>(items: T[], what: string, fn: (x: T) => Promise<unknown>) {
@@ -83,7 +84,7 @@ export async function watchdog(env: Env, db: D1Database) {
 			.all<JobRow>()
 	).results;
 	await each(stranded, "stranded", async (job) => {
-		if (await resumeVerify(env, db, job, t)) return;
+		// recover() resumes verification first for a verifying job whose upload is recorded.
 		await logEvent(db, job.id, "pod_missing", { state: job.state });
 		await recover(env, db, job.id, "pod_missing");
 	});
@@ -151,6 +152,10 @@ async function recover(env: Env, db: D1Database, jobId: string, reason: "boot_ti
 	for (let i = 0; i < 20; i++) {
 		const cur = await getJob(db, jobId);
 		if (!cur || !canTransition(cur.state, "retrying")) return; // terminal, or already retrying/provisioning
+		// A /done may have claimed the upload (uploading -> verifying) while the pod was being deleted: re-checked
+		// on every fresh read, and the UPDATE is fenced on the same state + drive_file_id, so a claim landing after
+		// this check makes it lose and loop back here.
+		if (await resumeVerify(env, db, cur, now())) return;
 		if (cur.dev_mode === "bench") {
 			if (await hasLivePod(db, jobId)) return;
 			await cancelJob(db, jobId, { reason });
@@ -158,10 +163,10 @@ async function recover(env: Env, db: D1Database, jobId: string, reason: "boot_ti
 		}
 		const r = await db
 			.prepare(
-				`UPDATE jobs SET state = 'retrying', attempts = attempts + ?, updated_at = ? WHERE id = ? AND state = ? AND create_claim IS NULL
+				`UPDATE jobs SET state = 'retrying', attempts = attempts + ?, updated_at = ? WHERE id = ? AND state = ? AND drive_file_id IS ? AND create_claim IS NULL
 				 AND NOT EXISTS (SELECT 1 FROM pods WHERE job_id = ? AND deleted_at IS NULL)`,
 			)
-			.bind(lost, now(), jobId, cur.state, jobId)
+			.bind(lost, now(), jobId, cur.state, cur.drive_file_id, jobId)
 			.run();
 		if (r.meta.changes) {
 			await logEvent(db, jobId, "state", { from: cur.state, to: "retrying", reason });
@@ -169,7 +174,7 @@ async function recover(env: Env, db: D1Database, jobId: string, reason: "boot_ti
 			break;
 		}
 		const again = await getJob(db, jobId);
-		if (again?.state === cur.state) return; // fenced: a pod or a create claim exists -> nothing to recover
+		if (again?.state === cur.state && again.drive_file_id === cur.drive_file_id) return; // fenced: a pod or a create claim exists -> nothing to recover
 	}
 	if (!job) return;
 	if (lost) {
@@ -198,8 +203,9 @@ const hasLivePod = async (db: D1Database, jobId: string) =>
 	!!(await db.prepare("SELECT 1 FROM pods WHERE job_id = ? AND deleted_at IS NULL").bind(jobId).first());
 
 /**
- * A verifying job whose upload claim is persisted (drive_file_id) must not be re-rendered just because its pod went
- * quiet or away: the file is already in Drive. Returns true when the caller must NOT replace/recover the pod.
+ * Called only when a verifying job's pod is missing or heartbeat-dead (never for a pod still heartbeating). Its upload
+ * claim is persisted (drive_file_id), so the file is already in Drive: verify it rather than re-render.
+ * Returns true when the caller must NOT replace/recover the pod.
  * - entered verifying < DONE_IN_FLIGHT_MS ago: the pod's own /done may still be running -> wait;
  * - then: run the server-side verify for the persisted claim (fenced on that claim; done / re-upload / md5 fail);
  * - still unresolved after VERIFY_GIVE_UP_MS (e.g. Drive keeps erroring): fall through to a normal replacement,

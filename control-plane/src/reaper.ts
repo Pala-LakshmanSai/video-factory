@@ -1,7 +1,7 @@
 // SPEC §6 step 5 / §6.5 reaper (cron every 5 min). Deletes every "vf-*" pod whose job is
 // done/failed/cancelled/missing or older than its TTL; never touches other names.
 import { alert } from "./alerts";
-import { getJob, logEvent, markDeletePending, markPodDeleted, now } from "./db";
+import { getJob, logEvent, markDeletePending, markPodDeleted, now, reconcileCosts } from "./db";
 import { balance, deletePod, listPods } from "./runpod";
 import { isTerminal } from "./state";
 
@@ -46,6 +46,8 @@ export async function reaper(env: Env, db: D1Database) {
 	// Delete-pending pods are excluded: they clear only on direct absence (watchdog), never on a list omission.
 	const tracked = (await db.prepare("SELECT id FROM pods WHERE deleted_at IS NULL AND delete_reason IS NULL AND created_at < ?").bind(now() - LIST_LAG_MS).all<{ id: string }>()).results;
 	for (const t of tracked) if (!liveIds.has(t.id)) await markPodDeleted(db, t.id, "gone");
+
+	await reconcileCosts(db);
 }
 
 /** Daily RunPod balance check (§12: pods are deleted at $0). */

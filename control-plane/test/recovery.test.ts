@@ -193,9 +193,39 @@ describe("watchdog tick", () => {
 		expect((await env.DB.prepare("SELECT deleted_at, delete_reason FROM pods WHERE id = 'p2'").first())).toEqual({ deleted_at: null, delete_reason: null });
 		expect(calls.some((c) => c.method === "POST")).toBe(false);
 	});
+
+	it("1: a /done claim landing during the DELETE is left to verify (no re-render); a later tick verifies it -> done", async () => {
+		await job("j1", "uploading", { plan_json: "{}" });
+		await pod("p1", "j1", 20 * MIN, silent(20 * MIN));
+		const calls = mockFetch(async (u, i) => {
+			if (i.method !== "DELETE") return undefined;
+			await env.DB.prepare("UPDATE jobs SET state = 'verifying', drive_file_id = 'f1', md5 = 'abc', size = 100 WHERE id = 'j1'").run();
+			await verifyingSince(0);
+			return new Response(null, { status: 204 });
+		}, ...drive(() => json({ size: "100", md5Checksum: "abc", webViewLink: "https://drive.test/f1" })), ...create);
+		await watchdog(env, env.DB);
+		expect(await state("j1")).toBe("verifying");
+		expect(calls.some((c) => c.method === "POST")).toBe(false);
+		await env.DB.prepare("UPDATE events SET ts = ? WHERE kind = 'state'").bind(Date.now() - 3 * MIN).run();
+		await watchdog(env, env.DB);
+		expect(await state("j1")).toBe("done");
+		expect(calls.some((c) => c.method === "POST" && c.url.includes("runpod"))).toBe(false);
+	});
 });
 
 describe("cost", () => {
+	it("3: the reaper reconciles a lost cost write of a job that ended in the last 24 h", async () => {
+		await job("j1", "done", { cost_usd: 0 });
+		await pod("p1", "j1", 60 * MIN, { deleted: Date.now() - 30 * MIN });
+		await job("old", "done", { cost_usd: 0 });
+		await env.DB.prepare("UPDATE jobs SET updated_at = ? WHERE id = 'old'").bind(Date.now() - 25 * 3600_000).run();
+		await pod("po", "old", 60 * MIN, { deleted: Date.now() - 30 * MIN });
+		mockFetch((u) => (u.startsWith("https://api.runpod.io/v2/pods?") ? json(v2list([])) : undefined));
+		await reaper(env, env.DB);
+		expect((await getJob(env.DB, "j1"))!.cost_usd).toBeCloseTo(0.3, 2);
+		expect((await getJob(env.DB, "old"))!.cost_usd).toBe(0);
+	});
+
 	it("3: a delete confirmed later (watchdog, on direct absence) re-records the job's final cost", async () => {
 		await job("j1", "failed", { cost_usd: 0.01 });
 		await pod("p1", "j1", 60 * MIN, { pending: "failed:budget" });

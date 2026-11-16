@@ -104,7 +104,8 @@ export async function markDeletePending(db: D1Database, podId: string, reason: s
 
 /**
  * RunPod confirmed the pod is gone (DELETE 2xx/404). Every call re-records the job's cost, also when the pod was
- * already marked (idempotent): a cost write lost after an earlier mark is reconciled by the next confirmation.
+ * already marked (idempotent). Normal scans skip deleted pods, so a cost write lost after the mark is repaired by
+ * the reaper's reconcileCosts (terminal jobs of the last 24 h), not by a repeat call.
  */
 export async function markPodDeleted(db: D1Database, podId: string, reason: string) {
 	await db
@@ -113,6 +114,20 @@ export async function markPodDeleted(db: D1Database, podId: string, reason: stri
 		.run();
 	const pod = await db.prepare("SELECT job_id FROM pods WHERE id = ?").bind(podId).first<{ job_id: string }>();
 	if (pod) await updateJob(db, pod.job_id, await jobCost(db, pod.job_id));
+}
+
+/** Recompute the cost of jobs that ended in the last 24 h with every pod confirmed gone; write only what differs. */
+export async function reconcileCosts(db: D1Database) {
+	const jobs = (
+		await db
+			.prepare("SELECT id, cost_usd, gpu_seconds FROM jobs j WHERE state IN ('done','failed','cancelled') AND updated_at > ? AND NOT EXISTS (SELECT 1 FROM pods p WHERE p.job_id = j.id AND p.deleted_at IS NULL)")
+			.bind(now() - 24 * 3600_000)
+			.all<{ id: string; cost_usd: number; gpu_seconds: number }>()
+	).results;
+	for (const j of jobs) {
+		const c = await jobCost(db, j.id);
+		if (c.cost_usd !== j.cost_usd || c.gpu_seconds !== j.gpu_seconds) await updateJob(db, j.id, c);
+	}
 }
 
 /** GPU seconds + $ across every pod this job ever had (live pods billed up to now). */
