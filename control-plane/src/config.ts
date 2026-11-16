@@ -20,6 +20,10 @@ export const GPU_RANK: string[] = [
 	"NVIDIA GeForce RTX 4090",
 	"NVIDIA GeForce RTX 5090",
 	"NVIDIA RTX PRO 4500 Blackwell",
+	"NVIDIA RTX PRO 6000 Blackwell Server Edition",
+	"NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+	"NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+	"NVIDIA RTX PRO 5000 Blackwell",
 	"NVIDIA L40S",
 	"NVIDIA RTX 6000 Ada Generation",
 	"NVIDIA L40",
@@ -40,7 +44,7 @@ export const GPU_RANK: string[] = [
 ];
 
 /** §9.3 exclusions (substring match on the normalised id). Defence in depth: GPU_RANK never lists them. */
-export const EXCLUDED_GPUS = ["a100", "h100", "h200", "b200", "b300", "a30", "mi300x"];
+export const EXCLUDED_GPUS = ["a100", "h100", "h200", "b200", "b300", "a30", "mi300x", " mig "];
 
 export const COMPUTE_TIERS = ["GPU/SECURE", "GPU/COMMUNITY", "CPU"] as const;
 export const CPU_FLAVORS = ["cpu5c", "cpu3c"] as const;
