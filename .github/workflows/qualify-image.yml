@@ -1,0 +1,126 @@
+# Qualify an already-pushed renderer image by digest: run a custom-package FINAL render and a pov WebGL
+# preview inside that exact image (its default non-root user, --network none).
+name: qualify-image
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: "Image digest to qualify (sha256:...)"
+        required: true
+        type: string
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      DIGEST: ${{ inputs.digest }}
+    steps:
+      - name: Free runner disk (CUDA base + Chromium image is several GB)
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Pull by digest and verify RepoDigest
+        env: { HUB_USER: "${{ secrets.DOCKERHUB_USERNAME }}" }
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::digest must be sha256:<64 hex>"; exit 1; }
+          IMG="docker.io/$HUB_USER/video-renderer@$DIGEST"
+          docker pull "$IMG"
+          docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$IMG" > repodigests.txt
+          cat repodigests.txt
+          grep -qxF "$HUB_USER/video-renderer@$DIGEST" repodigests.txt
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+          uid=$(docker run --rm --entrypoint id "$IMG" -u)
+          test -n "$uid" && test "$uid" != 0
+          { echo "### qualify-image"; echo "digest: \`$DIGEST\`"; echo "user uid: $uid"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Custom package final render
+        run: |
+          mkdir -p smoke-pkg/style
+          echo '{"palette":{"bg":"#ffffff"}}' > smoke-pkg/style/tokens.json
+          cat > smoke-pkg/style/title.html <<'EOF'
+          <!doctype html><html><body style="margin:0;background:#fff">
+          <div id="box" style="position:absolute;left:10%;top:10%;width:50%;height:50%;background:#e0218a"></div>
+          <script>window.__seek = (t) => { document.getElementById("box").style.transform = "translateX(" + t * 10 + "px)"; };</script>
+          </body></html>
+          EOF
+          node scripts/pack-style.mjs smoke-pkg/style
+          cat > smoke-pkg/final.mjs <<'EOF'
+          const R = process.env.R, P = process.env.P;
+          const { fetchPackage } = await import(R + '/agent/package.ts');
+          const { renderFinal } = await import(R + '/engine/render.ts');
+          const { silence } = await import(R + '/engine/voice.ts');
+          const { run } = await import(R + '/engine/ffmpeg.ts');
+          const { createHash } = await import('node:crypto');
+          const { readFile, mkdtemp } = await import('node:fs/promises');
+          const tmp = await mkdtemp('/tmp/qualify-final-');
+          const bytes = await readFile(P + '/style.tar.gz');
+          const sha = createHash('sha256').update(bytes).digest('hex');
+          const stylesDir = await fetchPackage('pk_' + sha.slice(0, 24), sha, tmp + '/w', async () => new Response(new Uint8Array(bytes)));
+          const plan = { style: 'custom', fps: 30, resolution: '1920x1080', scenes: [{ n: 1, template: 'title', props: {}, duration_s: 2, narration: 'hi', transition: 'cut' }] };
+          const audio = await silence(2, tmp + '/silent.wav');
+          const out = await renderFinal({ plan, stylesDir, workDir: tmp + '/r', audioPath: audio.path, audioSeconds: audio.seconds });
+          const p = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height', '-of', 'json', out]);
+          if (p.code !== 0) throw new Error('ffprobe failed: ' + p.stderr);
+          const info = JSON.parse(p.stdout);
+          const d = Number(info.format.duration);
+          if (!(Math.abs(d - 2) <= 0.1)) throw new Error('duration ' + d);
+          const v = info.streams.filter((s) => s.codec_type === 'video');
+          if (v.length !== 1 || v[0].codec_name !== 'h264' || v[0].width + 'x' + v[0].height !== plan.resolution) throw new Error('bad video stream: ' + JSON.stringify(v));
+          if (!info.streams.some((s) => s.codec_type === 'audio')) throw new Error('no audio stream');
+          const dec = await run('ffmpeg', ['-v', 'error', '-i', out, '-f', 'null', '-']);
+          if (dec.code !== 0 || dec.stderr.trim() !== '') throw new Error('decode errors (' + dec.code + '): ' + dec.stderr.slice(-1500));
+          console.log('video', v[0].codec_name, v[0].width + 'x' + v[0].height, '+ audio', info.streams.find((s) => s.codec_type === 'audio').codec_name);
+          console.log('custom final ok: ' + d.toFixed(3) + ' s');
+          EOF
+          docker run --rm --network none -v "$PWD/smoke-pkg:/pkg:ro" -e R=/app/renderer -e P=/pkg --entrypoint node "$IMG" /pkg/final.mjs > final.log
+          { echo '```'; cat final.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          grep -q '^custom final ok: [0-9.]* s$' final.log
+      - name: POV WebGL previews (packaged styles)
+        run: |
+          mkdir -p qualify
+          cat > qualify/pov.mjs <<'EOF'
+          const R = process.env.R;
+          const { createRequire } = await import('node:module');
+          // Record the flags the real engine passes to Chromium (same playwright instance render.ts uses).
+          const { chromium } = createRequire(R + '/engine/render.ts')('playwright');
+          const launch = chromium.launch.bind(chromium);
+          const seen = [];
+          chromium.launch = (o) => (seen.push(o?.args ?? []), launch(o));
+          const { renderPreviews } = await import(R + '/engine/render.ts');
+          const { run } = await import(R + '/engine/ffmpeg.ts');
+          const { PassThrough } = await import('node:stream');
+          const { readFile } = await import('node:fs/promises');
+          const stylesDir = R + '/styles';
+          const plan = JSON.parse(await readFile(stylesDir + '/pov/example-plan.json', 'utf8'));
+          const f = await renderPreviews({ plan, stylesDir, workDir: '/tmp/qualify-pov', audioPath: null, audioSeconds: plan.scenes.reduce((a, s) => a + s.duration_s, 0) });
+          if (seen.length !== 1 || !seen[0].includes('--disable-gpu')) throw new Error('unexpected launch flags: ' + JSON.stringify(seen));
+          console.log('launch flags:', seen[0].join(' '));
+          if (f.size !== plan.scenes.length * 3) throw new Error('got ' + f.size + ' previews');
+          const spread = async (j) => {
+            const src = new PassThrough();
+            src.end(j);
+            const r = await run('ffmpeg', ['-hide_banner', '-f', 'image2pipe', '-i', '-', '-vf', 'signalstats,metadata=print', '-f', 'null', '-'], src);
+            const g = (k) => Number(new RegExp(k + '=([\\d.]+)').exec(r.stderr)?.[1] ?? NaN);
+            return g('YHIGH') - g('YLOW');
+          };
+          for (const s of plan.scenes) {
+            const sp = [];
+            for (const i of [0, 1, 2]) {
+              const j = f.get('scene-' + s.n + '-' + i);
+              if (!j || j.length < 1000 || j[0] !== 0xff || j[1] !== 0xd8) throw new Error('scene ' + s.n + '-' + i + ': bad jpeg');
+              sp.push(await spread(j));
+            }
+            // the end-card white-out legitimately ends flat: require detail in at least one key frame (as style-pov.test.ts)
+            if (!(Math.max(...sp) > 20)) throw new Error('scene ' + s.n + ' (' + s.template + ') looks blank: ' + sp);
+            console.log('scene', s.n, s.template, 'luma spread', sp.join(' '));
+          }
+          console.log('pov packaged preview ok: ' + f.size + ' previews');
+          EOF
+          docker run --rm --network none -v "$PWD/qualify:/q:ro" -e R=/app/renderer --entrypoint node "$IMG" /q/pov.mjs > pov.log
+          { echo '```'; cat pov.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          grep -q '^pov packaged preview ok: [0-9]* previews$' pov.log
