@@ -52,7 +52,7 @@ GitHub repo → Settings → Secrets and variables → Actions: `DOCKERHUB_USERN
 Re-run the latest `renderer` workflow (or push). Its summary prints `docker.io/<user>/video-renderer:<sha>`:
 put that in `RENDERER_IMAGE` in `control-plane/wrangler.jsonc`, then `npx wrangler deploy`.
 In the RunPod console, start one pod on a cheap NVENC GPU with start command `--selftest`; its log must show
-`encoder: h264_nvenc`. Terminate it.
+`encoder: h264_nvenc`. Terminate it. (Done 2026-11-16 on an A40: see Phase 9 below.)
 
 ## 5. Connect Claude (Phase 8)
 
@@ -131,10 +131,15 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
 - **NVENC on RunPod GPUs.** B6 used `h264_nvenc` and failed with "could not open encoder" (-22) at segment 29
   (likely the GeForce concurrent NVENC session limit with many parallel segment encoders; not proven by
   provider driver diagnostics); a9e41fa caps NVENC workers at 4. B7 ran on an RTX 4090 but the H.264 SEI
-  says x264: the 1-frame NVENC probe fell back, so the cap is **not** qualified. Suspected cause: host driver
-  older than the bundled ffmpeg 8.1 NVENC SDK needs. Next build logs the probe stderr, driver version and
-  `libnvidia-encode` presence on fallback; then run `--selftest` on one GPU pod (step 4) and require
-  `encoder: h264_nvenc`.
+  says x264: the 1-frame NVENC probe fell back, so the cap is **not** qualified. B7's fallback cause is unknown
+  (that image did not log the probe stderr); 912a8c0 onward logs the probe stderr, driver version and
+  `libnvidia-encode` presence on fallback, so the next fallback will show why.
+- **Standalone NVENC selftest — passed (2026-11-16).** One owner-approved pod (`$0.15` cap), `8fi8a6k8akisv3`,
+  NVIDIA A40, EU-SE-1 Secure Cloud, image `sha256:1ad06161…79be`, command `--selftest`. Log:
+  `encoder: h264_nvenc`, `encoded 150 frames of 1080p with h264_nvenc in 1.07 s = 139.9 fps`; driver 595.91.07,
+  CUDA 13.2. RunPod Audit Log: created 03:37:53, stopped 03:39:39, deleted 03:39:49 UTC (116 s; ≈ $0.02 at
+  quoted $0.59/hr + disk, no settled invoice checked). Scope: standalone NVENC on one A40 only. It does not
+  qualify GeForce concurrency or the 4-worker cap under a full render, and B7 remains an x264 render.
 - **Heartbeat gap.** B7's pod sent no heartbeat for 79 s during preview render (threshold 60 s); it survived only
   because of watchdog tick timing. Kokoro/Chromium work can starve the agent's event loop.
 - **Cold boot.** 6.2 GB image vs 6-min boot timeout on cold hosts.
