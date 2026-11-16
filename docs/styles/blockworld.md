@@ -5,8 +5,9 @@ sets (streets, cities, rooms, plazas with instanced crowds), cinematic camera mo
 top-left, "YOU ARE <status>" top-right), Libre Caslon italic captions, Inter cards/bubbles/chips, FX (hearts,
 confetti, money rain, fireworks, smoke). Rendered with three.js (WebGL; SwiftShader on CPU). 16:9 `1920x1080`.
 
-**Status: pending** — the original style has a procedural music/SFX score; our engine muxes one voiceover
-track only, so videos would be silent apart from the voice. Visuals are complete.
+**Status: pending** — visuals complete (Linux WebGL fixtures pass). Audio candidate: the kit's own caption-led
+score (below), rendered before rental and delivered as the job's single audio track. Awaiting owner/reviewer
+approval and one end-to-end render in the qualified image before `ready`.
 
 **Use it for:** escalating hypothetical "what if" stories with a running counter. **Don't use it for:**
 text-heavy explainers, quotes, lists (use `explainer`).
@@ -17,10 +18,10 @@ text-heavy explainers, quotes, lists (use `explainer`).
 - One template: **`episode`**. Write ONE episode object (below), then emit one plan scene per episode scene:
   plan scene `n` plays `episode.scenes[n-1]`. Plan and episode must have the same number of scenes.
 - Every plan scene has `props: {"episode": <the same whole episode object>}`. Do not set `from`.
-- `duration_s` of plan scene `n` = `episode.scenes[n-1].dur`. The renderer rescales to the real voiceover and
-  the template stretches each episode scene to its rescaled length, so only the ratios matter.
-- `narration` = the voiceover words for that scene. If an episode scene has no `captions`/`caption`, the
-  narration is shown as its caption. Usually make the caption the narration (or a shortened form of it).
+- `duration_s` of plan scene `n` = `episode.scenes[n-1].dur` exactly. The episode is caption-led: its timing
+  comes from `dur`, never from a voice. The score is cut to sum(`dur`), so the engine's rescale is the identity.
+- `narration` = the caption words for that scene (not spoken). If an episode scene has no `captions`/`caption`,
+  the narration is shown as its caption.
 - `transition`: always `cut` — scene transitions (`dip`, `flash`, `rewind`, `fade_in`) belong in the episode scene.
 - A missing or malformed `episode` (no scenes, a scene without positive `dur`) fails the render — it is not a placeholder.
 - Optional `props.quality`: `final` (default: shadows, MSAA) or `draft` (no shadows, ~25% faster). Keep `final`.
@@ -33,15 +34,15 @@ Keep crowds ≤ 600 actors per scene on CPU render pods (2,600 is possible but s
 
 ## Writing the episode prop
 
-Declarative JSON only: no code, no URLs, no audio fields needed (`music`, `sfx`, `ambience`, `hit`, `audio`
-are ignored). Coordinates are metres, y up, ground y=0; an actor with `rot: 0` faces +z (toward a camera at +z).
+Declarative JSON only: no code, no URLs, no file paths. The visual template ignores the audio fields (`music`,
+`sfx`, `ambience`, `hit`, `musicKey`, `musicSeed`, `audio`); the pre-rental scorer reads them (see **Audio**). Coordinates are metres, y up, ground y=0; an actor with `rot: 0` faces +z (toward a camera at +z).
 See `renderer/styles/blockworld/example-plan.json` for a complete working example.
 
 ```jsonc
 {
   "meta": {"title": "What If You Kept Getting Taller and Couldn't Stop?", "width": 1920, "height": 1080, "fps": 30,
            "quality": "high",            // "draft" = no shadows (faster previews)
-           "fadeOut": true, "voiceover": null},
+           "fadeOut": true, "voiceover": null},   // must stay null: no narrator
   "hud": {
     "counters": [                         // drawn top-left, in this order
       {"id": "height", "label": "Your height", "color": "gold", "format": "height", "start": 175},
@@ -139,3 +140,35 @@ Counters and status carry over between scenes; only state what changes.
 - `office`: `rows`, `cols` of desks. `plaza`: palace + crowd (`crowd`, `crowdCount`, `mood`, `dome`).
 - `studio`: `dark`, `floor`. `field`: `track`, `stadium`, `trees`. `vault`: money pile room.
 - `space`: stars (add `globe`, `moon`, `black_hole` props). `desert`, `underground`, `void`.
+
+## Audio (caption-led score, no narrator)
+
+The original kit has no voiceover: a produced chapter score on recorded instruments, a boom on each chapter
+hit, SFX on cards/status changes, ambience beds, mastered to −15.4 LUFS / −1.2 dBTP. We keep that.
+
+1. Write `music` (a mood: `whimsical normal_life tension threat wonder cold_open heartwarm melancholy …` or
+   aliases `bright curious tense ominous cosmic epic warm sad mystery happy`, or `silence`) and `hit: true` on
+   the scene that starts each chapter; add `sfx` / `ambience` by bundled name only (`boom impact sparkle levelup
+   … wind rain birds`). Cards and status changes add their SFX automatically (`audio.auto`, default on).
+2. Before acquiring a GPU, score it locally (python3 with numpy + scipy, ffmpeg, the kit checkout):
+   `python3 scripts/blockworld_score.py plan.json score.wav`
+3. Upload `score.wav` to Drive and submit the job with `voiceover: {drive_file_id}`. The engine muxes it as the
+   one track; its length equals the episode so scene timing is unchanged.
+
+**Fencing.** The scorer rebuilds a minimal episode holding only the fields the kit's `audio.py` reads, every
+name checked against the kit's own `SFX_NAMES` / `CUES` / `ALIASES`, every number bounded (scene ≤ 60 s,
+episode ≤ 900 s, ≤ 400 scenes, ≤ 32 events per list, gains ≤ 2). `file` entries and `meta.voiceover` are
+rejected, so no path from a plan ever reaches Python or ffmpeg; the kit runs via an argument list (no shell)
+with `PYTHONHASHSEED=0`, so the same plan gives the same bytes. Tests: `python3 scripts/test_blockworld_score.py`
+(length, loudness, determinism, 18 hostile inputs).
+
+**Why pre-rental, not on the pod.** Scoring on the pod would add numpy + scipy (~100 MB) and the 69 MB sample
+set to the renderer image and run CPU-bound mixing on rented GPU time. Pre-rental adds 0 bytes to the image,
+reuses the existing Drive-audio path and keeps the engine's one-track contract untouched.
+
+**Optional voice.** Not supported by default. A narrated variant would need the kit's `meta.voiceover` ducking
+plus a fenced voice file; add only if explicitly requested.
+
+**Sample credits** (bundled in the kit's `assets/samples/CREDITS.txt`; keep with any redistribution):
+Salamander Grand Piano by Alexander Holm, CC BY 3.0 · FluidR3_GM by Frank Wen, CC BY 3.0 (per-note renders
+from gleitz/midi-js-soundfonts, MIT) · VSCO 2 Community Edition by Versilian Studios, CC0 1.0.
