@@ -6,7 +6,7 @@ interface __BaseEnv_Env {
 	DB: D1Database;
 	CP_URL: "https://video-factory.lakshmansai121.workers.dev";
 	MCP_RESOURCE: "https://video-factory.lakshmansai121.workers.dev/mcp";
-	RENDERER_IMAGE: "docker.io/lakshmansai121/video-renderer@sha256:b48d0590c52dcc80bceb97dfb86ed691ac95b5e04c56d8da719992176e537d87";
+	RENDERER_IMAGE: "docker.io/lakshmansai121/video-renderer@sha256:d78b55f020f4c405f66f78093283a6a4fc2b24b05498443ad78be6d6642c4456";
 	ALLOWED_GITHUB_LOGIN: "Pala-LakshmanSai";
 	FAULTS_ENABLED: "0";
 	DEV_ROUTES: "0";
