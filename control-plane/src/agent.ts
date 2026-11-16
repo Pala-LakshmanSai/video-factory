@@ -12,6 +12,7 @@ import { DriveAuthError, createSession, fileMeta, shareAnyone, streamFile } from
 import { alert } from "./alerts";
 import { getPackage, packageSha256 } from "./packages";
 import { recordBench } from "./bench";
+import { boundaryOf, parts } from "./multipart";
 import { hasFault } from "./faults";
 import { failJob, retirePod } from "./selector";
 import { IllegalTransition, isTerminal, transition } from "./state";
@@ -111,19 +112,24 @@ agentApp.post("/heartbeat", async (c) => {
 
 agentApp.post("/previews", async (c) => {
 	const job = c.get("job");
-	const form = await c.req.formData();
 	const round = job.qa_rounds;
-	// Batched: one D1 round trip per 40 frames (~2 MB). Row-by-row inserts of a long video's ~800 frames outran the agent's 70 s timeout.
+	// Streamed + batched: one part in memory at a time, one D1 round trip per 40 frames (~2 MB). formData() on a long
+	// video's ~800 frames (~40 MB) blew the Worker's memory (503); row-by-row inserts outran the agent's 70 s timeout.
+	const boundary = boundaryOf(c.req.header("Content-Type"));
+	if (!boundary || !c.req.raw.body) return c.json({ error: "expected multipart/form-data" }, 400);
 	const ins = c.env.DB.prepare("INSERT OR REPLACE INTO previews (job_id, round, scene, idx, jpeg) VALUES (?, ?, ?, ?, ?)");
-	const rows: D1PreparedStatement[] = [];
-	for (const [name, value] of form.entries()) {
-		const m = /^scene-(\d+)-(\d+)$/.exec(name);
-		if (!m || typeof value === "string") continue;
-		const bytes = new Uint8Array(await (value as File).arrayBuffer());
-		if (bytes.byteLength > 500 * 1024) return c.json({ error: `${name} is ${bytes.byteLength} bytes; max 500 KB` }, 413);
-		rows.push(ins.bind(job.id, round, +m[1], +m[2], bytes));
+	let rows: D1PreparedStatement[] = [];
+	try {
+		for await (const { name, bytes } of parts(c.req.raw.body, boundary, 500 * 1024)) {
+			const m = /^scene-(\d+)-(\d+)$/.exec(name);
+			if (!m) continue;
+			rows.push(ins.bind(job.id, round, +m[1], +m[2], bytes));
+			if (rows.length === 40) await c.env.DB.batch(rows), (rows = []);
+		}
+	} catch (e) {
+		return c.json({ error: `${(e as Error).message} (max 500 KB per frame)` }, 413);
 	}
-	for (let i = 0; i < rows.length; i += 40) await c.env.DB.batch(rows.slice(i, i + 40));
+	if (rows.length) await c.env.DB.batch(rows);
 	// Round complete? rendering: every scene has 3 frames this round. rerendering: the revised scene does.
 	const p = plan(job);
 	const need = job.state === "rerendering" && job.rerender_scene ? [job.rerender_scene] : (p?.scenes ?? []).map((s) => s.n);

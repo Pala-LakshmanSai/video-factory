@@ -96,7 +96,7 @@ export async function watchdog(env: Env, db: D1Database) {
 		const c = await jobCost(db, job.id);
 		await writeCost(db, job.id, c);
 		const p = plan(job);
-		const cap = p ? costCapFor(p.scenes.reduce((a, s) => a + s.duration_s, 0)) : MAX_COST_PER_JOB_USD;
+		const cap = p?.scenes ? costCapFor(p.scenes.reduce((a, s) => a + s.duration_s, 0)) : MAX_COST_PER_JOB_USD;
 		if (c.cost_usd > cap) await failJob(env, db, job, "budget", `$${c.cost_usd} > $${cap}`);
 	});
 
