@@ -24,7 +24,7 @@ export async function must(cmd: string, args: string[]) {
 export type Encoder = { name: "h264_nvenc" | "libx264"; args: string[] };
 
 const NVENC: Encoder = { name: "h264_nvenc", args: ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "23", "-b:v", "0"] };
-const X264: Encoder = { name: "libx264", args: ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "4"] };
+export const X264: Encoder = { name: "libx264", args: ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "4"] };
 const COMMON = ["-pix_fmt", "yuv420p", "-fflags", "+bitexact", "-flags:v", "+bitexact", "-map_metadata", "-1"];
 
 let cached: Encoder | null = null;

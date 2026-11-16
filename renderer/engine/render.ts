@@ -10,7 +10,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type { ScenePlan } from "../../packages/contract/src/index.ts";
-import { encoderArgs, must, pickEncoder, run, type Encoder } from "./ffmpeg.ts";
+import { X264, encoderArgs, must, pickEncoder, run, type Encoder } from "./ffmpeg.ts";
 import { previewTimes, timeScenes, type Timed } from "./timing.ts";
 
 export class TemplateError extends Error {
@@ -161,6 +161,23 @@ async function offlineContext(browser: Browser, stylesDir: string, opts: Paramet
 	return ctx;
 }
 
+/** Pages per Chromium: with --disable-gpu all pages of one browser share one software compositor. */
+const PAGES_PER_BROWSER = 6;
+const pool = async (n: number) => Promise.all(Array.from({ length: Math.max(1, Math.ceil(n / PAGES_PER_BROWSER)) }, () => launch()));
+const closeAll = (bs: Browser[]) => Promise.all(bs.map((b) => b.close().catch(() => undefined)));
+
+/** Frame-capture parallelism: RENDER_WORKERS, else ~3/4 of the cores (Chromium raster is CPU-bound), max 24. */
+export function captureParallelism(cpus = availableParallelism()): number {
+	return Number(process.env.RENDER_WORKERS) || Math.max(1, Math.min(24, Math.floor(cpus * 0.75)));
+}
+
+/** NVENC encodes every worker's segment on a GPU that allows few sessions; when the CPU can run more capture
+ *  workers than that, x264 on those cores beats 4 NVENC sessions (capture, not encode, is the bottleneck). */
+export function finalEncoder(probed: Encoder, parallel: number): Encoder {
+	return probed.name === "h264_nvenc" && parallel > NVENC_SESSIONS ? X264 : probed;
+}
+const NVENC_SESSIONS = 4;
+
 const launch = () =>
 	chromium.launch({
 		args: [
@@ -172,22 +189,38 @@ const launch = () =>
 /** 3 key frames per scene, 1280 px on the long side, JPEG < 500 KB. Returns {"scene-n-idx": jpeg}. */
 export async function renderPreviews(inp: RenderInput, onlyScenes?: number[]): Promise<Map<string, Buffer>> {
 	const timed = timeScenes(inp.plan.scenes, inp.audioSeconds, inp.plan.fps);
-	const out = new Map<string, Buffer>();
-	const browser = await launch();
+	const todo = timed.map((_, k) => k).filter((k) => !onlyScenes || onlyScenes.includes(timed[k].scene.n));
+	for (const k of todo) if (inp.failScene === timed[k].scene.n) throw new TemplateError(timed[k].scene.n, "fault injected: render_error");
+	const frames: Buffer[][] = [];
+	const workers = Math.min(todo.length, captureParallelism());
+	const browsers = await pool(workers);
+	let next = 0;
+	let done = 0;
 	try {
-		for (let k = 0; k < timed.length; k++) {
-			const n = timed[k].scene.n;
-			if (onlyScenes && !onlyScenes.includes(n)) continue;
-			if (inp.failScene === n) throw new TemplateError(n, "fault injected: render_error");
-			const { page, errors } = await openScene(browser, inp, timed, k);
-			const times = previewTimes(timed[k].duration);
-			for (let i = 0; i < 3; i++) out.set(`scene-${n}-${i}`, await shrink(await shot(page, errors, n, times[i])));
-			await page.close();
-			inp.onProgress?.(Math.round(((k + 1) / timed.length) * 100), n);
-		}
+		// Scenes are independent: a worker pool over them, results kept in scene order.
+		await Promise.all(
+			Array.from({ length: workers }, async (_, w) => {
+				for (let j = next++; j < todo.length; j = next++) {
+					const k = todo[j];
+					const n = timed[k].scene.n;
+					const { page, errors } = await openScene(browsers[w % browsers.length], inp, timed, k);
+					try {
+						const times = previewTimes(timed[k].duration);
+						const shots: Buffer[] = [];
+						for (let i = 0; i < 3; i++) shots.push(await shrink(await shot(page, errors, n, times[i])));
+						frames[j] = shots;
+					} finally {
+						await page.close().catch(() => undefined);
+					}
+					inp.onProgress?.(Math.round((++done / todo.length) * 100), n);
+				}
+			}),
+		);
 	} finally {
-		await browser.close();
+		await closeAll(browsers);
 	}
+	const out = new Map<string, Buffer>();
+	todo.forEach((k, j) => frames[j].forEach((jpeg, i) => out.set(`scene-${timed[k].scene.n}-${i}`, jpeg)));
 	return out;
 }
 
@@ -225,10 +258,9 @@ export async function renderFinal(inp: RenderInput): Promise<string> {
 	const { plan, workDir } = inp;
 	const timed = timeScenes(plan.scenes, inp.audioSeconds, plan.fps);
 	const total = timed.reduce((a, t) => a + t.frames, 0);
-	const enc = await pickEncoder();
-	const workers = renderWorkerCount(
-		Number(process.env.RENDER_WORKERS) || availableParallelism() - 1, Math.ceil(total / plan.fps), enc.name,
-	);
+	const parallel = captureParallelism();
+	const enc = finalEncoder(await pickEncoder(), parallel);
+	const workers = renderWorkerCount(parallel, Math.ceil(total / plan.fps), enc.name);
 	await rm(workDir, { recursive: true, force: true });
 	await mkdir(workDir, { recursive: true });
 	for (const t of timed) if (inp.failScene === t.scene.n) throw new TemplateError(t.scene.n, "fault injected: render_error");
@@ -236,10 +268,11 @@ export async function renderFinal(inp: RenderInput): Promise<string> {
 	const per = Math.ceil(total / workers);
 	let done = 0;
 	let segments = 0;
-	const browser = await launch();
+	const browsers = await pool(workers);
 	try {
 		await Promise.all(
 			Array.from({ length: workers }, async (_, w) => {
+				const browser = browsers[w % browsers.length];
 				const from = w * per;
 				const to = Math.min(total, from + per);
 				if (from >= to) return;
@@ -266,9 +299,9 @@ export async function renderFinal(inp: RenderInput): Promise<string> {
 				segments++;
 			}),
 		);
-		console.log(`final encode ok: encoder=${enc.name} segments=${segments} workers=${workers} frames=${total}`);
+		console.log(`final encode ok: encoder=${enc.name} segments=${segments} workers=${workers} browsers=${browsers.length} frames=${total}`);
 	} finally {
-		await browser.close();
+		await closeAll(browsers);
 	}
 
 	const segs = Array.from({ length: workers }, (_, w) => `file 'seg_${String(w).padStart(3, "0")}.mp4'`).filter((_, w) => w * per < total);

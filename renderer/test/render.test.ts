@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { ScenePlan } from "../../packages/contract/src/index.ts";
 import { STYLE_TEMPLATES } from "../../packages/contract/src/styles.ts";
 import { durationOf, run } from "../engine/ffmpeg.ts";
-import { renderFinal, renderPreviews, renderWorkerCount } from "../engine/render.ts";
+import { captureParallelism, finalEncoder, renderFinal, renderPreviews, renderWorkerCount } from "../engine/render.ts";
 import { silence } from "../engine/voice.ts";
 
 process.env.FORCE_X264 = "1";
@@ -29,6 +29,26 @@ test("NVENC worker cap preserves lower overrides and CPU parallelism", () => {
 	assert.equal(renderWorkerCount(32, 1, "h264_nvenc"), 1);
 	assert.equal(renderWorkerCount(32, 45, "libx264"), 32);
 	assert.equal(renderWorkerCount(32, 2, "libx264"), 2);
+});
+
+test("capture parallelism follows the cores; NVENC gives way to x264 when more workers fit", () => {
+	const saved = process.env.RENDER_WORKERS;
+	delete process.env.RENDER_WORKERS;
+	try {
+		assert.equal(captureParallelism(128), 24);
+		assert.equal(captureParallelism(32), 24);
+		assert.equal(captureParallelism(16), 12);
+		assert.equal(captureParallelism(4), 3);
+		assert.equal(captureParallelism(1), 1);
+		const nvenc = { name: "h264_nvenc" as const, args: [] as string[] };
+		assert.equal(finalEncoder(nvenc, 24).name, "libx264");
+		assert.equal(finalEncoder(nvenc, 4).name, "h264_nvenc");
+		process.env.RENDER_WORKERS = "2";
+		assert.equal(captureParallelism(128), 2);
+	} finally {
+		if (saved === undefined) delete process.env.RENDER_WORKERS;
+		else process.env.RENDER_WORKERS = saved;
+	}
 });
 
 test("every style ships every template listed in packages/contract/src/styles.ts", async () => {
