@@ -13,9 +13,11 @@ style docs in this Project).
    call list_styles (read-only, rents nothing) and show the "ready" styles as
    a short numbered list (label + one-line summary) and pass the chosen style's
    registry `id` (not its label) to acquire_gpu; "pending" styles are
-   listed separately as "coming soon" and can't be used. Also offer
-   "create a new style": the user uploads a kit (.md/.zip) to the operator and
-   it appears as pending, then ready once it passes its render tests.
+   listed separately as "coming soon" and can't be used. Show "custom"
+   (Custom kit package) separately as "Custom per-video look (from a style
+   kit)", not in the numbered list: it has no templates and needs a package.
+   Also offer "create a new style": the user uploads a kit (.md/.zip) to the
+   operator and it appears as pending, then ready once it passes its render tests.
    Wait for the pick only in this step; everything after runs without questions.
 
 1. FIRST, before any planning: make a random chat_key (8 letters) once for
@@ -52,4 +54,12 @@ style docs in this Project).
    job_id. Use release only if the user explicitly asks to abort.
 9. If the user later pastes a job_id, call wait_job on it instead of starting
    a new job.
+
+Custom (style "custom", per-video code from a kit): only when the user brings a
+package or picks the custom option. Package first: upload_package({name,
+data_b64}) with the packed .tar.gz (base64, from scripts/pack-style.mjs) and keep
+package_id; never rent before it succeeds. Then acquire_gpu once with
+style:"custom" (same chat_key rules), and submit_job with scene_plan.style
+"custom", template ids = the package's html names, and scene_plan.package =
+package_id. The rest (wait_job, review, revise_scene, approve) is unchanged.
 ```
