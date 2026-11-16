@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { getUpstreamAuthorizeUrl, fetchUpstreamAuthToken } from "./utils";
 import { selectAndCreate } from "./selector";
 import { acquireGpu } from "./mcp";
-import { armFault } from "./faults";
+import { PendingCmdBusy, armFault } from "./faults";
 import { now, randomId } from "./db";
 
 type Ctx = { Bindings: Env };
@@ -95,7 +95,7 @@ adminApp.post("/admin/fault", async (c) => {
 	try {
 		return c.json({ ok: await armFault(c.env, job_id, fault) });
 	} catch (e) {
-		return c.json({ error: String((e as Error).message) }, 400);
+		return c.json({ error: String((e as Error).message) }, e instanceof PendingCmdBusy ? 409 : 400);
 	}
 });
 

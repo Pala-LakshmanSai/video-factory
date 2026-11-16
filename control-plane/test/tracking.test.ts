@@ -390,6 +390,25 @@ describe("Phase 9 fault mechanics", () => {
 		expect(JSON.parse(left!.value_json)).toEqual([]);
 		expect((await getJob(env.DB, "j1"))!.state).toBe("booting"); // on the replacement pod
 	});
+
+	it("an agent fault never overwrites a queued pending_cmd; it arms only into an empty slot", async () => {
+		const { armFault } = await import("../src/faults");
+		const { agentApp } = await import("../src/agent");
+		const { sha256Hex } = await import("../src/db");
+		await job("j1", "final_render", "plan_json='{}'");
+		await pod("p1", "j1", 5 * MIN, { hello: Date.now() - 4 * MIN, hb: Date.now() - 10_000 });
+		await env.DB.prepare("UPDATE jobs SET job_token_sha256 = ?, token_expires_at = ?, pending_cmd = 'render_final' WHERE id = 'j1'").bind(await sha256Hex("tok"), Date.now() + 60 * MIN).run();
+		await expect(armFault(env, "j1", "silence_heartbeat")).rejects.toThrow("pending_cmd busy (render_final); retry when empty");
+		expect((await getJob(env.DB, "j1"))!.pending_cmd).toBe("render_final");
+		expect(await env.DB.prepare("SELECT 1 FROM events WHERE kind = 'fault_armed'").first()).toBeNull();
+		expect(await env.DB.prepare("SELECT 1 FROM config WHERE key = 'faults:j1'").first()).toBeNull();
+		const hb = await agentApp.fetch(new Request("https://cp.test/agent/j1/heartbeat", { method: "POST", headers: { Authorization: "Bearer tok", "Content-Type": "application/json" }, body: JSON.stringify({ stage: "rendering", pct: 10 }) }), env);
+		expect(await hb.json()).toEqual({ cmd: "render_final" }); // the original command is delivered, not a fault
+		expect((await row("p1"))!.deleted_at).toBeNull(); // pod still live
+		// empty slot: the fault arms
+		await armFault(env, "j1", "silence_heartbeat");
+		expect((await getJob(env.DB, "j1"))!.pending_cmd).toBe("fault:silence_heartbeat");
+	});
 });
 
 describe("upload-resume telemetry never touches the command channel", () => {

@@ -2,7 +2,7 @@
 // POST /admin/fault {job_id, fault}; job_id "*" arms the fault for the next job that checks it.
 // Server-side faults are checked where they bite; agent-side ones go to the pod as heartbeat cmd "fault:<name>".
 import { getConfig, setConfig } from "./config";
-import { activePod, getJob, logEvent, updateJob } from "./db";
+import { activePod, getJob, logEvent } from "./db";
 import { deletePod } from "./runpod";
 
 export const SERVER_FAULTS = ["kill_pod", "slow_boot", "price_cap", "block_region", "expire_upload_session", "corrupt_md5", "revoke_drive"];
@@ -29,15 +29,26 @@ export async function hasFault(db: D1Database, jobId: string, name: string, cons
 
 export const faultArg = (f: string | null) => (f && f.includes(":") ? f.slice(f.indexOf(":") + 1) : null);
 
+/** Thrown when an agent fault can't be delivered because the single pending_cmd slot already holds a command. */
+export class PendingCmdBusy extends Error {}
+
 export async function armFault(env: Env, jobId: string, fault: string): Promise<string> {
 	const name = fault.split(":")[0];
 	if (!ALL_FAULTS.includes(name)) throw new Error(`unknown fault ${name}; known: ${ALL_FAULTS.join(", ")}`);
 	const db = env.DB;
-	if (jobId !== "*" && !(await getJob(db, jobId))) throw new Error(`no job ${jobId}`);
+	const job = jobId !== "*" ? await getJob(db, jobId) : null;
+	if (jobId !== "*" && !job) throw new Error(`no job ${jobId}`);
+	if (job && AGENT_FAULTS.includes(name)) {
+		// Claim the slot atomically; never overwrite a queued command (cancel/render) with a fault.
+		const r = await db.prepare("UPDATE jobs SET pending_cmd = ?, updated_at = ? WHERE id = ? AND pending_cmd IS NULL").bind(`fault:${fault}`, Date.now(), jobId).run();
+		if (!r.meta.changes) {
+			const cur = (await getJob(db, jobId))?.pending_cmd;
+			throw new PendingCmdBusy(`pending_cmd busy (${cur}); retry when empty`);
+		}
+	}
 	await setConfig(db, key(jobId), [...(await getConfig<string[]>(db, key(jobId), [])), fault]);
 	if (jobId !== "*") {
 		await logEvent(db, jobId, "fault_armed", { fault });
-		if (AGENT_FAULTS.includes(name)) await updateJob(db, jobId, { pending_cmd: `fault:${fault}` });
 		if (name === "kill_pod") {
 			const pod = await activePod(db, jobId);
 			if (pod) await deletePod(env, pod.id); // watchdog sees the silence and replaces it
