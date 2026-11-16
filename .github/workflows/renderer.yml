@@ -41,6 +41,12 @@ jobs:
       - name: Free runner disk (CUDA base + Chromium image is several GB)
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - uses: actions/checkout@v4
+      - name: Fetch blockworld samples (private release asset, sha256-pinned)
+        env: { GH_TOKEN: "${{ github.token }}" }
+        working-directory: renderer/audio/blockworld
+        run: |
+          gh release download blockworld-samples-v1 -R "$GITHUB_REPOSITORY" -p blockworld-samples-v1.tar.gz -O samples.tar.gz
+          sha256sum -c samples.sha256
       - uses: docker/setup-buildx-action@v3
       - id: hub
         env: { HUB_USER: "${{ secrets.DOCKERHUB_USERNAME }}" }
@@ -85,6 +91,21 @@ jobs:
               console.log(n, j.length);
             }
             console.log('offline previews ok:', f.size);" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Offline blockworld score (pinned numpy/scipy on the image's python3): the reviewer baseline, two caption-only
+          # scenes 2.25 + 2.75 s with a whimsical score and one sparkle, must be exactly 5.000 s and byte-identical twice.
+          docker run --rm --network none --entrypoint node "$IMG" --input-type=module -e "
+            const { Scores } = await import('/app/renderer/agent/score.ts');
+            const { readFile } = await import('node:fs/promises');
+            const ep = { meta: { title: 't', voiceover: null }, scenes: [
+              { id: 'a', dur: 2.25, music: 'whimsical', hit: true, captions: [{ t: 0.2, d: 1.8, text: 'One.' }], sfx: [{ t: 0.5, name: 'sparkle', gain: 0.8 }] },
+              { id: 'b', dur: 2.75, captions: [{ t: 0.2, d: 2.3, text: 'Two.' }] }] };
+            const spec = { style: 'blockworld', fps: 30, resolution: '1920x1080', voiceover: { none: true },
+              scenes: ep.scenes.map((s, i) => ({ n: i + 1, template: 'episode', props: { episode: ep }, duration_s: s.dur, narration: '', transition: 'cut' })) };
+            const t0 = performance.now();
+            const a = await new Scores('/tmp/sa', null).forFinal(spec), b = await new Scores('/tmp/sb', null).forFinal(spec);
+            if (a.seconds !== 5) throw new Error('score length ' + a.seconds);
+            if (!(await readFile(a.path)).equals(await readFile(b.path))) throw new Error('score not deterministic');
+            console.log('offline blockworld score ok:', a.seconds, 's, 2 runs in', ((performance.now() - t0) / 1000).toFixed(1), 's');" | tee -a "$GITHUB_STEP_SUMMARY"
           # Offline production voice path: prepareVoice(text) spawns node voice.ts <txt> <wav>.
           docker run --rm --network none --entrypoint node "$IMG" --input-type=module -e "
             const { prepareVoice } = await import('/app/renderer/engine/voice.ts');

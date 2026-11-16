@@ -177,9 +177,12 @@ Python touches audio or ffmpeg runs. The voice path is the pod's own file, never
 `renderer/audio/blockworld/scripts/` is an unmodified copy of the kit's `audio.py`, `cues.py`, `audio_lib.py`,
 `cue_eq.json`. Operators can still run `python3 renderer/audio/blockworld/score.py plan.json out.wav`.
 
-**Samples in the image.** `renderer/Dockerfile` takes `BLOCKWORLD_SAMPLES_URL` (a tarball of the kit's
-`assets/samples` as `samples/…`, built deterministically: sorted, mtime 0) checked against
-`BLOCKWORLD_SAMPLES_SHA256`. Without it the image builds but blockworld scoring fails. Local dev: symlink
+**Samples in the image.** The tarball of the kit's `assets/samples` (built deterministically: sorted, mtime 0)
+is the private repo's release asset `blockworld-samples-v1`. CI (`renderer.yml`, image job) downloads it with the
+repository token, checks it against the committed `renderer/audio/blockworld/samples.sha256`, and the Dockerfile
+checks it again before extracting; a missing or different archive fails the build. The image smoke test scores the
+reviewer baseline offline (exactly 5.000 s, byte-identical twice). Local build:
+`gh release download blockworld-samples-v1 -O renderer/audio/blockworld/samples.tar.gz`. Local dev: symlink
 `renderer/audio/blockworld/assets/samples` to the kit's samples (gitignored).
 
 **Tests:** `python3 renderer/audio/blockworld/test_score.py` (length, −15.4 LUFS, determinism, hostile inputs,
