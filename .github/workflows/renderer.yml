@@ -66,12 +66,36 @@ jobs:
           docker run --rm "$IMG" --selftest | tee selftest.log
           grep -q 'encoder: libx264' selftest.log
           docker run --rm --network none --entrypoint node "$IMG" --input-type=module -e "const m = await import('/app/renderer/engine/voice.ts'); await m.tts('Offline check.', '/tmp/t.wav'); console.log('offline TTS ok')"
+          # Offline preview render through the real engine (image's non-root user, no network).
+          mkdir -m 777 smoke
+          docker run --rm --network none -v "$PWD/smoke:/out" --entrypoint node "$IMG" --input-type=module -e "
+            const { renderPreviews } = await import('/app/renderer/engine/render.ts');
+            const { readFile, writeFile } = await import('node:fs/promises');
+            const plan = JSON.parse(await readFile('/app/renderer/styles/explainer/example-plan.json', 'utf8'));
+            const f = await renderPreviews({ plan, stylesDir: '/app/renderer/styles', workDir: '/tmp/p', audioPath: null, audioSeconds: plan.scenes.reduce((a, s) => a + s.duration_s, 0) });
+            if (f.size !== plan.scenes.length * 3) throw new Error('got ' + f.size + ' previews');
+            for (const [n, j] of f) {
+              if (j.length < 10000 || j[0] !== 0xff || j[1] !== 0xd8) throw new Error(n + ': bad jpeg, ' + j.length + ' bytes');
+              await writeFile('/out/' + n + '.jpg', j);
+              console.log(n, j.length);
+            }
+            console.log('offline previews ok:', f.size);" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Offline production voice path: prepareVoice(text) spawns node voice.ts <txt> <wav>.
+          docker run --rm --network none --entrypoint node "$IMG" --input-type=module -e "
+            const { prepareVoice } = await import('/app/renderer/engine/voice.ts');
+            const v = await prepareVoice({ text: 'This is the offline voice check. It should last more than one second.' }, '/tmp/v', () => { throw new Error('no drive'); });
+            if (!(v.seconds > 1)) throw new Error('voice too short: ' + v.seconds);
+            console.log('offline prepareVoice ok:', v.path, v.seconds.toFixed(2), 's');" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: smoke-previews, path: smoke, if-no-files-found: ignore }
       - if: steps.hub.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - if: steps.hub.outputs.push == 'true'
+        id: push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -85,3 +109,20 @@ jobs:
           echo "### Renderer image" >> "$GITHUB_STEP_SUMMARY"
           echo "Set \`RENDERER_IMAGE\` in control-plane/wrangler.jsonc to:" >> "$GITHUB_STEP_SUMMARY"
           echo "\`${{ steps.hub.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "digest: \`${{ steps.push.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Compressed size (new vs pinned)
+        if: steps.hub.outputs.push == 'true'
+        env:
+          REPO: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/video-renderer
+          NEW: ${{ steps.push.outputs.digest }}
+          PINNED: sha256:65af4b0b77ddd434b33c7253f84f60b5f78a8d1e43bd1b63ca88e42567b566af
+        run: |
+          # Sum compressed layer sizes of the linux/amd64 manifest (resolving an index if present).
+          size() {
+            m=$(docker buildx imagetools inspect --raw "$REPO@$1")
+            d=$(jq -r '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64")][0].digest // empty' <<<"$m")
+            [ -n "$d" ] && m=$(docker buildx imagetools inspect --raw "$REPO@$d")
+            jq '[.layers[].size] | add' <<<"$m"
+          }
+          n=$(size "$NEW"); p=$(size "$PINNED")
+          echo "compressed layers: new $NEW = $n bytes ($((n / 1000000)) MB); pinned $PINNED = $p bytes ($((p / 1000000)) MB)" | tee -a "$GITHUB_STEP_SUMMARY"
