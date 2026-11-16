@@ -1,11 +1,48 @@
 // Per-job custom style package: GET /input/package (.tar.gz) -> WORK/pkg/custom/, rendered with stylesDir = WORK/pkg.
 import { existsSync } from "node:fs";
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { must } from "../engine/ffmpeg.ts";
 
 export const PACKAGE_MAX_BYTES = 64 * 1024 * 1024;
 export const PACKAGE_ID = /^pk_[0-9a-f]{24}$/;
+export const PACKAGE_MAX_ENTRIES = 5000;
+
+/**
+ * Preflight from the raw ustar headers, before anything is written: bounded gunzip (never inflates past
+ * maxBytes + header overhead), at most PACKAGE_MAX_ENTRIES entries, only plain files ('0'/NUL) and
+ * directories ('5') (no links, devices, pax/GNU extension records), safe relative paths, and the sum of the
+ * declared file sizes <= maxBytes. Owner/group text never affects the size (it is read from its own field).
+ */
+export function scanArchive(gz: Buffer, maxBytes: number): void {
+	let tar: Buffer;
+	try {
+		tar = gunzipSync(gz, { maxOutputLength: maxBytes + 512 * (PACKAGE_MAX_ENTRIES + 4) });
+	} catch (e) {
+		throw new Error(`style package rejected: not a gzip archive within the size limit (${(e as Error).message})`);
+	}
+	const str = (o: number, n: number) => tar.subarray(o, o + n).toString("utf8").replace(/\0.*$/s, "");
+	let off = 0;
+	let entries = 0;
+	let total = 0;
+	while (off + 512 <= tar.length) {
+		if (tar.subarray(off, off + 512).every((b) => b === 0)) return; // end-of-archive marker
+		if (++entries > PACKAGE_MAX_ENTRIES) throw new Error(`style package rejected: more than ${PACKAGE_MAX_ENTRIES} entries`);
+		const type = String.fromCharCode(tar[off + 156] || 0x30);
+		const prefix = str(off + 345, 155);
+		const name = (prefix ? prefix + "/" : "") + str(off + 0, 100);
+		const sizeField = str(off + 124, 12).trim();
+		if (!/^[0-7]+$/.test(sizeField)) throw new Error(`style package rejected: bad size field for "${name}"`);
+		const size = parseInt(sizeField, 8);
+		if (type !== "0" && type !== "5") throw new Error(`style package rejected: entry "${name}" type '${type}' is not a plain file or directory`);
+		if (!name || name.startsWith("/") || name.split(/[\\/]/).includes("..")) throw new Error(`style package rejected: unsafe path "${name}"`);
+		total += size;
+		if (total > maxBytes) throw new Error(`style package rejected: ${total} bytes declared, limit ${maxBytes}`);
+		off += 512 + Math.ceil(size / 512) * 512;
+	}
+	throw new Error("style package rejected: truncated tar (no end-of-archive marker)");
+}
 
 /**
  * Validate and extract a style package archive into `${root}/custom/` (wiped first). Returns `root`, the
@@ -13,22 +50,7 @@ export const PACKAGE_ID = /^pk_[0-9a-f]{24}$/;
  * directory (symlinks, hardlinks, devices); checks the extracted size against `maxBytes`; requires tokens.json.
  */
 export async function extractPackage(archive: string, root: string, maxBytes = PACKAGE_MAX_BYTES): Promise<string> {
-	const names = (await must("tar", ["-tzf", archive])).stdout.split("\n").filter(Boolean);
-	for (const n of names) {
-		if (n.startsWith("/") || n.split(/[\\/]/).includes("..")) throw new Error(`style package rejected: unsafe path "${n}"`);
-	}
-	// Whitelist entry types by the mode column ('-' file, 'd' dir); GNU and bsd tar both print 'l'/'h' for links.
-	let listed = 0;
-	for (const line of (await must("tar", ["-tvzf", archive])).stdout.split("\n").filter(Boolean)) {
-		if (!"-d".includes(line[0]) || / link to | -> /.test(line)) throw new Error(`style package rejected: not a plain file or directory: ${line}`);
-		// GNU tar: "perms user/group SIZE date time name"; bsdtar: "perms links user group SIZE ...".
-		const f = line.trim().split(/\s+/);
-		const size = Number(f[1].includes("/") ? f[2] : f[4]);
-		if (!Number.isFinite(size)) throw new Error(`style package rejected: unreadable listing: ${line}`);
-		listed += size;
-	}
-	// Reject before extracting so a highly compressible archive can't fill the disk; re-checked after.
-	if (listed > maxBytes) throw new Error(`style package rejected: ${listed} bytes listed, limit ${maxBytes}`);
+	scanArchive(await readFile(archive), maxBytes);
 	const dir = join(root, "custom");
 	await rm(dir, { recursive: true, force: true });
 	await mkdir(dir, { recursive: true });

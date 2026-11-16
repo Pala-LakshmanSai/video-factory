@@ -31,7 +31,7 @@ if (planArg) {
 	for (const s of JSON.stringify(plan).matchAll(/https?:\/\//g)) fail("plan contains a URL; render time has no network (inline data: URIs)");
 }
 const out = `${dir}.tar.gz`;
-execFileSync("tar", ["-czf", out, "-C", dir, "."], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+execFileSync("tar", ["--format", "ustar", "-czf", out, "-C", dir, "."], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
 const bytes = statSync(out).size;
 if (bytes > 8 * 1024 * 1024) fail(`package is ${(bytes / 1048576).toFixed(1)} MiB > 8 MiB`);
 writeFileSync(`${dir}.b64`, readFileSync(out).toString("base64"));
