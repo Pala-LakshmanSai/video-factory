@@ -3,7 +3,7 @@
 import type { Catalog, CreatePodBody, ErrorCode } from "../../packages/contract/src/index";
 import { alert } from "./alerts";
 import {
-	COMPUTE_TIERS, CONSTANTS, CPU_FLAVORS, DEV_DUMMY_IMAGE, EXCLUDED_GPUS, GPU_RANK, REGION_TIERS, getConfig, norm,
+	COMPUTE_TIERS, CONSTANTS, CPU_FLAVORS, DEV_DUMMY_IMAGE, EXCLUDED_GPUS, GPU_RANK, MAX_REPLACEMENTS, REGION_TIERS, getConfig, norm,
 } from "./config";
 import { activePod, getJob, jobCost, logEvent, markDeletePending, markPodDeleted, now, randomId, sha256Hex, updateJob, type JobRow } from "./db";
 import { catalog, createPod, deletePod, lookupPodByName, type CreatedPod } from "./runpod";
@@ -91,12 +91,17 @@ export const UNCERTAIN_GIVE_UP_MS = 15 * 60_000;
  * definite outcome, fenced on the same token. A claim found set by any other run means a create may have
  * happened: that run only looks the pod up by name. It never POSTs, and a negative list never clears the
  * hold (lists can lag). The hold ends when the pod is found (adopted) or after UNCERTAIN_GIVE_UP_MS (failed).
+ * The claim is never granted while the job has an undeleted pod: a contender that passed the "no pod" preflight
+ * before another run accepted its pod cannot take a fresh claim and POST a second pod.
  */
 async function takeClaim(db: D1Database, jobId: string): Promise<string | null> {
 	const c = randomId("c_");
 	const r = await db
-		.prepare("UPDATE jobs SET create_claim = ?, create_uncertain_at = ? WHERE id = ? AND state IN ('provisioning','retrying') AND create_claim IS NULL")
-		.bind(c, now(), jobId)
+		.prepare(
+			`UPDATE jobs SET create_claim = ?, create_uncertain_at = ? WHERE id = ? AND state IN ('provisioning','retrying') AND create_claim IS NULL
+			 AND NOT EXISTS (SELECT 1 FROM pods WHERE job_id = ? AND deleted_at IS NULL)`,
+		)
+		.bind(c, now(), jobId, jobId)
 		.run();
 	return r.meta.changes === 1 ? c : null;
 }
@@ -116,13 +121,21 @@ export async function selectAndCreate(
 ): Promise<"created" | "no_capacity" | "skipped" | "held"> {
 	const job = await getJob(db, jobId);
 	if (!job || (job.state !== "provisioning" && job.state !== "retrying")) return "skipped";
-	if (await activePod(db, jobId)) return "skipped";
-	const pods = (await db.prepare("SELECT id, deleted_at FROM pods WHERE job_id = ?").bind(jobId).all<{ id: string; deleted_at: number | null }>()).results;
-	const known = pods.map((r) => r.id);
-	const undeleted = pods.filter((r) => r.deleted_at === null).length; // delete-pending pods of this job
 	const capArg = Number(faultArg(await hasFault(db, job.id, "price_cap")));
 	// Never above the spec cap, never NaN (a NaN cap would make every "cost > cap" check false).
 	const cap = Number.isFinite(capArg) && capArg > 0 ? Math.min(capArg, CONSTANTS.PRICE_CAP_USD_PER_HR) : CONSTANTS.PRICE_CAP_USD_PER_HR;
+	const live = await activePod(db, jobId);
+	if (live) {
+		// Accepted pod recorded but the job never reached booting (the run died between the pod INSERT and the
+		// booting compare-and-set): finish the acceptance from the recorded row. A concurrent accept of the same
+		// pod is harmless (one CAS wins, the other sees booting and leaves it). No claim can be taken meanwhile.
+		const r = await accept(env, db, job, { id: live.id, costPerHr: live.cost_per_hr, gpuTypeId: live.gpu_type_id, dataCenterId: live.data_center_id, cpuCount: null, api: "v2" }, null, cap, job.create_claim);
+		if (r === "rejected" && job.create_claim) await releaseClaim(db, job.id, job.create_claim);
+		return r === "created" ? "created" : r === "rejected_pending" ? "held" : "skipped";
+	}
+	const pods = (await db.prepare("SELECT id, deleted_at FROM pods WHERE job_id = ?").bind(jobId).all<{ id: string; deleted_at: number | null }>()).results;
+	const known = pods.map((r) => r.id);
+	const undeleted = pods.filter((r) => r.deleted_at === null).length; // delete-pending pods of this job
 
 	if (job.create_claim) {
 		if (!job.create_uncertain_at) {
@@ -165,12 +178,26 @@ export async function selectAndCreate(
 		return "skipped"; // the watchdog retries from admission_at; nothing was claimed or created
 	}
 	const blocked = faultArg(await hasFault(db, job.id, "block_region"));
-	const attempts = planAttempts(cat, rank, [...JSON.parse(job.skip_dcs), ...(blocked ? [blocked] : [])]).filter(
-		(a) => !opts.gpuOnly || a.computeTier !== "CPU",
-	);
 
 	const c = await takeClaim(db, job.id);
 	if (!c) return "held";
+
+	// Defense in depth, from the row as it is now that we hold the claim (not the snapshot above): never rent past
+	// the replacement cap, never in a data center this job must skip.
+	const fresh = await getJob(db, job.id);
+	if (!fresh || (fresh.state !== "provisioning" && fresh.state !== "retrying")) {
+		await releaseClaim(db, job.id, c);
+		return "skipped";
+	}
+	Object.assign(job, fresh);
+	if (job.attempts > MAX_REPLACEMENTS) {
+		await releaseClaim(db, job.id, c);
+		await failJob(env, db, job, "pod_replacements", `${job.attempts} pods lost`);
+		return "no_capacity";
+	}
+	const attempts = planAttempts(cat, rank, [...JSON.parse(job.skip_dcs), ...(blocked ? [blocked] : [])]).filter(
+		(a) => !opts.gpuOnly || a.computeTier !== "CPU",
+	);
 
 	// One token per selection, stored BEFORE any create: a pod adopted after an uncertain create already
 	// carries this token in its env, so its /hello must verify.
@@ -215,7 +242,7 @@ export async function selectAndCreate(
  * Record a pod RunPod made (always, so it stays tracked), then enforce the price cap. A cost that is missing,
  * not a finite number or negative cannot be checked against the cap, so it is treated as over it.
  */
-async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a: Attempt | null, cap: number, c: string): Promise<"created" | "rejected" | "rejected_pending" | "skipped"> {
+async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a: Attempt | null, cap: number, c: string | null): Promise<"created" | "rejected" | "rejected_pending" | "skipped"> {
 	const t = now();
 	const compute = a ? (a.computeTier === "CPU" ? "CPU" : "GPU") : pod.gpuTypeId ? "GPU" : null;
 	await db
@@ -229,15 +256,22 @@ async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a:
 		if (gone) return "rejected";
 		// The create itself is resolved (the pod is known and tracked), so release the claim; the pending delete
 		// alone keeps the job held (selectAndCreate's `undeleted` gate) until the pod is confirmed gone.
-		await releaseClaim(db, job.id, c);
+		if (c) await releaseClaim(db, job.id, c);
 		return "rejected_pending";
 	}
-	await updateJob(db, job.id, { gpu_label: `${shortGpu(pod.gpuTypeId)} · ${pod.dataCenterId ?? a?.dataCenterIds[0] ?? "?"}` });
-	await releaseClaim(db, job.id, c);
-	await logEvent(db, job.id, "pod_created", { pod: pod.id, tier: a?.computeTier ?? "adopted", gpu: pod.gpuTypeId, dc: pod.dataCenterId, costPerHr: pod.costPerHr, api: pod.api });
-	try {
-		await transition(db, job, "booting");
-	} catch {
+	// booting + claim release in ONE compare-and-set (fenced on state and claim): no window where the claim is
+	// free but the job still looks admissible. The pod INSERT above is separate; selectAndCreate repairs that gap.
+	const from = job.state;
+	const done = await db
+		.prepare("UPDATE jobs SET state = 'booting', gpu_label = ?, create_claim = NULL, create_uncertain_at = NULL, updated_at = ? WHERE id = ? AND state = ? AND state IN ('provisioning','retrying') AND create_claim IS ?")
+		.bind(`${shortGpu(pod.gpuTypeId)} · ${pod.dataCenterId ?? a?.dataCenterIds[0] ?? "?"}`, now(), job.id, from, c)
+		.run();
+	if (done.meta.changes) {
+		job.state = "booting";
+		await logEvent(db, job.id, "pod_created", { pod: pod.id, tier: a?.computeTier ?? "adopted", gpu: pod.gpuTypeId, dc: pod.dataCenterId, costPerHr: pod.costPerHr, api: pod.api });
+		await logEvent(db, job.id, "state", { from, to: "booting" });
+	} else {
+		if (c) await releaseClaim(db, job.id, c);
 		const now_ = await getJob(db, job.id);
 		// Another selector run already accepted this same pod: leave it alone.
 		if (now_ && !isTerminal(now_.state) && (await activePod(db, job.id))?.id === pod.id) return "skipped";
