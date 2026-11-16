@@ -27,7 +27,7 @@ export const STYLE_REGISTRY: Record<string, StyleEntry> = {
   blockworld: { version: "1", status: "pending", label: "Blockworld", summary: "Blocky low-poly 3D 'What if you kept getting ___' episodes with HUD counters and serif captions.", templates: ["episode"], audio: "voiceover", blocked: "needs a music/SFX layer (Linux WebGL fixtures pass)" },
     discovery: { version: "1", status: "ready", label: "Discovery Documentary", summary: "Calm real-media documentary: graded photos with slow moves, gold-pin maps, then/now reveals, serif title/chapter/quote cards.", templates: ["title", "chapter", "photo", "map", "compare", "quote", "end"], audio: "voiceover" },
   // Special: no registry templates; the job's code ships as a package (control-plane upload_package, scene_plan.package).
-  custom: { version: "1", status: "ready", label: "Custom kit package", summary: "Per-video code built from a style kit; requires scene_plan.package from upload_package.", templates: [], audio: "voiceover" },
+  custom: { version: "1", status: "pending", label: "Custom kit package", summary: "Per-video code built from a style kit; requires scene_plan.package from upload_package.", templates: [], audio: "voiceover", blocked: "release blocker: renderer must enforce offline mode (no non-file:// requests) and the pre-extract size limit, in a qualified image" },
 };
 
 /** Ready styles the renderer ships in renderer/styles/ (not "custom", whose code comes per job in a package). */

@@ -193,6 +193,18 @@ describe("tools/call", () => {
 		await Promise.all(pending.splice(0));
 	});
 
+	it("while custom is pending, acquire_gpu and upload_package refuse it and nothing is stored", async () => {
+		if (STYLE_REGISTRY.custom?.status === "ready") return;
+		const a = await call("acquire_gpu", { ...ACQ, style: "custom" });
+		expect(a.isError).toBe(true);
+		const u = await call("upload_package", { name: "x", data_b64: Buffer.from([0x1f, 0x8b, 0, 0]).toString("base64") });
+		expect(u.isError).toBe(true);
+		expect(textOf(u)).toMatch(/not available yet/);
+		await Promise.all(pending.splice(0));
+		expect(calls).toHaveLength(0);
+		expect((await stubEnv.DB.prepare("SELECT COUNT(*) n FROM jobs").first<{ n: number }>())!.n).toBe(0);
+	});
+
 	it("bad acquire_gpu input is a tool error, not a crash", async () => {
 		const r = await call("acquire_gpu", { ...ACQ, style: "cartoon", voiceover: { text: "a", drive_file_id: "b" } });
 		expect(r.isError).toBe(true);

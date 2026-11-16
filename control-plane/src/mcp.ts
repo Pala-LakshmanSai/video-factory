@@ -239,6 +239,7 @@ export function createServer() {
 			inputSchema: z.object({ name: z.string().regex(/^[a-z0-9-]{1,64}$/), data_b64: z.string().min(1) }),
 		},
 		async ({ name, data_b64 }) => {
+			if (STYLE_REGISTRY.custom?.status !== "ready") throw new Error(`style "custom" is not available yet: ${STYLE_REGISTRY.custom?.blocked ?? "pending"}`);
 			const r = await putPackage(env.OAUTH_KV, name, data_b64);
 			return "error" in r ? fail(r.error!) : json(r);
 		},
