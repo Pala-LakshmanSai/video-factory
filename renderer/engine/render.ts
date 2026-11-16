@@ -3,12 +3,12 @@
 // (SPEC §9.3), so pages render contiguous frame ranges in parallel; segments are joined with the
 // concat demuxer (no re-encode), then the audio is muxed. Same plan + same machine -> same bytes.
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { availableParallelism } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { PassThrough } from "node:stream";
-import { pathToFileURL } from "node:url";
-import { chromium, type Browser, type Page } from "playwright";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type { ScenePlan } from "../../packages/contract/src/index.ts";
 import { encoderArgs, must, pickEncoder, run, type Encoder } from "./ffmpeg.ts";
 import { previewTimes, timeScenes, type Timed } from "./timing.ts";
@@ -74,7 +74,9 @@ async function openScene(browser: Browser, inp: RenderInput, timed: Timed[], k: 
 	const { plan } = inp;
 	const [w, h] = plan.resolution.split("x").map(Number);
 	const t = timed[k];
-	const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
+	const ctx = await offlineContext(browser, inp.stylesDir, { viewport: { width: w, height: h }, deviceScaleFactor: 1 });
+	const page = await ctx.newPage();
+	page.once("close", () => void ctx.close().catch(() => undefined));
 	const errors: string[] = [];
 	page.on("pageerror", (e) => errors.push(String(e.stack ?? e)));
 	page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
@@ -136,8 +138,36 @@ async function shot(page: Page, errors: string[], sceneN: number, t: number): Pr
 	return page.screenshot({ type: "jpeg", quality: 92 });
 }
 
+// Templates (baked styles and per-job custom packages) are untrusted JS that can read window.__scene (the
+// narration). Rendering is enforced offline: only file:// paths inside stylesDir load (data:/blob: never reach
+// the router and stay usable); every other request is aborted, WebSockets are closed unconnected, the context
+// is offline, and DNS resolves nothing (defense in depth if a request ever slips past the router).
+async function offlineContext(browser: Browser, stylesDir: string, opts: Parameters<Browser["newContext"]>[0]): Promise<BrowserContext> {
+	const root = (await realpath(stylesDir)) + sep;
+	const ctx = await browser.newContext({ ...opts, offline: true, serviceWorkers: "block" });
+	await ctx.route("**/*", async (route) => {
+		const url = route.request().url();
+		let ok = false;
+		if (url.startsWith("file:")) {
+			try {
+				ok = (await realpath(fileURLToPath(url))).startsWith(root);
+			} catch {
+				ok = false; // missing file or malformed URL
+			}
+		}
+		await (ok ? route.continue() : route.abort("blockedbyclient"));
+	});
+	await ctx.routeWebSocket(/.*/, (ws) => ws.close());
+	return ctx;
+}
+
 const launch = () =>
-	chromium.launch({ args: ["--disable-gpu", "--font-render-hinting=none", "--force-color-profile=srgb", "--disable-lcd-text", "--hide-scrollbars"] });
+	chromium.launch({
+		args: [
+			"--disable-gpu", "--font-render-hinting=none", "--force-color-profile=srgb", "--disable-lcd-text", "--hide-scrollbars",
+			"--host-resolver-rules=MAP * ~NOTFOUND", "--disable-background-networking",
+		],
+	});
 
 /** 3 key frames per scene, 1280 px on the long side, JPEG < 500 KB. Returns {"scene-n-idx": jpeg}. */
 export async function renderPreviews(inp: RenderInput, onlyScenes?: number[]): Promise<Map<string, Buffer>> {
