@@ -11,6 +11,11 @@ export async function putPackage(kv: KVNamespace, name: string, dataB64: string)
 	} catch {
 		return { error: "data_b64 is not valid base64" };
 	}
+	return putPackageBytes(kv, name, bytes);
+}
+
+/** Same as putPackage for raw .tar.gz bytes (POST /upload/package: packages too big to paste into a tool call). */
+export async function putPackageBytes(kv: KVNamespace, name: string, bytes: Uint8Array) {
 	if (bytes.length > MAX_PACKAGE_BYTES) return { error: `package is ${bytes.length} bytes; max ${MAX_PACKAGE_BYTES} (8 MiB) compressed` };
 	if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) return { error: "package must be a gzip'd tar (.tar.gz): missing gzip magic bytes" };
 	const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");

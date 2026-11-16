@@ -15,6 +15,7 @@ import { balanceCheck, reaper } from "./reaper";
 import { watchdog } from "./watchdog";
 import { constantTimeEqual } from "./db";
 import { uploadInput } from "./drive";
+import { putPackageBytes } from "./packages";
 import { submitJob } from "./mcp";
 
 const mcpHandler = createMcpHandler(createServer);
@@ -38,6 +39,12 @@ async function uploadRoute(req: Request, e: Env) {
 	const q = new URL(req.url).searchParams;
 	// /upload/plan?job=<id>, body = scene_plan JSON: same as MCP submit_job, for plans too big to paste into a tool call.
 	if (new URL(req.url).pathname === "/upload/plan") return Response.json(await submitJob(e.DB, q.get("job") ?? "", await req.json(), e.OAUTH_KV));
+	// /upload/package?name=<name>, body = .tar.gz bytes: same as MCP upload_package, for packages too big to paste as base64.
+	if (new URL(req.url).pathname === "/upload/package") {
+		const name = q.get("name") ?? "";
+		if (!/^[a-z0-9-]{1,64}$/.test(name)) return Response.json({ error: "name must match ^[a-z0-9-]{1,64}$" }, { status: 400 });
+		return Response.json(await putPackageBytes(e.OAUTH_KV, name, new Uint8Array(await req.arrayBuffer())));
+	}
 	const name = q.get("name") || "voiceover.mp3";
 	const id = await uploadInput(e, name, req.headers.get("Content-Type") || "audio/mpeg", await req.arrayBuffer());
 	return Response.json({ drive_file_id: id });
@@ -48,7 +55,7 @@ export default {
 		const path = new URL(req.url).pathname;
 		if (path.startsWith("/agent/")) return agentApp.fetch(req, e, ctx);
 		if (path.startsWith("/admin") || path === "/callback/admin") return adminApp.fetch(req, e, ctx);
-		if ((path === "/upload/input" || path === "/upload/plan") && req.method === "POST") return uploadRoute(req, e);
+		if ((path === "/upload/input" || path === "/upload/plan" || path === "/upload/package") && req.method === "POST") return uploadRoute(req, e);
 		return oauth.fetch(req, e, ctx);
 	},
 
