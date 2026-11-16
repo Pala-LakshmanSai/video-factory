@@ -107,7 +107,7 @@ describe("tools/list", () => {
 		const a = tools.acquire_gpu.inputSchema;
 		expect(a.required!.sort()).toEqual(["chat_key", "style", "title", "voiceover"]);
 		expect(a.properties!.style.type).toBe("string"); // readiness is checked in acquire (same-chat replay of a hidden style still answers)
-		expect(a.properties!.voiceover.anyOf!.map((s) => s.required)).toEqual([["text"], ["drive_file_id"]]);
+		expect(a.properties!.voiceover.anyOf!.map((s) => s.required)).toEqual([["text"], ["drive_file_id"], ["none"]]);
 		expect(a.properties!.voiceover.anyOf!.every((s) => s.additionalProperties === false)).toBe(true); // never both
 
 		expect(tools.submit_job.inputSchema.required!.sort()).toEqual(["job_id", "scene_plan"]);

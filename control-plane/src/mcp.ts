@@ -7,7 +7,7 @@ import type { JobState, PreviewLabel, Scene, ScenePlan, Voiceover, WaitJobOut } 
 import { CONSTANTS, MAX_PODS_AT_ONCE, STYLES } from "./config";
 import { STYLE_REGISTRY } from "../../packages/contract/src/styles";
 import { activePod, getJob, jobCost, logEvent, now, plan, randomId, updateJob, type JobRow } from "./db";
-import { mergePatch, validatePlan } from "./plan";
+import { canon, mergePatch, validatePlan } from "./plan";
 import { getPackage, putPackage } from "./packages";
 import { retirePod, selectAndCreate } from "./selector";
 import { cancelJob, isTerminal, transition } from "./state";
@@ -39,6 +39,7 @@ export async function acquireGpu(e: Env, db: D1Database, a: { style: string; tit
 	if (existing) return { job_id: existing.id, state: existing.state }; // same-chat replay works even if the style was later hidden
 	if ((e as unknown as Record<string, string>).ACQUIRE_ENABLED === "0") throw new Error("Video Factory is not accepting new videos right now (maintenance). Try again later.");
 	if (!STYLES.includes(a.style)) throw new Error(`style "${a.style}" is not available for new videos; call list_styles and use a ready style id`);
+	if ("none" in a.voiceover && STYLE_REGISTRY[a.style]?.audio !== "episode-score") throw new Error(`voiceover {none: true} is only for caption-led styles; style "${a.style}" needs text or drive_file_id`);
 	const id = randomId("j_");
 	const state: JobState = (await busySlots(db)) >= MAX_PODS_AT_ONCE ? "queued" : "provisioning";
 	const t = now();
@@ -166,7 +167,17 @@ export async function reviseScene(db: D1Database, jobId: string, scene: number, 
 	const p = plan(job)!;
 	const i = p.scenes.findIndex((s) => s.n === scene);
 	if (i < 0) return { error: `no scene ${scene}; scenes are 1..${p.scenes.length}` };
-	const next = { ...p, scenes: p.scenes.map((s, k) => (k === i ? ({ ...(mergePatch(s, patch) as Scene), n: scene }) : s)) };
+	let next = { ...p, scenes: p.scenes.map((s, k) => (k === i ? ({ ...(mergePatch(s, patch) as Scene), n: scene }) : s)) };
+	// Episode styles: an episode patch on any scene is applied to EVERY scene's copy in this same write, and each
+	// scene's duration follows the episode. A changed episode re-previews all scenes (and the pod re-scores it).
+	const ep = (s: Scene) => (s.props as { episode?: { scenes?: { dur: number }[] } }).episode;
+	const episodeChanged = STYLE_REGISTRY[job.style]?.audio === "episode-score" && canon(ep(next.scenes[i])) !== canon(ep(p.scenes[i]));
+	if (episodeChanged) {
+		const shared = ep(next.scenes[i]);
+		next = { ...next, scenes: next.scenes.map((s, k) => ({ ...s, props: { ...s.props, episode: shared }, duration_s: shared?.scenes?.[k]?.dur ?? s.duration_s })) };
+	}
+	const cmd = episodeChanged ? "previews" : `rerender:${scene}`;
+	const rerender = episodeChanged ? null : scene;
 	const errs = validatePlan(next, job.style);
 	if (errs.length) return { error: "patched scene invalid:\n- " + errs.join("\n- ") };
 	if (job.state === "final_render") {
@@ -181,12 +192,12 @@ export async function reviseScene(db: D1Database, jobId: string, scene: number, 
 		const result = await db.prepare(
 			"UPDATE jobs SET state = 'rerendering', plan_json = ?, pending_cmd = ?, rerender_scene = ?, qa_rounds = qa_rounds + 1, approved = 0, last_render_error = NULL, updated_at = ? " +
 			"WHERE id = ? AND state = 'final_render' AND qa_rounds = ? AND ? = (SELECT MAX(id) FROM events WHERE job_id = ? AND kind IN ('state', 'render_error'))",
-		).bind(JSON.stringify(next), `rerender:${scene}`, scene, now(), job.id, job.qa_rounds, last.id, job.id).run();
+		).bind(JSON.stringify(next), cmd, rerender, now(), job.id, job.qa_rounds, last.id, job.id).run();
 		if (result.meta.changes !== 1) return { error: "job changed while repairing final render; call wait_job" };
 		await logEvent(db, job.id, "state", { from: "final_render", to: "rerendering", scene });
 		return { state: "rerendering" as const, scene };
 	}
-	await updateJob(db, job.id, { plan_json: JSON.stringify(next), pending_cmd: `rerender:${scene}`, rerender_scene: scene, qa_rounds: job.qa_rounds + 1 });
+	await updateJob(db, job.id, { plan_json: JSON.stringify(next), pending_cmd: cmd, rerender_scene: rerender, qa_rounds: job.qa_rounds + 1 });
 	await transition(db, job, "rerendering", { scene });
 	return { state: "rerendering" as const, scene };
 }
@@ -213,6 +224,7 @@ export async function release(e: Env, db: D1Database, jobId: string, defer: (p: 
 const voiceoverSchema = z.union([
 	z.object({ text: z.string().min(1) }).strict(),
 	z.object({ drive_file_id: z.string().min(1) }).strict(),
+	z.object({ none: z.literal(true) }).strict().describe("no narrator: caption-led styles (blockworld) only; the pod scores the episode"),
 ]);
 
 export function createServer() {

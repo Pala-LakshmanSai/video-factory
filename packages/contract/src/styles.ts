@@ -13,7 +13,9 @@ export interface StyleEntry {
   label: string;
   summary: string; // one line for list_styles
   templates: readonly string[];
-  audio: "voiceover"; // the engine muxes exactly one track: TTS or the job's Drive audio (pre-mixed score/SFX go there)
+  // The engine muxes exactly one track. "voiceover": TTS or the job's Drive audio. "episode-score": the pod makes
+  // the episode's own score (no narrator unless a voiceover is explicitly given; it is mixed under, never retimed).
+  audio: "voiceover" | "episode-score";
   blocked?: string; // why a pending style can't be ready yet
 }
 
@@ -24,7 +26,7 @@ export const STYLE_REGISTRY: Record<string, StyleEntry> = {
   stickman: { version: "1", status: "ready", label: "Stickman Explainer", summary: "Flat stick-figure explainer: hoodie hero, letterbox, gold numbers, label pills, fast cuts.", templates: ["hero", "title", "number", "stages", "photo"], audio: "voiceover" },
   flatglow: { version: "1", status: "ready", label: "Flatglow", summary: "Kurzgesagt-like flat glowing science animation: worlds, labelled objects, neon kinetic type, diagrams.", templates: ["title", "scene", "kinetic", "diagram", "list", "end-card"], audio: "voiceover" },
   pov: { version: "1", status: "pending", label: "POV Escalation", summary: "First-person low-poly 3D journey with a stat HUD and italic captions.", templates: ["journey", "title", "end-card"], audio: "voiceover", blocked: "Linux CI fixtures pass (run 43810609391); awaiting a check inside the packaged renderer image" },
-  blockworld: { version: "1", status: "pending", label: "Blockworld", summary: "Blocky low-poly 3D 'What if you kept getting ___' episodes with HUD counters and serif captions.", templates: ["episode"], audio: "voiceover", blocked: "audio candidate: pre-rental kit score as Drive audio (scripts/blockworld_score.py, no narrator); awaiting owner/reviewer approval and an end-to-end render in the qualified image" },
+  blockworld: { version: "1", status: "pending", label: "Blockworld", summary: "Blocky low-poly 3D 'What if you kept getting ___' episodes with HUD counters and serif captions.", templates: ["episode"], audio: "episode-score", blocked: "pod-side episode score candidate (renderer/audio/blockworld): needs the samples tarball baked into a qualified image, an end-to-end render there, and owner/reviewer approval" },
     discovery: { version: "1", status: "ready", label: "Discovery Documentary", summary: "Calm real-media documentary: graded photos with slow moves, gold-pin maps, then/now reveals, serif title/chapter/quote cards.", templates: ["title", "chapter", "photo", "map", "compare", "quote", "end"], audio: "voiceover" },
   // Special: no registry templates; the job's code ships as a package (control-plane upload_package, scene_plan.package).
   custom: { version: "1", status: "pending", label: "Custom kit package", summary: "Per-video code built from a style kit; requires scene_plan.package from upload_package.", templates: [], audio: "voiceover", blocked: "release blocker: renderer must enforce offline mode (no non-file:// requests) and the pre-extract size limit, in a qualified image" },

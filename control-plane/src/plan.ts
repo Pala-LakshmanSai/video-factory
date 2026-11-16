@@ -1,6 +1,6 @@
 // scene_plan validation (CONTRACT Extension 6). Returns precise errors Claude can fix and resubmit.
 import type { ScenePlan } from "../../packages/contract/src/index";
-import { TRANSITIONS, templatesFor } from "../../packages/contract/src/styles";
+import { STYLE_REGISTRY, TRANSITIONS, templatesFor } from "../../packages/contract/src/styles";
 import { CONSTANTS } from "./config";
 
 export const PACKAGE_ID = /^pk_[0-9a-f]{24}$/;
@@ -35,6 +35,7 @@ export function validatePlan(p: unknown, jobStyle: string): string[] {
 		if (typeof s?.narration !== "string") errs.push(`${at}.narration must be a string`);
 		if (!(TRANSITIONS as readonly string[]).includes(s?.transition)) errs.push(`${at}.transition must be one of ${TRANSITIONS.join(", ")}`);
 	});
+	if (STYLE_REGISTRY[jobStyle]?.audio === "episode-score") errs.push(...episodeErrors(plan.scenes));
 	if (total > CONSTANTS.MAX_VIDEO_MIN * 60 + 0.1) errs.push(`total duration ${total.toFixed(1)} s exceeds the ${CONSTANTS.MAX_VIDEO_MIN} min maximum`);
 	return errs;
 }
@@ -48,4 +49,24 @@ export function mergePatch(target: unknown, patch: unknown): unknown {
 		else out[k] = mergePatch(out[k], v);
 	}
 	return out;
+}
+
+/** Key-sorted JSON: equal for deep-equal values regardless of key order (merge patches reorder keys). */
+export const canon = (v: unknown): string =>
+	Array.isArray(v) ? `[${v.map(canon).join(",")}]`
+	: v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon((v as Record<string, unknown>)[k])}`).join(",")}}`
+	: JSON.stringify(v);
+
+type Ep = { scenes?: { dur?: unknown }[] };
+/** Episode styles: one whole episode, identical in every scene, and scene n lasts episode.scenes[n-1].dur. */
+function episodeErrors(scenes: ScenePlan["scenes"]): string[] {
+	const ep = (scenes[0]?.props as { episode?: Ep } | undefined)?.episode;
+	if (!ep || !Array.isArray(ep.scenes)) return ["scenes[0].props.episode must be the episode object with scenes"];
+	if (ep.scenes.length !== scenes.length) return [`episode has ${ep.scenes.length} scenes but the plan has ${scenes.length}; emit one plan scene per episode scene`];
+	const c = canon(ep), errs: string[] = [];
+	scenes.forEach((s, i) => {
+		if (i && canon((s?.props as { episode?: unknown } | undefined)?.episode) !== c) errs.push(`scenes[${i}].props.episode must be identical to scenes[0]'s (every scene carries the whole episode)`);
+		if (s?.duration_s !== ep.scenes![i]?.dur) errs.push(`scenes[${i}].duration_s must equal episode.scenes[${i}].dur (${JSON.stringify(ep.scenes![i]?.dur)})`);
+	});
+	return errs;
 }

@@ -19,10 +19,12 @@ export type JobState =
 
 export const TERMINAL_STATES = ["done", "failed", "cancelled"] as const;
 
-/** SPEC §4: voiceover is text OR a Google Drive file id, never both. */
+/** SPEC §4: voiceover is text OR a Google Drive file id, never both. Extension: {none: true} = no narrator
+ *  (caption-led styles only, e.g. blockworld, whose audio is the episode's own score). */
 export type Voiceover =
-  | { text: string; drive_file_id?: never }
-  | { drive_file_id: string; text?: never };
+  | { text: string; drive_file_id?: never; none?: never }
+  | { drive_file_id: string; text?: never; none?: never }
+  | { none: true; text?: never; drive_file_id?: never };
 
 /** Error codes carried in `error` (SPEC §8, §10 + Extensions). */
 export type ErrorCode =
