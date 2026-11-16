@@ -3,7 +3,10 @@
 # Nothing is installed at boot: Chromium, fonts, ffmpeg (NVENC + x264), styles and the Kokoro TTS weights
 # are all baked in. Runs as a non-root user.
 
-ARG CUDA_IMAGE=nvidia/cuda:12.6.3-runtime-ubuntu22.04
+# -base (not -runtime): nothing here links CUDA libraries. ffmpeg's NVENC dlopens libcuda/libnvidia-encode, which
+# the NVIDIA container toolkit mounts from the host driver; onnxruntime runs on CPU. -runtime added ~3 GB of
+# cuBLAS/cuFFT/NPP. The base image still sets NVIDIA_VISIBLE_DEVICES/NVIDIA_REQUIRE_CUDA like -runtime did.
+ARG CUDA_IMAGE=nvidia/cuda:12.6.3-base-ubuntu22.04
 ARG NODE_VERSION=22.20.0
 # BtbN static GPL build: has both h264_nvenc and libx264. Pinned to a month-end autobuild (BtbN keeps those;
 # daily ones get pruned). To bump: gh release list -R BtbN/FFmpeg-Builds, pick an autobuild-YYYY-MM-last-day tag.
@@ -30,6 +33,7 @@ FROM ${CUDA_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/node/bin:$PATH \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
+    NVIDIA_VISIBLE_DEVICES=all \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     TTS_CACHE=/opt/tts \
     WORK_DIR=/tmp \
@@ -46,10 +50,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /app/renderer
 COPY renderer/package.json renderer/package-lock.json ./
-RUN npm ci --omit=dev --no-audit --no-fund
+# CUDA EP skipped (TTS is device:'cpu'); the onnxruntime binaries for other OSes/arches are dropped.
+RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --omit=dev --no-audit --no-fund \
+ && rm -rf node_modules/onnxruntime-node/bin/napi-v3/darwin node_modules/onnxruntime-node/bin/napi-v3/win32 \
+      node_modules/onnxruntime-node/bin/napi-v3/linux/arm64 \
+ && npm cache clean --force
 
 # ---- stage marker: Chromium (+ its system libraries), version pinned by the playwright package
-RUN npx playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
+# --only-shell: chromium.launch() is headless, which uses chromium-headless-shell; the full browser was unused.
+RUN npx playwright install --with-deps --only-shell chromium \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /root/.npm /usr/share/doc/*
 
 # ---- stage marker: code, styles, bench plan
 COPY packages/contract /app/packages/contract
