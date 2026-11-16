@@ -62,9 +62,11 @@ jobs:
         shell: bash # -eo pipefail: a failing docker run piped into tee fails the step
         run: |
           echo "image size: $(( $(docker image inspect -f '{{.Size}}' "$IMG") / 1000000 )) MB" | tee -a "$GITHUB_STEP_SUMMARY"
-          test "$(docker run --rm --entrypoint id "$IMG" -u)" != 0
+          uid=$(docker run --rm --entrypoint id "$IMG" -u)
+          test -n "$uid" && test "$uid" != 0
           docker run --rm --entrypoint ffmpeg "$IMG" -hide_banner -encoders > encoders.txt
-          grep -q ' h264_nvenc ' encoders.txt && grep -q ' libx264 ' encoders.txt
+          grep -q ' h264_nvenc ' encoders.txt
+          grep -q ' libx264 ' encoders.txt
           docker run --rm "$IMG" --selftest | tee selftest.log
           grep -q 'encoder: libx264' selftest.log
           grep -q 'encoded 150 frames of 1080p with libx264' selftest.log
