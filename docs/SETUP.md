@@ -106,7 +106,8 @@ Visual follow-up, resolved: the one-frame black flash at each `fade` scene join 
 ## Phase 9 fault drills — exact upload proof passed (2026-11-16)
 
 Single operator, owner-approved, $3 cap; spent **$0.5556** tracked (incl. B8, B9). Every drill pod has a RunPod Audit Log deletion
-receipt (independent check). After the last run: `ADMISSION_ENABLED`/`FAULTS_ENABLED`/`DEV_ROUTES` all `"0"`,
+receipt (independent check). After the drills: `FAULTS_ENABLED`/`DEV_ROUTES` `"0"`; `ADMISSION_ENABLED` `"1"` since 3ec4bdd (owner-requested
+regular use; note the Sunday 03:00 UTC benchmark also runs when admission is on, budget $2),
 zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2913b893…926b` (a9e41fa); then `sha256:1ad06161…79be` (912a8c0, NVENC fallback diagnostics); now `sha256:65af4b0b…66af` (05d866c).
 
 **Exact injection (named fault fired and the observed event matches):**
