@@ -105,7 +105,12 @@ function applyFault(f: string) {
 }
 
 function startHeartbeat(cp: ControlPlane) {
+	const every = Number(env.HEARTBEAT_MS) || CONSTANTS.HEARTBEAT_INTERVAL_S * 1000; // HEARTBEAT_MS: tests only
+	let last = performance.now();
 	setInterval(async () => {
+		const gap = performance.now() - last;
+		last = performance.now();
+		if (gap > every * 1.5) log(`heartbeat tick late: ${(gap / 1000).toFixed(1)} s since last (stage=${status.stage})`);
 		if (faults.silence) return;
 		try {
 			const { cmd } = await cp.heartbeat({ stage: status.stage, pct: status.pct, ...(status.scene ? { scene: status.scene } : {}) });
@@ -115,7 +120,7 @@ function startHeartbeat(cp: ControlPlane) {
 			if (e instanceof Gone) push("cancel");
 			else log("heartbeat failed:", (e as Error).message);
 		}
-	}, Number(env.HEARTBEAT_MS) || CONSTANTS.HEARTBEAT_INTERVAL_S * 1000); // HEARTBEAT_MS: tests only
+	}, every);
 }
 
 const planOf = (s: SpecOut): ScenePlan => ({ style: s.style, fps: s.fps, resolution: s.resolution, scenes: s.scenes });

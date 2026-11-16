@@ -1,8 +1,9 @@
 // Voiceover (Decision): a Drive audio file streamed via GET /input/voiceover, or text -> Kokoro-82M on the pod
 // (weights baked into the image, no network at run time). Cached per job in workDir. Output: 48 kHz mono WAV.
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Voiceover } from "../../packages/contract/src/index.ts";
 import { durationOf, must } from "./ffmpeg.ts";
 
@@ -24,7 +25,11 @@ export async function prepareVoice(
 			await writeFile(raw, Buffer.from(await res.arrayBuffer()));
 			await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", raw, "-ac", "1", "-ar", "48000", out]);
 		} else {
-			await tts(vo.text!, out);
+			// Child process: Kokoro/ONNX blocks the event loop for tens of seconds, which starved heartbeats.
+			// Text goes via a file: argv has length limits and must() echoes args into error messages.
+			const txt = join(dir, "voice.txt");
+			await writeFile(txt, vo.text!);
+			await must(process.execPath, [fileURLToPath(import.meta.url), txt, out]);
 		}
 	}
 	return { path: out, seconds: await durationOf(out) };
@@ -77,3 +82,6 @@ export async function silence(seconds: number, out: string) {
 	await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", String(seconds), out]);
 	return { path: out, seconds };
 }
+
+// `node voice.ts <text-file> <out.wav>`: TTS in its own process (used by prepareVoice).
+if (process.argv[1] === fileURLToPath(import.meta.url)) await tts(await readFile(process.argv[2], "utf8"), process.argv[3]);

@@ -205,6 +205,7 @@ export async function renderFinal(inp: RenderInput): Promise<string> {
 
 	const per = Math.ceil(total / workers);
 	let done = 0;
+	let segments = 0;
 	const browser = await launch();
 	try {
 		await Promise.all(
@@ -232,8 +233,10 @@ export async function renderFinal(inp: RenderInput): Promise<string> {
 				}
 				const r = await ff;
 				if (r.code !== 0) throw new Error(`encode segment ${w}: ${r.stderr.slice(-800)}`);
+				segments++;
 			}),
 		);
+		console.log(`final encode ok: encoder=${enc.name} segments=${segments} workers=${workers} frames=${total}`);
 	} finally {
 		await browser.close();
 	}
