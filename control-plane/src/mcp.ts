@@ -10,7 +10,7 @@ import { activePod, getJob, jobCost, logEvent, now, plan, randomId, updateJob, t
 import { canon, mergePatch, validatePlan } from "./plan";
 import { getPackage, putPackage } from "./packages";
 import { retirePod, selectAndCreate } from "./selector";
-import { cancelJob, isTerminal, transition } from "./state";
+import { canTransition, cancelJob, isTerminal, transition } from "./state";
 
 export const deps = { sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)), pollMs: 2000 };
 
@@ -155,8 +155,12 @@ export async function approve(db: D1Database, jobId: string) {
 	const job = await getJob(db, jobId);
 	if (!job) return { error: `no job ${jobId}` };
 	if (job.state !== "preview_ready") return { error: `approve needs state preview_ready, job is ${job.state}; keep calling wait_job` };
-	await updateJob(db, job.id, { approved: 1, pending_cmd: "render_final" });
-	await transition(db, job, "final_render");
+	// One conditional write: approval, its command and the state move together, only for the preview round that was
+	// read. A revise that lands first changes state/qa_rounds, so this writes nothing (and vice versa).
+	const r = await db.prepare("UPDATE jobs SET approved = 1, pending_cmd = 'render_final', state = 'final_render', updated_at = ? WHERE id = ? AND state = 'preview_ready' AND qa_rounds = ?")
+		.bind(now(), job.id, job.qa_rounds).run();
+	if (r.meta.changes !== 1) return { error: "job changed before approve (a revise_scene or render progress landed first); call wait_job" };
+	await logEvent(db, job.id, "state", { from: "preview_ready", to: "final_render" });
 	return { state: "final_render" as const };
 }
 
@@ -170,11 +174,11 @@ export async function reviseScene(db: D1Database, jobId: string, scene: number, 
 	let next = { ...p, scenes: p.scenes.map((s, k) => (k === i ? ({ ...(mergePatch(s, patch) as Scene), n: scene }) : s)) };
 	// Episode styles: an episode patch on any scene is applied to EVERY scene's copy in this same write, and each
 	// scene's duration follows the episode. A changed episode re-previews all scenes (and the pod re-scores it).
-	const ep = (s: Scene) => (s.props as { episode?: { scenes?: { dur: number }[] } }).episode;
+	const ep = (s?: Scene) => (s?.props as { episode?: { scenes?: { dur: number }[] } } | undefined)?.episode;
 	const episodeChanged = STYLE_REGISTRY[job.style]?.audio === "episode-score" && canon(ep(next.scenes[i])) !== canon(ep(p.scenes[i]));
 	if (episodeChanged) {
 		const shared = ep(next.scenes[i]);
-		next = { ...next, scenes: next.scenes.map((s, k) => ({ ...s, props: { ...s.props, episode: shared }, duration_s: shared?.scenes?.[k]?.dur ?? s.duration_s })) };
+		next = { ...next, scenes: next.scenes.map((s, k) => ({ ...s, props: { ...s?.props, episode: shared }, duration_s: shared?.scenes?.[k]?.dur ?? s?.duration_s })) };
 	}
 	const cmd = episodeChanged ? "previews" : `rerender:${scene}`;
 	const rerender = episodeChanged ? null : scene;
@@ -197,8 +201,14 @@ export async function reviseScene(db: D1Database, jobId: string, scene: number, 
 		await logEvent(db, job.id, "state", { from: "final_render", to: "rerendering", scene });
 		return { state: "rerendering" as const, scene };
 	}
-	await updateJob(db, job.id, { plan_json: JSON.stringify(next), pending_cmd: cmd, rerender_scene: rerender, qa_rounds: job.qa_rounds + 1 });
-	await transition(db, job, "rerendering", { scene });
+	// One conditional write: plan, command, round and state together, only if the job is still in the state and round
+	// we read. Losing to approve (or to render progress) writes nothing.
+	if (!canTransition(job.state, "rerendering")) return { error: `revise_scene needs a preview, job is ${job.state}` };
+	const r = await db.prepare(
+		"UPDATE jobs SET state = 'rerendering', plan_json = ?, pending_cmd = ?, rerender_scene = ?, qa_rounds = qa_rounds + 1, updated_at = ? WHERE id = ? AND state = ? AND qa_rounds = ?",
+	).bind(JSON.stringify(next), cmd, rerender, now(), job.id, job.state, job.qa_rounds).run();
+	if (r.meta.changes !== 1) return { error: `job changed while revising (now ${(await getJob(db, job.id))?.state}); call wait_job` };
+	await logEvent(db, job.id, "state", { from: job.state, to: "rerendering", scene });
 	return { state: "rerendering" as const, scene };
 }
 
