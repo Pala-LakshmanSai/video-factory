@@ -18,9 +18,17 @@ export async function extractPackage(archive: string, root: string, maxBytes = P
 		if (n.startsWith("/") || n.split(/[\\/]/).includes("..")) throw new Error(`style package rejected: unsafe path "${n}"`);
 	}
 	// Whitelist entry types by the mode column ('-' file, 'd' dir); GNU and bsd tar both print 'l'/'h' for links.
+	let listed = 0;
 	for (const line of (await must("tar", ["-tvzf", archive])).stdout.split("\n").filter(Boolean)) {
 		if (!"-d".includes(line[0]) || / link to | -> /.test(line)) throw new Error(`style package rejected: not a plain file or directory: ${line}`);
+		// GNU tar: "perms user/group SIZE date time name"; bsdtar: "perms links user group SIZE ...".
+		const f = line.trim().split(/\s+/);
+		const size = Number(f[1].includes("/") ? f[2] : f[4]);
+		if (!Number.isFinite(size)) throw new Error(`style package rejected: unreadable listing: ${line}`);
+		listed += size;
 	}
+	// Reject before extracting so a highly compressible archive can't fill the disk; re-checked after.
+	if (listed > maxBytes) throw new Error(`style package rejected: ${listed} bytes listed, limit ${maxBytes}`);
 	const dir = join(root, "custom");
 	await rm(dir, { recursive: true, force: true });
 	await mkdir(dir, { recursive: true });
