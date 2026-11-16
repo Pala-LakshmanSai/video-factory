@@ -105,7 +105,7 @@ Visual follow-up, resolved: the one-frame black flash at each `fade` scene join 
 
 ## Phase 9 fault drills — exact upload proof passed (2026-11-16)
 
-Single operator, owner-approved, $3 cap; spent **$0.4937** tracked (incl. B8). Every drill pod has a RunPod Audit Log deletion
+Single operator, owner-approved, $3 cap; spent **$0.5556** tracked (incl. B8, B9). Every drill pod has a RunPod Audit Log deletion
 receipt (independent check). After the last run: `ADMISSION_ENABLED`/`FAULTS_ENABLED`/`DEV_ROUTES` all `"0"`,
 zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2913b893…926b` (a9e41fa); then `sha256:1ad06161…79be` (912a8c0, NVENC fallback diagnostics); now `sha256:65af4b0b…66af` (05d866c).
 
@@ -146,6 +146,12 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
   `nvenc probe failed (187)` with `OpenEncodeSessionEx failed: unsupported device (2)` / `No capable devices found`
   before any parallel encode. So this host's GeForce exposes no usable NVENC session to the container, while the
   A40 selftest passed. **GeForce 4-worker NVENC remains unqualified.**
+- **B9 (2026-11-16), same image, EU-RO-1 blocked via `block_region`.** Job `j_29e1f9dc44ae4add`, RTX 4090 pod
+  `hddwwaj5xnc858` (EUR-IS-2): same `unsupported device (2)` / `No capable devices found` probe failure, then
+  `final encode ok: encoder=libx264 segments=36 workers=36 frames=1065`; upload 2,589,239 bytes + md5 `8d422b1f…`
+  verified, auto `done` 04:28:49 UTC; RunPod Audit Log created 04:24:39, deleted 04:28:50 UTC; $0.0619. No
+  `heartbeat tick late` lines. Fallback is now proven on two GeForce hosts. TTS took 2 min 6 s on this 64-vCPU host
+  (hello 04:25:28, `voiceover 35.51 s` 04:27:34) with heartbeats intact.
 - **Heartbeat gap — fixed and qualified on B8.** B7's pod sent no heartbeat for 79 s (threshold 60 s); it survived
   only because of watchdog tick timing. 05d866c runs Kokoro TTS in a child process (local event-loop lag 2 ms) and
   logs late heartbeat ticks with the stage; on B8, D1 received heartbeats about every 15 s through TTS and preview.
