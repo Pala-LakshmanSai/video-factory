@@ -6,12 +6,14 @@ import { busySlots } from "./mcp";
 import { deletePod, podAbsent } from "./runpod";
 import { hasFault } from "./faults";
 import { failJob, retirePod, selectAndCreate } from "./selector";
-import { IllegalTransition, cancelJob, isTerminal, transition } from "./state";
+import { canTransition, cancelJob, isTerminal, transition } from "./state";
+import { verify } from "./agent";
 
 const DELETE_STUCK_ALERT_MS = 10 * 60_000;
 const LIVE_STATES = ["waiting_for_plan", "rendering", "preview_ready", "rerendering", "final_render", "uploading", "verifying"];
 const POD_STATES = ["booting", ...LIVE_STATES];
-const DONE_IN_FLIGHT_MS = 2 * 60_000; // a verifying job with its upload recorded gets this long for /done after its pod went
+const DONE_IN_FLIGHT_MS = 2 * 60_000; // after entering verifying, the pod's own /done gets this long before the watchdog verifies
+const VERIFY_GIVE_UP_MS = 15 * 60_000; // persisted upload still unverifiable after this -> replace the pod (re-render)
 
 /** One bad row must not stop the tick: log it and move on to the next job/pod. */
 async function each<T extends { id: string }>(items: T[], what: string, fn: (x: T) => Promise<unknown>) {
@@ -75,14 +77,13 @@ export async function watchdog(env: Env, db: D1Database) {
 		await db
 			.prepare(
 				`SELECT * FROM jobs j WHERE state IN (${POD_STATES.map(() => "?").join(",")}) AND create_claim IS NULL
-				 AND NOT EXISTS (SELECT 1 FROM pods p WHERE p.job_id = j.id AND p.deleted_at IS NULL)
-				 AND NOT (state = 'verifying' AND drive_file_id IS NOT NULL
-				          AND COALESCE((SELECT MAX(deleted_at) FROM pods p WHERE p.job_id = j.id), 0) > ?)`,
+				 AND NOT EXISTS (SELECT 1 FROM pods p WHERE p.job_id = j.id AND p.deleted_at IS NULL)`,
 			)
-			.bind(...POD_STATES, t - DONE_IN_FLIGHT_MS)
+			.bind(...POD_STATES)
 			.all<JobRow>()
 	).results;
 	await each(stranded, "stranded", async (job) => {
+		if (await resumeVerify(env, db, job, t)) return;
 		await logEvent(db, job.id, "pod_missing", { state: job.state });
 		await recover(env, db, job.id, "pod_missing");
 	});
@@ -125,8 +126,8 @@ export async function watchdog(env: Env, db: D1Database) {
  * Heartbeat loss: DELETE, new pod with the same plan; more than MAX_REPLACEMENTS -> failed (pod_replacements).
  */
 async function replacePod(env: Env, db: D1Database, job: JobRow, pod: PodRow, reason: "boot_timeout" | "heartbeat_lost") {
-	// Upload recorded, /done in flight: let verify finish (it has its own failure path) instead of re-rendering.
-	if (job.state === "verifying" && job.drive_file_id) return;
+	// Upload recorded: finish verifying it instead of paying for a re-render.
+	if (await resumeVerify(env, db, job, now())) return;
 	// Not confirmed deleted -> leave the pod tracked and active, and do NOT start a replacement: two live pods
 	// for one job is worse than a minute's delay. The next tick sees the same condition and tries again.
 	if (!(await deletePod(env, pod.id).catch(() => false))) {
@@ -139,47 +140,86 @@ async function replacePod(env: Env, db: D1Database, job: JobRow, pod: PodRow, re
 }
 
 /**
- * The job's pod is confirmed gone: send it to retrying and select again. Re-reads the job (the caller's row may be
- * stale: a concurrent /hello or /previews moves it) and retries a lost compare-and-set; a job that is or became
- * terminal is left alone. A lost pod (heartbeat_lost, pod_missing) counts toward MAX_REPLACEMENTS.
+ * The job's pod is confirmed gone: send it to retrying and select again. The move to retrying is ONE conditional
+ * UPDATE fenced on: same state, no undeleted pod, no create claim. So a stale caller (an overlapping tick that saw
+ * the old pod after another tick already got a replacement accepted) changes nothing. Only the winner bumps the
+ * counters. A lost pod (heartbeat_lost, pod_missing) counts toward MAX_REPLACEMENTS.
  */
 async function recover(env: Env, db: D1Database, jobId: string, reason: "boot_timeout" | "heartbeat_lost" | "pod_missing", pod?: PodRow) {
-	const job = await getJob(db, jobId);
-	if (!job || isTerminal(job.state)) return;
-	if (job.dev_mode === "bench") {
-		await cancelJob(db, job.id, { reason });
-		return;
+	const lost = reason === "boot_timeout" ? 0 : 1;
+	let job: JobRow | null = null;
+	for (let i = 0; i < 20; i++) {
+		const cur = await getJob(db, jobId);
+		if (!cur || !canTransition(cur.state, "retrying")) return; // terminal, or already retrying/provisioning
+		if (cur.dev_mode === "bench") {
+			if (await hasLivePod(db, jobId)) return;
+			await cancelJob(db, jobId, { reason });
+			return;
+		}
+		const r = await db
+			.prepare(
+				`UPDATE jobs SET state = 'retrying', attempts = attempts + ?, updated_at = ? WHERE id = ? AND state = ? AND create_claim IS NULL
+				 AND NOT EXISTS (SELECT 1 FROM pods WHERE job_id = ? AND deleted_at IS NULL)`,
+			)
+			.bind(lost, now(), jobId, cur.state, jobId)
+			.run();
+		if (r.meta.changes) {
+			await logEvent(db, jobId, "state", { from: cur.state, to: "retrying", reason });
+			job = { ...cur, state: "retrying", attempts: cur.attempts + lost };
+			break;
+		}
+		const again = await getJob(db, jobId);
+		if (again?.state === cur.state) return; // fenced: a pod or a create claim exists -> nothing to recover
 	}
-	if (reason === "boot_timeout") {
-		// Phase 9 slow_boot fault: one boot timeout proves the path; the replacement pod must boot normally.
-		await hasFault(db, job.id, "slow_boot", true);
-		const skip = JSON.parse(job.skip_dcs) as string[];
-		if (pod?.data_center_id && !skip.includes(pod.data_center_id)) skip.push(pod.data_center_id);
-		await updateJob(db, job.id, { skip_dcs: JSON.stringify(skip) });
-	} else {
+	if (!job) return;
+	if (lost) {
 		// Phase 9: silence one pod. The replacement must neither inherit the fault nor receive its stale command.
 		const silence = await hasFault(db, job.id, "silence_heartbeat", true);
 		if (silence) {
 			await db.prepare("UPDATE jobs SET pending_cmd = NULL WHERE id = ? AND pending_cmd = ?")
 				.bind(job.id, `fault:${silence}`).run();
 		}
-		const attempts = job.attempts + 1;
-		await updateJob(db, job.id, { attempts });
-		if (attempts > MAX_REPLACEMENTS) {
-			await failJob(env, db, job, "pod_replacements", `${attempts} pods lost`);
+		if (job.attempts > MAX_REPLACEMENTS) {
+			await failJob(env, db, job, "pod_replacements", `${job.attempts} pods lost`);
 			return;
 		}
-		if (attempts >= 2) await alert(env, db, `job has needed ${attempts} pod replacements`, job.id);
-	}
-	for (let cur: JobRow | null = job, i = 0; cur && !isTerminal(cur.state) && i < 20; i++) {
-		if (cur.state === "retrying" || cur.state === "provisioning") break;
-		try {
-			await transition(db, cur, "retrying", { reason });
-			break;
-		} catch (e) {
-			if (!(e instanceof IllegalTransition)) throw e;
-			cur = await getJob(db, jobId);
-		}
+		if (job.attempts >= 2) await alert(env, db, `job has needed ${job.attempts} pod replacements`, job.id);
+	} else {
+		// Phase 9 slow_boot fault: one boot timeout proves the path; the replacement pod must boot normally.
+		await hasFault(db, job.id, "slow_boot", true);
+		const skip = JSON.parse(job.skip_dcs) as string[];
+		if (pod?.data_center_id && !skip.includes(pod.data_center_id)) skip.push(pod.data_center_id);
+		await updateJob(db, job.id, { skip_dcs: JSON.stringify(skip) });
 	}
 	await selectAndCreate(env, db, jobId);
+}
+
+const hasLivePod = async (db: D1Database, jobId: string) =>
+	!!(await db.prepare("SELECT 1 FROM pods WHERE job_id = ? AND deleted_at IS NULL").bind(jobId).first());
+
+/**
+ * A verifying job whose upload claim is persisted (drive_file_id) must not be re-rendered just because its pod went
+ * quiet or away: the file is already in Drive. Returns true when the caller must NOT replace/recover the pod.
+ * - entered verifying < DONE_IN_FLIGHT_MS ago: the pod's own /done may still be running -> wait;
+ * - then: run the server-side verify for the persisted claim (fenced on that claim; done / re-upload / md5 fail);
+ * - still unresolved after VERIFY_GIVE_UP_MS (e.g. Drive keeps erroring): fall through to a normal replacement,
+ *   so the job is never stranded.
+ */
+async function resumeVerify(env: Env, db: D1Database, job: JobRow, t: number): Promise<boolean> {
+	if (job.state !== "verifying" || !job.drive_file_id) return false;
+	const ev = await db
+		.prepare("SELECT MAX(ts) AS ts FROM events WHERE job_id = ? AND kind = 'state' AND data_json LIKE '%\"to\":\"verifying\"%'")
+		.bind(job.id)
+		.first<{ ts: number | null }>();
+	const since = ev?.ts ?? job.updated_at;
+	if (t - since < DONE_IN_FLIGHT_MS) return true;
+	await logEvent(db, job.id, "verify_resume", { file: job.drive_file_id });
+	try {
+		await verify(env, job, { file_id: job.drive_file_id, md5: job.md5 ?? "", size: job.size ?? 0 });
+	} catch (e) {
+		console.error(`watchdog verify_resume ${job.id}:`, e);
+	}
+	const after = await getJob(db, job.id);
+	if (!after || after.state !== "verifying" || after.drive_file_id !== job.drive_file_id) return true; // resolved
+	return t - since < VERIFY_GIVE_UP_MS;
 }

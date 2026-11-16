@@ -1,7 +1,7 @@
 // Review: stranded jobs (pod gone, job non-terminal), per-row isolation in the watchdog tick, cost re-recorded on
 // every confirmed delete, dev-dummy cancel-before-retire, no forced re-render of a verifying job with its upload done.
 import { beforeEach, describe, expect, it } from "vitest";
-import { getJob } from "../src/db";
+import { getJob, markPodDeleted } from "../src/db";
 import { reaper } from "../src/reaper";
 import { deps } from "../src/runpod";
 import { watchdog } from "../src/watchdog";
@@ -131,15 +131,67 @@ describe("watchdog tick", () => {
 		expect(await state("j1")).toBe("verifying");
 	});
 
-	it("6: a verifying job with its upload recorded gets a grace period for /done after its pod went", async () => {
-		await job("j1", "verifying", { plan_json: "{}", drive_file_id: "f1" });
+	const verifyingSince = (msAgo: number) =>
+		env.DB.prepare("INSERT INTO events (job_id, ts, kind, data_json) VALUES ('j1', ?, 'state', ?)")
+			.bind(Date.now() - msAgo, JSON.stringify({ from: "uploading", to: "verifying" })).run();
+	const upload = { drive_file_id: "f1", md5: "abc", size: 100, plan_json: "{}" };
+	const drive = (meta: () => Response): Route[] => [
+		(u) => (u === "https://oauth2.googleapis.com/token" ? json({ access_token: "at", expires_in: 3599 }) : undefined),
+		(u) => (u.includes("/files/f1/permissions") ? json({ id: "anyone" }) : undefined),
+		(u) => (u.includes("/files/f1?") ? meta() : undefined),
+	];
+
+	it("6: within the grace after entering verifying, a gone pod is left alone (the pod's /done may be running)", async () => {
+		await job("j1", "verifying", upload);
+		await verifyingSince(30_000);
 		await pod("p1", "j1", 10 * MIN, { deleted: Date.now() - 30_000 });
-		mockFetch(...create);
+		const calls = mockFetch();
+		await watchdog(env, env.DB);
+		expect(calls).toHaveLength(0);
+		expect(await state("j1")).toBe("verifying");
+	});
+
+	it("4: after the grace, a dead tracked pod on a verifying job -> server-side verify of the persisted upload -> done, no re-render", async () => {
+		await job("j1", "verifying", upload);
+		await verifyingSince(5 * MIN);
+		await pod("p1", "j1", 20 * MIN, silent(20 * MIN));
+		const calls = mockFetch(del, ...drive(() => json({ size: "100", md5Checksum: "abc", webViewLink: "https://drive.test/f1" })), ...create);
+		await watchdog(env, env.DB);
+		const j = (await getJob(env.DB, "j1"))!;
+		expect(j.state).toBe("done");
+		expect(j.drive_link).toBe("https://drive.test/f1");
+		expect(calls.some((c) => c.method === "POST" && c.url.includes("runpod"))).toBe(false);
+	});
+
+	it("4: verify keeps erroring -> stays verifying until VERIFY_GIVE_UP, then the pod is replaced (never stranded)", async () => {
+		await job("j1", "verifying", upload);
+		await verifyingSince(5 * MIN);
+		await pod("p1", "j1", 30 * MIN, silent(30 * MIN));
+		mockFetch(del, ...drive(() => json({ error: "backend" }, 500)), ...create);
 		await watchdog(env, env.DB);
 		expect(await state("j1")).toBe("verifying");
-		await env.DB.prepare("UPDATE pods SET deleted_at = ? WHERE id = 'p1'").bind(Date.now() - 3 * MIN).run();
+		await env.DB.prepare("UPDATE events SET ts = ? WHERE kind = 'state'").bind(Date.now() - 16 * MIN).run();
 		await watchdog(env, env.DB);
 		expect(await state("j1")).toBe("booting");
+	});
+
+	it("3: overlapping ticks: a stale recovery after the replacement p2 was accepted is a no-op", async () => {
+		await job("j1", "rendering", { plan_json: "{}" });
+		await pod("p1", "j1", 10 * MIN, silent());
+		const calls = mockFetch(async (u, i) => {
+			if (i.method !== "DELETE") return undefined;
+			// Tick A finished while this (stale) tick B was deleting p1: p1 gone, p2 accepted, job booting, attempts 1.
+			await env.DB.prepare("UPDATE pods SET deleted_at = ?, delete_reason = 'heartbeat_lost' WHERE id = 'p1'").bind(Date.now()).run();
+			await pod("p2", "j1", 0);
+			await env.DB.prepare("UPDATE jobs SET state = 'booting', attempts = 1 WHERE id = 'j1'").run();
+			return new Response(null, { status: 204 });
+		}, ...create);
+		await watchdog(env, env.DB);
+		const j = (await getJob(env.DB, "j1"))!;
+		expect(j.state).toBe("booting");
+		expect(j.attempts).toBe(1);
+		expect((await env.DB.prepare("SELECT deleted_at, delete_reason FROM pods WHERE id = 'p2'").first())).toEqual({ deleted_at: null, delete_reason: null });
+		expect(calls.some((c) => c.method === "POST")).toBe(false);
 	});
 });
 
@@ -150,6 +202,14 @@ describe("cost", () => {
 		mockFetch(del, (u) => (u === "https://api.runpod.io/v2/pods/p1" ? json({}, 404) : undefined));
 		await watchdog(env, env.DB);
 		expect((await getJob(env.DB, "j1"))!.cost_usd).toBeCloseTo(0.6, 2);
+	});
+
+	it("5: markPodDeleted on an already-deleted pod still reconciles a cost write that was lost earlier", async () => {
+		await job("j1", "done", { cost_usd: 0 });
+		await pod("p1", "j1", 60 * MIN, { deleted: Date.now() - 30 * MIN });
+		await markPodDeleted(env.DB, "p1", "done");
+		expect((await getJob(env.DB, "j1"))!.cost_usd).toBeCloseTo(0.3, 2);
+		expect((await env.DB.prepare("SELECT delete_reason FROM pods WHERE id = 'p1'").first<{ delete_reason: string | null }>())!.delete_reason).toBeNull();
 	});
 
 	it("3: a pod the reaper marks gone re-records the cost of a terminal job", async () => {

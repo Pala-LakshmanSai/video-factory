@@ -102,13 +102,15 @@ export async function markDeletePending(db: D1Database, podId: string, reason: s
 	await db.prepare("UPDATE pods SET delete_reason = ? WHERE id = ? AND deleted_at IS NULL").bind(reason, podId).run();
 }
 
-/** RunPod confirmed the pod is gone (DELETE 2xx/404). Every confirmed delete re-records the job's final cost. */
+/**
+ * RunPod confirmed the pod is gone (DELETE 2xx/404). Every call re-records the job's cost, also when the pod was
+ * already marked (idempotent): a cost write lost after an earlier mark is reconciled by the next confirmation.
+ */
 export async function markPodDeleted(db: D1Database, podId: string, reason: string) {
-	const r = await db
+	await db
 		.prepare("UPDATE pods SET deleted_at = ?, delete_reason = ? WHERE id = ? AND deleted_at IS NULL")
 		.bind(now(), reason, podId)
 		.run();
-	if (!r.meta.changes) return;
 	const pod = await db.prepare("SELECT job_id FROM pods WHERE id = ?").bind(podId).first<{ job_id: string }>();
 	if (pod) await updateJob(db, pod.job_id, await jobCost(db, pod.job_id));
 }
