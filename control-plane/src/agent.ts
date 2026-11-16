@@ -166,6 +166,10 @@ agentApp.post("/done", async (c) => {
 	}
 	// verifying: claimed above, or a first /done was cut off / is still running -> (re)verify; verify() fences its effects.
 	if (job.state !== "verifying") return c.json({});
+	// Only the persisted claim is ever verified: a /done for any other file (lost the claim race) changes nothing.
+	if (job.drive_file_id !== body.file_id || job.md5 !== body.md5 || job.size !== body.size) {
+		return c.json({ error: "another file holds the verify claim" }, 409);
+	}
 	return c.json(await verify(c.env, job, body, deferOf(c)));
 });
 
@@ -177,6 +181,11 @@ agentApp.post("/done", async (c) => {
  */
 export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Promise<unknown>) => void = () => {}) {
 	const db = env.DB;
+	// Every side effect is fenced on the claim tuple of `job` (as read from D1), so a slow verifier for an older
+	// claim (ABA: A rejected -> B claimed) can't touch B. The /done handler ensures body matches that tuple.
+	const CLAIM = "id = ? AND state = 'verifying' AND drive_file_id IS ? AND md5 IS ? AND size IS ?";
+	const claim = [job.id, job.drive_file_id, job.md5, job.size];
+	const owned = async () => !!(await db.prepare(`SELECT 1 FROM jobs WHERE ${CLAIM}`).bind(...claim).first());
 	try {
 		const meta = await fileMeta(env, body.file_id);
 		const corrupt = await hasFault(db, job.id, "corrupt_md5", true);
@@ -184,21 +193,29 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 		await logEvent(db, job.id, "verify", { ok, size: meta.size, md5: meta.md5Checksum, corrupt });
 		if (!ok) {
 			if (job.reuploads >= MAX_REUPLOADS) {
+				if (!(await owned())) return {};
 				await failJob(env, db, job, "md5_mismatch", "md5 mismatch after 2 re-uploads", defer); // pod deleted last, inside
 				return {};
 			}
 			// Only the request that wins verifying -> uploading queues the re-upload (concurrent /done retries).
 			const r = await db
-				.prepare("UPDATE jobs SET reuploads = reuploads + 1, pending_cmd = 'reupload', state = 'uploading', updated_at = ? WHERE id = ? AND state = 'verifying'")
-				.bind(now(), job.id)
+				.prepare(`UPDATE jobs SET reuploads = reuploads + 1, pending_cmd = 'reupload', state = 'uploading', updated_at = ? WHERE ${CLAIM}`)
+				.bind(now(), ...claim)
 				.run();
 			if (r.meta.changes) await logEvent(db, job.id, "state", { from: "verifying", to: "uploading", reason: "md5_mismatch" });
 			return {};
 		}
+		// Publish only while this claim still holds; link + done are one conditional write on the same claim.
+		if (!(await owned())) return {};
 		await shareAnyone(env, body.file_id);
 		const pod = await activePod(db, job.id);
-		await updateJob(db, job.id, { drive_link: meta.webViewLink, ...(await jobCost(db, job.id)) });
-		await transition(db, job, "done");
+		const won = await db
+			.prepare(`UPDATE jobs SET drive_link = ?, state = 'done', updated_at = ? WHERE ${CLAIM}`)
+			.bind(meta.webViewLink, now(), ...claim)
+			.run();
+		if (!won.meta.changes) return {};
+		await logEvent(db, job.id, "state", { from: "verifying", to: "done" });
+		await updateJob(db, job.id, await jobCost(db, job.id));
 		// Only now delete the pod (this ends the agent and its request). Unconfirmed -> stays tracked, reaper retries.
 		if (pod) {
 			const retire = retirePod(env, db, job.id, pod.id, "done").then(async () => updateJob(db, job.id, await jobCost(db, job.id)));
@@ -208,7 +225,6 @@ export async function verify(env: Env, job: JobRow, body: DoneIn, defer: (p: Pro
 		return {};
 	} catch (e) {
 		if (e instanceof DriveAuthError) await failJob(env, db, job, "drive_auth", e.message, defer);
-		else if (e instanceof IllegalTransition) return {}; // a concurrent /done for the same file got there first
 		else throw e;
 		return {};
 	}

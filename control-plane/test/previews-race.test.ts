@@ -1,6 +1,6 @@
 // /previews losing its state CAS to approve/revise_scene answers 201 (no agent /error); /done is idempotent.
 import { beforeEach, describe, expect, it } from "vitest";
-import { agentApp } from "../src/agent";
+import { agentApp, verify } from "../src/agent";
 import { getJob, sha256Hex } from "../src/db";
 import { json, makeEnv, mockFetch } from "./helpers";
 
@@ -118,5 +118,52 @@ describe("/done idempotent", () => {
 	it("a repeated /done after the job is done -> 410 (agent stops)", async () => {
 		await job("done");
 		expect((await call("/done", JSON.stringify({ file_id: "f1", md5: "abc", size: 100 }))).status).toBe(410);
+	});
+
+	const drive = (md5: string) =>
+		mockFetch(
+			(u) => (u === "https://oauth2.googleapis.com/token" ? json({ access_token: "at", expires_in: 3599 }) : undefined),
+			(u) => { const m = /\/files\/(f\d)\?fields/.exec(u); return m ? json({ size: "100", md5Checksum: md5, webViewLink: `https://drive.test/${m[1]}` }) : undefined; },
+			(u) => (/\/files\/f\d\/permissions/.test(u) ? json({ id: "anyone" }) : undefined),
+		);
+	const shares = (calls: { url: string }[]) => calls.filter((c) => c.url.includes("/permissions")).map((c) => /files\/(f\d)/.exec(c.url)![1]);
+
+	it("two concurrent /done with different files -> only the claimed file is verified/shared/linked, the other 409s", async () => {
+		await job("uploading");
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		const calls = mockFetch(
+			async (u) => (u.includes("/files/f1?fields") ? (await gate, undefined) : undefined), // hold f1's verify mid-flight
+			(u) => (u === "https://oauth2.googleapis.com/token" ? json({ access_token: "at", expires_in: 3599 }) : undefined),
+			(u) => { const m = /\/files\/(f\d)\?fields/.exec(u); return m ? json({ size: "100", md5Checksum: "abc", webViewLink: `https://drive.test/${m[1]}` }) : undefined; },
+			(u) => (/\/files\/f\d\/permissions/.test(u) ? json({ id: "anyone" }) : undefined),
+		);
+		const a = call("/done", JSON.stringify({ file_id: "f1", md5: "abc", size: 100 }));
+		await new Promise((r) => setTimeout(r, 20)); // f1 has claimed and is inside its Drive lookup
+		const b = await call("/done", JSON.stringify({ file_id: "f2", md5: "abc", size: 100 }));
+		release();
+		expect([(await a).status, b.status]).toEqual([200, 409]);
+		const j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.drive_file_id, j.drive_link]).toEqual(["done", "f1", "https://drive.test/f1"]);
+		expect(shares(calls)).toEqual(["f1"]);
+	});
+
+	it("stale negative verifier (ABA: f1 rejected, f2 claimed) cannot queue a re-upload for f2", async () => {
+		await job("verifying", { drive_file_id: "f2", md5: "abc", size: 100 });
+		const stale = { ...(await getJob(env.DB, "j1"))!, drive_file_id: "f1" };
+		drive("bad");
+		await verify(env, stale, { file_id: "f1", md5: "abc", size: 100 });
+		const j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.reuploads, j.pending_cmd, j.drive_file_id]).toEqual(["verifying", 0, null, "f2"]);
+	});
+
+	it("stale positive verifier for a file that no longer holds the claim does not publish", async () => {
+		await job("verifying", { drive_file_id: "f2", md5: "abc", size: 100 });
+		const stale = { ...(await getJob(env.DB, "j1"))!, drive_file_id: "f1" };
+		const calls = drive("abc");
+		await verify(env, stale, { file_id: "f1", md5: "abc", size: 100 });
+		const j = (await getJob(env.DB, "j1"))!;
+		expect([j.state, j.drive_link]).toEqual(["verifying", null]);
+		expect(shares(calls)).toEqual([]);
 	});
 });

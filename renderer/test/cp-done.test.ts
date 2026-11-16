@@ -32,3 +32,9 @@ test("/done: 410 on the first attempt -> Gone; 400 -> Error (real failures still
 	await withFetch([() => new Response("gone", { status: 410 })], (cp) => assert.rejects(cp.done(body, 0), (e) => e instanceof Gone));
 	await withFetch([() => new Response("bad", { status: 400 })], (cp) => assert.rejects(cp.done(body, 0), (e) => e instanceof Error && !(e instanceof Gone)));
 });
+
+test("/done: 409 (another file holds the claim) -> resolves, no retry", () =>
+	withFetch([() => new Response("claimed", { status: 409 })], async (cp, calls) => {
+		await cp.done(body, 0);
+		assert.equal(calls(), 1);
+	}));

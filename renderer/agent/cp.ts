@@ -39,7 +39,8 @@ export class ControlPlane {
 	/**
 	 * /done verifies on Drive and retires the pod server-side, which can outlast the default timeout. It is
 	 * idempotent there, so a network error, timeout or 5xx is retried instead of surfacing as a render failure
-	 * (which would re-render). A 410 after a retry means our earlier /done (or a failure path) finished the job.
+	 * (which would re-render). A 410 after a retry means our earlier /done (or a failure path) finished the job;
+	 * 409 (another file holds the claim) is not a render failure either.
 	 * ponytail: retries until the pod TTL self-destructs it; add a cap if a stuck control plane must fail sooner.
 	 */
 	async done(b: DoneIn, pauseMs = 10_000): Promise<void> {
@@ -56,6 +57,8 @@ export class ControlPlane {
 			}
 			if (res.ok) return;
 			const msg = `/done: ${res.status} ${(await res.text()).slice(0, 300)}`;
+			// 409: another file holds the verify claim; not a render failure. The control plane drives what's next.
+			if (res.status === 409) return void console.log(msg);
 			if (res.status < 500) throw new Error(msg);
 			console.log(`${msg}; retrying`);
 		}
