@@ -168,8 +168,12 @@
     const k = clamp((t - L.a - 0.3) / 0.35);
     if (k <= 0) return;
     const st = L.o.labelStyle || "tag", size = 40;
-    const above = L.Y - L.r - 30 > SY + 40;
-    const ly = above ? L.Y - L.r - 24 : L.Y + L.r + 70;
+    // A character's head rises ~1.3 r above its centre (feet at +r), so labels above it start higher; the
+    // written-on name label also carries an underline (and optional sub line) below its baseline.
+    const top = L.o.kind === "character" ? 1.35 : 1;
+    const nameLift = st === "name" ? (str(L.o.sub) ? 80 : 40) : 0;
+    const above = L.Y - L.r * top - 30 - nameLift > SY + 40;
+    const ly = above ? L.Y - L.r * top - 24 - nameLift : L.Y + L.r + 70;
     if (st === "pill") F.pill(x, s, L.X, ly, k, { grad: w.accent, size });
     else if (st === "name") F.nameLabel(x, s, L.X, ly, k, { color: w.ink, size: 52, align: "center", sub: str(L.o.sub) || undefined });
     else if (st === "line") {

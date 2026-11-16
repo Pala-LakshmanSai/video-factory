@@ -7,6 +7,9 @@ export class Gone extends Error {} // job terminal or token rejected: stop and s
 export class Held extends Error {} // control plane answered but deliberately held us (X-VF-Hold): reachable, retry
 
 export const PREVIEW_CHUNK = 60;
+export const PREVIEW_TRIES = 4;
+export let PREVIEW_BACKOFF_MS = 2000; // 2, 4, 8 s
+export const setPreviewBackoff = (ms: number) => void (PREVIEW_BACKOFF_MS = ms); // tests
 
 export class ControlPlane {
 	base: string;
@@ -84,10 +87,20 @@ export class ControlPlane {
 	async previews(frames: Map<string, Buffer>) {
 		const all = [...frames];
 		for (let i = 0; i < all.length; i += PREVIEW_CHUNK) {
-			const form = new FormData();
-			for (const [name, jpeg] of all.slice(i, i + PREVIEW_CHUNK)) form.append(name, new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }), `${name}.jpg`);
-			const res = await this.req("/previews", { method: "POST", body: form });
-			if (res.status !== 201) throw new Error(`/previews: ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`);
+			// A transient failure (5xx, timeout) retries this chunk only, so a blip never costs a full preview re-render.
+			for (let tries = 1; ; tries++) {
+				const form = new FormData();
+				for (const [name, jpeg] of all.slice(i, i + PREVIEW_CHUNK)) form.append(name, new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }), `${name}.jpg`);
+				try {
+					const res = await this.req("/previews", { method: "POST", body: form });
+					if (res.status === 201) break;
+					const err = new Error(`/previews: ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`);
+					if (res.status < 500 || tries >= PREVIEW_TRIES) throw err;
+				} catch (e) {
+					if (e instanceof Gone || tries >= PREVIEW_TRIES || /^\/previews: [1-4]\d\d/.test((e as Error).message)) throw e;
+				}
+				await new Promise((r) => setTimeout(r, PREVIEW_BACKOFF_MS * 2 ** (tries - 1)));
+			}
 		}
 	}
 }
