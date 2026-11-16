@@ -151,5 +151,10 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
   logs late heartbeat ticks with the stage; on B8, D1 received heartbeats about every 15 s through TTS and preview.
 - **Fault slot — fixed (5986f92).** `armFault` claims `pending_cmd` only when empty and returns 409 otherwise,
   before storing fault config or logging `fault_armed`; regression test covers a queued `render_final`.
-- **Cold boot.** 6.2 GB image vs 6-min boot timeout on cold hosts.
+- **Cold boot — mitigated.** `BOOT_TIMEOUT_S` raised from 6 to 10 min for 6.2 GB cold pulls (2026-11-16).
+- **GeForce NVENC — accepted fallback.** RunPod GeForce hosts may refuse NVENC ("unsupported device"); the renderer
+  falls back to libx264 and still completes (B8). A40-class GPUs encode with NVENC. Revisit only if render speed matters.
+
+**Production status (2026-11-16):** `ADMISSION_ENABLED="1"` committed in `wrangler.jsonc`; faults and dev routes stay
+`"0"`. Admission also lets the Sunday 03:00 UTC benchmark run (capped at $2 per run).
 

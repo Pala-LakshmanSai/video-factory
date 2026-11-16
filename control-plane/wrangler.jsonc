@@ -21,7 +21,7 @@
     // "1" only in .dev.vars (local): enables POST /dev/acquire
     "DEV_ROUTES": "0",
     // "1" lets the selector rent pods (paid) and the weekly benchmark run. Keep "0" until a paid test is approved.
-    "ADMISSION_ENABLED": "0"
+    "ADMISSION_ENABLED": "1"
   },
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "d9e36eb3a77c4ebdb5140d77b9aae89a" }],
   "d1_databases": [

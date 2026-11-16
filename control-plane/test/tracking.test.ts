@@ -378,7 +378,7 @@ describe("failure paths record before deleting the pod", () => {
 describe("Phase 9 fault mechanics", () => {
 	it("slow_boot: one boot timeout consumes the fault, so the replacement pod can boot", async () => {
 		await job("j1", "booting");
-		await pod("p1", "j1", 7 * MIN);
+		await pod("p1", "j1", 11 * MIN);
 		await env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('faults:j1', '[\"slow_boot\"]')").run();
 		mockFetch(
 			(u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined),

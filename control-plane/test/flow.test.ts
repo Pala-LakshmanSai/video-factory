@@ -7,6 +7,7 @@ import { acquireGpu, approve, deps as mcpDeps, reviseScene, submitJob, waitJob }
 import { deps as rpDeps } from "../src/runpod";
 import { selectAndCreate } from "../src/selector";
 import { watchdog } from "../src/watchdog";
+import { CONSTANTS } from "../../packages/contract/src/index.ts";
 import { RTX4090, catalogOf, json, makeEnv, mockFetch } from "./helpers";
 
 rpDeps.sleep = async () => {};
@@ -201,9 +202,9 @@ describe("agent auth", () => {
 });
 
 describe("watchdog (fake time)", () => {
-	it("no /hello within 6 min -> DELETE, skip that data center, new pod elsewhere", async () => {
+	it("no /hello within BOOT_TIMEOUT -> DELETE, skip that data center, new pod elsewhere", async () => {
 		const id = await newJob();
-		vi.advanceTimersByTime(6 * 60_000 + 1000);
+		vi.advanceTimersByTime(CONSTANTS.BOOT_TIMEOUT_S * 1000 + 1000);
 		await watchdog(env, env.DB);
 		const job = (await getJob(env.DB, id))!;
 		expect(job.state).toBe("booting");

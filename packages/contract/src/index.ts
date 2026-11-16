@@ -173,7 +173,7 @@ export interface DriveSessionBody { name: string; parents: [string] }          /
 export interface DriveFileMeta { size: string; md5Checksum: string; webViewLink: string }   // GET files/{id}?fields=size,md5Checksum,webViewLink
 export interface DrivePermissionBody { role: "reader"; type: "anyone" }                  // POST files/{id}/permissions
 export const CONSTANTS = {
-  BOOT_TIMEOUT_S: 6 * 60,            // create -> /hello, then DELETE, skip that data center
+  BOOT_TIMEOUT_S: 10 * 60,           // 6.2 GB image cold pulls; create -> /hello, then DELETE, skip that data center
   HEARTBEAT_INTERVAL_S: 15,
   HEARTBEAT_DEAD_S: 60,
   POD_TTL_MIN: 30,                   // see Decisions for the per-length formula
