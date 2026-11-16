@@ -1,0 +1,68 @@
+[
+{ "n": 1, "start": 0.0, "duration": 3.6, "narration": "What if your houseplants could tell you what they need?", "spec": {
+  "set": "void", "camera": [[0, {"zoom": 1}], [3.6, {"zoom": 1.035}, "lin"]],
+  "items": [
+    { "id": "lead", "type": "text", "str": "WHAT IF YOUR PLANTS", "at": [960, 400], "size": 84, "spacing": 0.085, "glow": 14, "enter": {"t": 0.05, "how": "fade", "dur": 0.3} },
+    { "id": "word", "type": "text", "str": "COULD TALK?", "at": [960, 590], "size": 200, "spacing": 0.03, "fill": "@gold", "glow": 30, "enter": {"t": 0.6, "how": "slide-u", "dur": 0.4}, "anim": {"dy": [[1.0, 0], [2.2, -10, "ioS"], [3.4, 0, "ioS"]]} }
+  ],
+  "fx": [{ "t": 0.6, "kind": "sparkle", "at": [960, 560], "dur": 0.9, "color": "#ffe7b8" }] } },
+{ "n": 2, "start": 3.6, "duration": 4.4, "narration": "Mara has three plants on her shelf, and every one of them is dying.", "spec": {
+  "set": "flat", "camera": [[0, {"x": 940, "zoom": 1.0}], [4.4, {"x": 990, "zoom": 1.03}, "ioS"]],
+  "items": [
+    { "id": "plant", "type": "prop", "prop": "plant-sad", "at": [1180, 930], "scale": 1.2 },
+    { "id": "mara", "type": "actor", "cast": "mara", "at": [-120, 930], "scale": 1.15, "do": [[0, "walk", {"to": 820, "dur": 1.6}], [1.6, "look", {"dir": 1}], [1.7, "pose", {"name": "hands-hips"}], [2.6, "pose", {"name": "facepalm"}], [2.6, "face", {"eyes": "sleepy", "mouth": "frown"}]] },
+    { "id": "p1", "type": "pill", "str": "3 plants", "at": [1500, 300], "accent": "@teal", "size": 40, "enter": {"t": 1.2, "how": "pop", "dur": 0.3} },
+    { "id": "p2", "type": "pill", "str": "all dying", "at": [1500, 420], "accent": "@red", "size": 40, "enter": {"t": 2.6, "how": "pop", "dur": 0.3} }
+  ] } },
+{ "n": 3, "start": 8.0, "duration": 4.0, "narration": "Most houseplants die from too much water, not too little: about seventy percent.", "spec": {
+  "set": "void", "camera": [[0, {"zoom": 1}], [4.0, {"zoom": 1.04}, "lin"]],
+  "items": [
+    { "id": "cap", "type": "text", "str": "HOUSEPLANTS THAT DIE FROM", "at": [960, 300], "size": 52, "weight": 700, "spacing": 0.06, "fill": "@cream", "enter": {"t": 0.05, "how": "fade", "dur": 0.3} },
+    { "id": "num", "type": "counter", "from": 70, "to": 70, "suffix": "%", "t0": 0.25, "t1": 0.85, "size": 260, "at": [960, 540], "enter": {"t": 0.2, "how": "fade", "dur": 0.1} },
+    { "id": "why", "type": "pill", "str": "too much water", "at": [960, 780], "accent": "@ice", "size": 40, "enter": {"t": 1.2, "how": "pop", "dur": 0.3} },
+    { "id": "d1", "type": "prop", "prop": "drop", "at": [520, 640], "scale": 1.6, "enter": {"t": 1.4, "how": "slide-d", "dur": 0.5}, "anim": {"dy": [[1.4, 0], [4.0, 30, "lin"]]} },
+    { "id": "d2", "type": "prop", "prop": "drop", "at": [1400, 700], "scale": 1.3, "enter": {"t": 1.7, "how": "slide-d", "dur": 0.5}, "anim": {"dy": [[1.7, 0], [4.0, 24, "lin"]]} }
+  ] } },
+{ "n": 4, "start": 12.0, "duration": 4.6, "narration": "Ollie drowns his every morning, then wonders why the roots go soft.", "spec": {
+  "set": "flat", "camera": [[0, {"x": 900, "y": 560, "zoom": 1.08}], [4.6, {"x": 960, "y": 560, "zoom": 1.13}, "ioS"]],
+  "items": [
+    { "id": "plant", "type": "prop", "prop": "plant-sad", "at": [1240, 930], "scale": 1.1 },
+    { "id": "ollie", "type": "actor", "cast": "ollie", "at": [860, 930], "scale": 1.1, "do": [[0, "hold", {"prop": "watering-can", "hand": "R"}], [0, "pose", {"name": "point"}], [0, "face", {"eyes": "happy", "mouth": "grin"}], [2.6, "drop", {"hand": "R"}], [2.6, "pose", {"name": "shrug"}], [2.6, "face", {"eyes": "wide", "mouth": "o", "brows": "worried"}]] },
+    { "id": "w1", "type": "prop", "prop": "drop", "at": [1160, 640], "enter": {"t": 0.3, "how": "fade", "dur": 0.1}, "exit": {"t": 1.3, "how": "fade", "dur": 0.1}, "anim": {"dy": [[0.3, 0], [1.4, 170, "inQ"]]} },
+    { "id": "w2", "type": "prop", "prop": "drop", "at": [1172, 640], "scale": 0.8, "enter": {"t": 1.2, "how": "fade", "dur": 0.1}, "exit": {"t": 2.3, "how": "fade", "dur": 0.1}, "anim": {"dy": [[1.2, 0], [2.4, 170, "inQ"]]} },
+    { "id": "lbl", "type": "label", "str": "soft roots", "at": [1560, 640], "point": [1250, 880], "size": 40, "enter": {"t": 2.8, "how": "draw", "dur": 0.5} }
+  ] } },
+{ "n": 5, "start": 16.6, "duration": 4.4, "narration": "Everyone looks it up, and everyone gets a different answer.", "spec": {
+  "set": "night", "camera": [[0, {"zoom": 1.0}], [4.4, {"zoom": 1.04}, "lin"]],
+  "items": [
+    { "id": "c1", "type": "actor", "cast": "crowd", "at": [460, 930], "scale": 0.92, "do": [[0, "hold", {"prop": "phone-glow", "hand": "R"}], [0, "pose", {"name": "phone"}]] },
+    { "id": "c2", "type": "actor", "cast": "crowd", "at": [720, 930], "scale": 0.86, "face": -1, "do": [[0, "hold", {"prop": "phone-glow", "hand": "L"}], [0, "pose", {"name": "type"}]] },
+    { "id": "c3", "type": "actor", "cast": "crowd", "at": [1300, 930], "scale": 0.9, "do": [[0, "hold", {"prop": "phone-glow", "hand": "R"}], [0, "pose", {"name": "type"}]] },
+    { "id": "mara", "type": "actor", "cast": "mara", "at": [1010, 930], "scale": 1.05, "do": [[0, "pose", {"name": "think"}], [2.2, "pose", {"name": "shrug"}], [2.2, "face", {"brows": "up", "mouth": "flat"}]] },
+    { "id": "p1", "type": "pill", "str": "water daily", "at": [500, 270], "accent": "@gold", "size": 34, "enter": {"t": 0.6, "how": "pop", "dur": 0.3} },
+    { "id": "p2", "type": "pill", "str": "water weekly", "at": [1400, 270], "accent": "@teal", "size": 34, "enter": {"t": 1.3, "how": "pop", "dur": 0.3} },
+    { "id": "p3", "type": "pill", "str": "never water", "at": [960, 170], "accent": "@red", "size": 34, "enter": {"t": 2.0, "how": "pop", "dur": 0.3} }
+  ],
+  "fx": [{ "t": 0, "kind": "stars", "at": [960, 300], "dur": 4.4 }] } },
+{ "n": 6, "start": 21.0, "duration": 4.8, "narration": "A plant doctor's rule is simple: push a finger into the soil, and only water when it's dry.", "spec": {
+  "set": "sill", "camera": [[0, {"x": 960, "zoom": 1.0}], [4.8, {"x": 920, "zoom": 1.05}, "ioS"]],
+  "items": [
+    { "id": "doc", "type": "actor", "cast": "doc", "at": [620, 930], "scale": 1.12, "do": [[0, "pose", {"name": "talk"}], [2.4, "pose", {"name": "point"}]], "say": [[0.2, 2.2]] },
+    { "id": "plant", "type": "prop", "prop": "plant-happy", "at": [1040, 930], "scale": 1.15 },
+    { "id": "rule", "type": "board", "at": [1480, 420], "w": 560, "h": 360, "title": "the finger test", "enter": {"t": 0.4, "how": "draw", "dur": 0.6}, "items": [
+      { "id": "r1", "type": "pill", "str": "soil dry", "accent": "@gold", "size": 34, "enter": {"t": 1.3, "how": "pop", "dur": 0.3} },
+      { "id": "r2", "type": "pill", "str": "then water", "accent": "@teal", "size": 34, "enter": {"t": 2.4, "how": "pop", "dur": 0.3} } ] }
+  ] } },
+{ "n": 7, "start": 25.8, "duration": 4.6, "narration": "One month later, all three are thriving, and Mara finally gets the credit.", "spec": {
+  "set": "flat", "camera": [[0, {"x": 960, "zoom": 1.12}], [4.6, {"x": 960, "zoom": 1.0}, "ioS"]],
+  "items": [
+    { "id": "pa", "type": "prop", "prop": "plant-happy", "at": [1240, 930] },
+    { "id": "pb", "type": "prop", "prop": "plant-happy", "at": [1440, 930], "scale": 0.85 },
+    { "id": "pc", "type": "prop", "prop": "plant-happy", "at": [1600, 930], "scale": 1.1 },
+    { "id": "mara", "type": "actor", "cast": "mara", "at": [800, 930], "scale": 1.12, "do": [[0, "pose", {"name": "celebrate"}], [2.4, "pose", {"name": "point"}]] },
+    { "id": "ollie", "type": "actor", "cast": "ollie", "at": [420, 930], "scale": 1.0, "do": [[0, "pose", {"name": "cross-arms"}], [2.0, "pose", {"name": "cheer"}]] },
+    { "id": "t", "type": "tag", "str": "thriving", "at": [1440, 300], "color": "@teal", "enter": {"t": 1.0, "how": "pop", "dur": 0.3} },
+    { "id": "m", "type": "pill", "str": "1 month later", "at": [960, 170], "accent": "@gold", "size": 34, "enter": {"t": 0.2, "how": "pop", "dur": 0.3} }
+  ],
+  "fx": [{ "t": 1.0, "kind": "confetti", "at": [960, 400], "dur": 2.4 }] } }
+]

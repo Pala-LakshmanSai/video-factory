@@ -1,0 +1,90 @@
+[
+{ "n": 1, "start": 0.0, "duration": 3.4, "narration": "This is the story of the marina job: four point two million dollars, gone in one night.", "spec": {
+  "set": "board", "camera": [[0, {"zoom": 1}], [3.4, {"zoom": 1.06}, "ioS"]],
+  "items": [
+    { "id": "title", "type": "text", "str": "THE MARINA JOB", "at": [960, 300], "size": 96, "hi": ["MARINA"], "enter": {"t": 0.15, "how": "type", "dur": 0.6} },
+    { "id": "sum", "type": "counter", "at": [960, 540], "from": 0, "to": 4200000, "prefix": "$", "t0": 0.6, "t1": 2.0, "size": 150, "label": "in one night", "enter": {"t": 0.5, "how": "pop"} },
+    { "id": "true", "type": "tag", "str": "true story", "at": [1500, 170], "enter": {"t": 1.2, "how": "pop"} },
+    { "id": "place", "type": "label", "str": "Vice Beach, 1986", "at": [960, 860], "enter": {"t": 2.0, "how": "slide-u"} }
+  ],
+  "fx": [{ "t": 2.0, "kind": "sparkle", "at": [960, 540], "dur": 0.8 }] } },
+{ "n": 2, "start": 3.4, "duration": 4.4, "narration": "Our guy walks down to the dock, where Rico is waiting by the boat, and the two old friends make the deal.", "spec": {
+  "set": "marina", "camera": [[0, {"x": 960, "zoom": 1}], [4.4, {"x": 1010, "zoom": 1.08}, "ioS"]],
+  "items": [
+    { "id": "palm1", "type": "prop", "prop": "palm", "at": [70, 680], "depth": 0.6, "z": -2 },
+    { "id": "palm2", "type": "prop", "prop": "palm", "at": [310, 680], "scale": 0.8, "depth": 0.6, "z": -2 },
+    { "id": "palm3", "type": "prop", "prop": "palm", "at": [1840, 680], "scale": 0.9, "depth": 0.6, "z": -2 },
+    { "id": "boat", "type": "prop", "prop": "speedboat", "at": [1560, 730], "z": -1, "depth": 0.6, "anim": {"rot": [[0, 0], [1.1, 1.5, "ioS"], [2.2, 0, "ioS"], [3.3, 1.5, "ioS"], [4.4, 0, "ioS"]]} },
+    { "id": "host", "type": "actor", "cast": "host", "at": [-160, 930], "do": [[0, "walk", {"to": 1010, "dur": 1.7}], [1.75, "pose", {"name": "wave"}], [2.4, "pose", {"name": "talk"}], [3.3, "pose", {"name": "hug"}], [3.3, "face", {"eyes": "happy", "mouth": "grin"}]], "say": [[2.4, 3.2]] },
+    { "id": "rico", "type": "actor", "cast": "rico", "at": [1260, 930], "face": -1, "do": [[0, "pose", {"name": "hands-hips"}], [1.4, "pose", {"name": "point"}], [3.3, "pose", {"name": "hug"}]] },
+    { "id": "where", "type": "pill", "str": "vice beach marina", "at": [960, 170], "enter": {"t": 0.3, "how": "pop"}, "exit": {"t": 3.9, "how": "fade"} }
+  ],
+  "fx": [{ "t": 3.4, "kind": "sparkle", "at": [1140, 500], "dur": 0.9 }] } },
+{ "n": 3, "start": 7.8, "duration": 4.0, "narration": "Vera plans it from her desk across town, while detective Cole is already thinking two moves ahead.", "spec": {
+  "items": [
+    { "id": "split", "type": "split",
+      "left": { "set": "office", "camera": [[0, {"zoom": 1.05}], [4, {"zoom": 1.12}, "ioS"]], "items": [
+        { "id": "chair", "type": "prop", "prop": "chair", "at": [790, 900], "z": -1 },
+        { "id": "vera", "type": "actor", "cast": "vera", "at": [800, 900], "do": [[0, "pose", {"name": "sit"}], [0.3, "pose", {"name": "type"}], [2.2, "hold", {"prop": "phone", "hand": "R"}], [2.2, "pose", {"name": "phone"}]], "say": [[2.6, 3.8]] },
+        { "id": "desk", "type": "prop", "prop": "desk", "at": [1110, 900], "z": 1 },
+        { "id": "laptop", "type": "prop", "prop": "laptop", "at": [1050, 712], "z": 2 } ] },
+      "right": { "set": "alley", "items": [
+        { "id": "cole", "type": "actor", "cast": "cole", "at": [980, 900], "face": -1, "do": [[0, "pose", {"name": "cross-arms"}], [1.4, "pose", {"name": "think"}], [2.8, "pose", {"name": "facepalm"}]] } ],
+        "fx": [{ "t": 0, "kind": "rain", "dur": 4 }] } },
+    { "id": "p1", "type": "pill", "str": "the planner", "at": [480, 170], "enter": {"t": 0.3, "how": "pop"} },
+    { "id": "p2", "type": "pill", "str": "the detective", "at": [1440, 170], "enter": {"t": 0.6, "how": "pop"} }
+  ] } },
+{ "n": 4, "start": 11.8, "duration": 4.2, "narration": "The route ran two hundred miles down the coast, from the north dock to Vice Beach and out to the Keys.", "spec": {
+  "set": "board", "camera": [[0, {"zoom": 1}], [4.2, {"zoom": 1.05}, "ioS"]],
+  "items": [
+    { "id": "map", "type": "map", "outline": "florida", "at": [1120, 560], "scale": 0.95, "enter": {"t": 0.1, "how": "draw", "dur": 1.1},
+      "pins": [{"at": [150, 120], "label": "north dock", "t": 1.2}, {"at": [600, 560], "label": "vice beach", "side": "l", "t": 2.5}],
+      "routes": [{"pts": [[150, 120], [600, 560]], "t0": 1.4, "t1": 2.6}] },
+    { "id": "title", "type": "label", "str": "the route", "at": [400, 420], "size": 48, "color": "@coral", "enter": {"t": 0.5, "how": "slide-l"} },
+    { "id": "miles", "type": "text", "str": "200 miles of coast", "at": [400, 500], "size": 36, "enter": {"t": 0.8, "how": "fade"} },
+    { "id": "keys", "type": "label", "str": "the keys", "at": [1600, 760], "point": [1345, 835], "enter": {"t": 2.8, "how": "draw", "dur": 0.6} },
+    { "id": "arr", "type": "arrow", "from": [400, 580], "to": [700, 760], "t0": 3.0, "t1": 3.6, "curve": 0.25 }
+  ] } },
+{ "n": 5, "start": 16.0, "duration": 4.0, "narration": "Everyone was connected: Rico knew Vera, Vera knew the detective, and the kid knew the doctor.", "spec": {
+  "set": "board", "camera": [[0, {"zoom": 1.04}], [4, {"zoom": 1}, "ioS"]],
+  "items": [
+    { "id": "head", "type": "text", "str": "WHO KNEW WHAT", "at": [960, 150], "size": 44, "enter": {"t": 0, "how": "fade"} },
+    { "id": "web", "type": "web", "nodes": [
+        {"id": "rico", "at": [520, 420], "cast": "rico", "label": "rico"}, {"id": "vera", "at": [960, 340], "cast": "vera", "label": "vera"},
+        {"id": "cole", "at": [1400, 420], "cast": "cole", "label": "cole"}, {"id": "kid", "at": [720, 760], "cast": "kid", "label": "the kid"},
+        {"id": "doc", "at": [1200, 760], "cast": "doc", "label": "doc"}, {"id": "bag", "at": [960, 580], "label": "the bag", "t": 3.0}],
+      "links": [["rico", "vera", 0.4], ["vera", "cole", 0.9, "calls"], ["rico", "kid", 1.4], ["kid", "doc", 1.9], ["cole", "doc", 2.4], ["bag", "rico", 3.1], ["bag", "doc", 3.2]] }
+  ] } },
+{ "n": 6, "start": 20.0, "duration": 3.8, "narration": "Detective Cole Marsh made one promise: nobody leaves the marina with that bag.", "spec": {
+  "set": "board", "camera": [[0, {"y": 540, "zoom": 1}], [3.8, {"y": 560, "zoom": 1.04}, "ioS"]],
+  "items": [
+    { "id": "card", "type": "card", "cast": "cole", "name": "Cole Marsh", "role": "lead detective", "at": [960, 330], "enter": {"t": 0.1, "how": "slide-u"} },
+    { "id": "q", "type": "quote", "str": "Nobody leaves the marina with that bag.", "by": "Cole Marsh", "at": [960, 730], "t0": 1.0, "t1": 2.6, "enter": {"t": 0.8, "how": "fade"} },
+    { "id": "case", "type": "pill", "str": "case 0419", "at": [340, 200], "color": "@coral", "enter": {"t": 0.4, "how": "pop"} }
+  ] } },
+{ "n": 7, "start": 23.8, "duration": 3.8, "narration": "The odds looked good. The bag made it to the office, the doctor had his coffee, and the kid was already sneaking in.", "spec": {
+  "set": "office", "camera": [[0, {"zoom": 1}], [3.8, {"zoom": 1.04, "x": 990}, "ioS"]],
+  "items": [
+    { "id": "odds", "type": "board", "at": [520, 350], "w": 620, "h": 400, "title": "the odds", "z": -1, "enter": {"t": 0.1, "how": "draw", "dur": 0.6},
+      "items": [{ "id": "bars", "type": "chart", "kind": "bar", "at": [310, 240], "w": 500, "h": 270, "t0": 0.7, "t1": 1.8, "suffix": "%", "data": [{"label": "boat", "value": 40}, {"label": "bag", "value": 85}, {"label": "cops", "value": 20}] }] },
+    { "id": "photo", "type": "image", "image": "skyline", "frame": "polaroid", "at": [1520, 300], "w": 420, "h": 236, "rot": 4, "kenburns": [1, 1.15], "z": -1, "enter": {"t": 0.4, "how": "pop"} },
+    { "id": "kid", "type": "actor", "cast": "kid", "at": [140, 900], "anim": {"x": [[0, 140], [1.6, 300, "ioS"]]}, "do": [[0, "pose", {"name": "sneak"}], [1.6, "pose", {"name": "crouch"}]] },
+    { "id": "doc", "type": "actor", "cast": "doc", "at": [930, 900], "do": [[0, "hold", {"prop": "cup", "hand": "R"}], [0.3, "pose", {"name": "drink"}], [2.2, "pose", {"name": "talk"}]], "say": [[2.2, 3.5]] },
+    { "id": "host", "type": "actor", "cast": "host", "at": [1900, 900], "do": [[0, "hold", {"prop": "cash-bag", "hand": "R"}], [0, "walk", {"to": 1180, "dur": 1.8}], [1.9, "pose", {"name": "carry"}], [3.0, "drop", {"hand": "R"}], [3.0, "joints", {"la": [20, 10], "ra": [160, 15], "lean": -4}]] }
+  ] } },
+{ "n": 8, "start": 27.6, "duration": 4.6, "narration": "Then it all went wrong in the alley: one punch, one fall, and the sirens arrived right on time.", "spec": {
+  "set": "alley", "shake": [[0.85, 0.4, 14]],
+  "camera": [[0, {"x": 960, "zoom": 1.06}], [1.0, {"x": 900, "zoom": 1.12}, "outC"], [4.6, {"x": 1000, "zoom": 1.0}, "ioS"]],
+  "items": [
+    { "id": "sign", "type": "prop", "prop": "neon-sign", "at": [520, 430], "depth": 0.8, "z": -2 },
+    { "id": "car", "type": "prop", "prop": "police-car", "at": [1680, 905], "z": -1, "enter": {"t": 2.5, "how": "slide-r", "dur": 0.5} },
+    { "id": "siren", "type": "custom", "fn": "siren", "at": [1680, 768], "params": {"color": "@coral"}, "enter": {"t": 2.9, "how": "pop"} },
+    { "id": "kid", "type": "actor", "cast": "kid", "at": [560, 900], "do": [[0, "pose", {"name": "fight"}], [0.75, "pose", {"name": "punch"}], [1.5, "pose", {"name": "celebrate"}], [3.4, "pose", {"name": "shrug"}]] },
+    { "id": "cole", "type": "actor", "cast": "cole", "at": [790, 900], "face": -1, "do": [[0, "pose", {"name": "fight"}], [0.45, "pose", {"name": "kick"}], [0.9, "pose", {"name": "fall"}], [1.6, "pose", {"name": "lie"}]] },
+    { "id": "rico", "type": "actor", "cast": "rico", "at": [1320, 900], "face": -1, "do": [[0, "pose", {"name": "cheer"}], [1.3, "pose", {"name": "jump"}], [2.7, "pose", {"name": "hands-up"}]] },
+    { "id": "doc", "type": "actor", "cast": "doc", "at": [-160, 900], "do": [[1.5, "run", {"to": 300, "dur": 0.8}], [2.7, "pose", {"name": "hands-up"}]] },
+    { "id": "busted", "type": "tag", "str": "busted", "at": [960, 220], "size": 64, "enter": {"t": 3.1, "how": "pop"} }
+  ],
+  "fx": [{ "t": 0.85, "kind": "flash", "dur": 0.25 }, { "t": 1.45, "kind": "dust", "at": [960, 880], "dur": 0.7 }, { "t": 1.5, "kind": "whoosh-lines", "dur": 0.6 },
+    { "t": 1.6, "kind": "confetti", "at": [560, 420], "dur": 1.4 }, { "t": 2.0, "kind": "stars", "at": [1150, 830], "dur": 1.6 }, { "t": 2.6, "kind": "smoke", "at": [1480, 880], "dur": 1.2 }] } }
+]

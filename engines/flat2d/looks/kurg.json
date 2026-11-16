@@ -1,0 +1,47 @@
+{
+  "name": "kurg",
+  "notes": "Kurzgesagt-like 'Flatglow Explainer' (style-kits/claude kurg.. style .md, renderer/styles/flatglow): flat shapes with two-tone shading (tone(): shadows shift to violet, highlights to warm), rim light, bloom, dense glowing worlds at three depths, no outlines, no letterbox, Poppins type, a camera that never stops. Characters are rounded flat people (rig.body 'blob': big head, bean torso, stubby capsule limbs, skin = ActorSpec ink). Defaults are colours only, no named character.",
+  "palette": {
+    "bg": "#0b0b2a", "fg": "#ffffff", "accent": "#ffcf3f", "muted": "#8c86c8",
+    "ink": "#1c1236", "white": "#ffffff", "pill": "#2f6cf0", "bar": "#000000", "ground": "#2a1f6e",
+    "indigo": "#2a2380", "deep": "#12052e", "night": "#090828", "violet": "#7b2ff7", "plum": "#360664", "lavender": "#c9c2ff",
+    "magenta": "#e8287a", "pink": "#ff5a8a", "aqua": "#6ef4ea", "cyan": "#3df2ff", "blue": "#2f6cf0", "sky": "#2fd0ff",
+    "orange": "#ef7327", "amber": "#ffb84a", "yellow": "#ffc93c", "lime": "#38e07b", "leaf": "#63b81e", "green": "#16b35a",
+    "red": "#e8285a", "teal": "#13a3a0", "skin": "#f2c4a0", "skinDark": "#c98a5e"
+  },
+  "fonts": { "display": "Poppins", "body": "Poppins", "weightDisplay": 800, "weightBody": 600 },
+  "fontFiles": [
+    { "family": "Poppins", "file": "fonts/poppins-latin-600-normal.woff2", "weight": "600" },
+    { "family": "Poppins", "file": "fonts/poppins-latin-700-normal.woff2", "weight": "700" },
+    { "family": "Poppins", "file": "fonts/poppins-latin-800-normal.woff2", "weight": "800" }
+  ],
+  "safe": { "x": 0.06, "y": 0.08 },
+  "letterbox": 0,
+  "motion": { "in": 0.32, "out": 0.3, "stagger": 0.1, "ease": "outB", "drift": 6, "push": 0.05 },
+  "pacing": { "wordsPerSecond": 2.6, "minScene": 2.5, "maxScene": 9.0 },
+  "lineWeight": 4,
+  "rig": {
+    "body": "blob",
+    "R": 60, "LEG": 92, "TORSO": 118, "TW": 118, "UA": 56, "FA": 52, "TH": 48, "SH": 46, "ARMW": 24, "LEGW": 30, "HAND": 15,
+    "rimOff": [5, -3], "shade": ["#3a1450", 0.3]
+  },
+  "actor": {
+    "skin": "#f2c4a0",
+    "top": { "kind": "tee", "color": "#2f6cf0", "pattern": "none" },
+    "bottom": { "kind": "trousers", "color": "#1c2a5a" },
+    "shoes": { "color": "#1c1236" },
+    "hair": { "style": "short", "color": "#2a1a2e" },
+    "hat": { "kind": "none", "color": "#2a5ac8" },
+    "face": { "eyes": "dot", "mouth": "smile", "brows": "none" },
+    "shadow": 0.22
+  },
+  "rim": { "warm": "#ffd79a", "cool": "#7a8aff" },
+  "board": { "mid": "#2a2380", "body": "#16124a", "edge": "#0b0a2a", "panel": "#1d1656", "grid": null, "outline": false },
+  "label": { "spacing": 0.02, "glow": 14, "glowColor": "rgba(10,6,40,.75)", "pillGrad": ["#2f6cf0", "#2fd0ff"] },
+  "text": { "glow": 0, "glowColor": "#c13cff" },
+  "card": { "portrait": ["#7b2ff7", "#b5258f", "#ff8a2a"] },
+  "chart": { "colors": ["#ffc93c", "#3df2ff", "#e8287a", "#38e07b", "#ff8a2a"] },
+  "confetti": ["#ffc93c", "#3df2ff", "#e8287a", "#38e07b", "#ffffff"],
+  "atmo": { "motes": 40, "moteColor": "#ffffff", "bokeh": ["#49068e", "#b94ce3", "#6112da", "#2f6cf0"] },
+  "finish": { "vignette": 0, "grain": 0.03, "bloom": 0.32, "tint": ["#050014", 0.32] }
+}

@@ -1,0 +1,80 @@
+[
+{ "n": 1, "start": 0.0, "duration": 4.2, "narration": "On a summer night, a meadow fills with tiny floating lights. Why do fireflies glow?", "spec": {
+  "set": "meadow", "camera": [[0, {"x": 960, "y": 540, "zoom": 1.0}], [4.2, {"x": 980, "y": 520, "zoom": 1.06}, "ioS"]],
+  "items": [
+    { "id": "f1", "type": "prop", "prop": "spark", "at": [300, 640], "depth": 0.7, "enter": {"t": 0.2, "how": "pop"}, "anim": {"dy": [[0, 0], [2, -30, "ioS"], [4.2, 0, "ioS"]]} },
+    { "id": "f2", "type": "prop", "prop": "spark", "at": [560, 760], "scale": 1.3, "depth": 0.9, "enter": {"t": 0.5, "how": "pop"}, "anim": {"dx": [[0, 0], [4.2, 40, "ioS"]]} },
+    { "id": "f3", "type": "prop", "prop": "spark", "at": [880, 600], "scale": 0.8, "depth": 0.6, "enter": {"t": 0.8, "how": "pop"}, "anim": {"dy": [[0, 0], [2.1, 24, "ioS"], [4.2, -10, "ioS"]]} },
+    { "id": "f4", "type": "prop", "prop": "spark", "at": [1180, 720], "scale": 1.1, "depth": 0.8, "enter": {"t": 1.1, "how": "pop"}, "anim": {"dx": [[0, 0], [4.2, -36, "ioS"]]} },
+    { "id": "f5", "type": "prop", "prop": "spark", "at": [1460, 640], "depth": 0.7, "enter": {"t": 1.3, "how": "pop"}, "anim": {"dy": [[0, 0], [2.2, -28, "ioS"], [4.2, 6, "ioS"]]} },
+    { "id": "f6", "type": "prop", "prop": "spark", "at": [1700, 800], "scale": 1.4, "depth": 1.0, "enter": {"t": 1.6, "how": "pop"} },
+    { "id": "f7", "type": "prop", "prop": "spark", "at": [720, 820], "scale": 0.7, "depth": 0.6, "enter": {"t": 1.8, "how": "pop"} },
+    { "id": "f8", "type": "prop", "prop": "spark", "at": [1320, 560], "scale": 0.7, "depth": 0.5, "enter": {"t": 2.0, "how": "pop"} },
+    { "id": "title", "type": "text", "str": "WHY DO FIREFLIES GLOW?", "at": [960, 330], "size": 104, "glow": 26, "hi": ["GLOW?"], "hiColor": "#eaf75c", "depth": 0.4, "enter": {"t": 1.9, "how": "type", "dur": 0.9} }
+  ] } },
+{ "n": 2, "start": 4.2, "duration": 4.4, "narration": "Ask any kid with a jar: the light comes from the end of the firefly's body.", "spec": {
+  "set": "meadow", "camera": [[0, {"x": 900, "zoom": 1.08}], [4.4, {"x": 1000, "zoom": 1.16}, "ioS"]],
+  "items": [
+    { "id": "kid", "type": "actor", "cast": "kid", "at": [-140, 890], "scale": 1.35, "do": [[0, "hold", {"prop": "jar", "hand": "L"}], [0, "walk", {"to": 760, "dur": 1.8}], [1.9, "look", {"dir": 1}], [1.9, "pose", {"name": "point"}], [1.9, "face", {"eyes": "wide", "mouth": "o"}], [3.3, "pose", {"name": "cheer"}]], "say": [[2.4, 3.2]] },
+    { "id": "bug", "type": "prop", "prop": "firefly", "at": [1240, 520], "scale": 0.9, "enter": {"t": 1.0, "how": "pop"}, "anim": {"dy": [[0, 0], [1.4, -20, "ioS"], [2.8, 8, "ioS"], [4.4, -10, "ioS"]], "dx": [[0, 0], [4.4, -50, "ioS"]]} },
+    { "id": "s1", "type": "prop", "prop": "spark", "at": [1500, 420], "depth": 0.7, "enter": {"t": 0.4, "how": "pop"} },
+    { "id": "s2", "type": "prop", "prop": "spark", "at": [400, 520], "scale": 0.8, "depth": 0.6, "enter": {"t": 0.6, "how": "pop"} },
+    { "id": "s3", "type": "prop", "prop": "spark", "at": [1640, 700], "scale": 1.2, "depth": 0.9, "enter": {"t": 0.8, "how": "pop"} },
+    { "id": "name", "type": "pill", "str": "Firefly", "at": [1240, 300], "enter": {"t": 2.2, "how": "pop"} }
+  ] } },
+{ "n": 3, "start": 8.6, "duration": 4.4, "narration": "Up close, that tail is a light organ, packed with cells that make light on purpose.", "spec": {
+  "set": "macro", "camera": [[0, {"x": 960, "y": 540, "zoom": 1.0}], [4.4, {"x": 1010, "y": 560, "zoom": 1.12}, "ioS"]],
+  "items": [
+    { "id": "hero", "type": "prop", "prop": "firefly", "at": [960, 760], "scale": 4.2, "enter": {"t": 0.0, "how": "grow", "dur": 0.6}, "anim": {"dy": [[0, 0], [2.2, -16, "ioS"], [4.4, 0, "ioS"]]} },
+    { "id": "organ", "type": "label", "str": "Light organ", "at": [1520, 260], "point": [1100, 560], "enter": {"t": 1.0, "how": "draw", "dur": 0.6} },
+    { "id": "wing", "type": "label", "str": "Wings", "at": [430, 250], "point": [840, 440], "enter": {"t": 2.0, "how": "draw", "dur": 0.6} },
+    { "id": "c1", "type": "prop", "prop": "spark", "at": [1600, 820], "scale": 1.5, "depth": 1.2, "enter": {"t": 0.4, "how": "pop"} },
+    { "id": "c2", "type": "prop", "prop": "spark", "at": [280, 860], "scale": 1.8, "depth": 1.2, "enter": {"t": 0.7, "how": "pop"} }
+  ] } },
+{ "n": 4, "start": 13.0, "duration": 4.6, "narration": "Inside, a molecule called luciferin meets oxygen, an enzyme joins them, and the energy leaves as light.", "spec": {
+  "set": "diagram", "camera": [[0, {"zoom": 1.0}], [4.6, {"zoom": 1.06, "x": 990}, "ioS"]],
+  "items": [
+    { "id": "luc", "type": "prop", "prop": "luciferin", "at": [400, 600], "scale": 1.6, "enter": {"t": 0.2, "how": "pop"}, "anim": {"rot": [[0, -4], [4.6, 6, "ioS"]]} },
+    { "id": "lucL", "type": "pill", "str": "Luciferin", "at": [400, 700], "enter": {"t": 0.5, "how": "pop"} },
+    { "id": "plus", "type": "text", "str": "+", "at": [700, 470], "size": 90, "enter": {"t": 1.0, "how": "pop"} },
+    { "id": "ox", "type": "prop", "prop": "oxygen", "at": [960, 560], "scale": 1.5, "enter": {"t": 1.2, "how": "pop"} },
+    { "id": "oxL", "type": "pill", "str": "Oxygen", "at": [960, 700], "enter": {"t": 1.4, "how": "pop"} },
+    { "id": "arr", "type": "arrow", "from": [1140, 470], "to": [1380, 470], "t0": 2.2, "t1": 2.8 },
+    { "id": "enz", "type": "label", "str": "Enzyme", "at": [1260, 380], "enter": {"t": 2.4, "how": "type", "dur": 0.4} },
+    { "id": "light", "type": "prop", "prop": "flash", "at": [1560, 570], "scale": 1.3, "enter": {"t": 2.9, "how": "pop"} },
+    { "id": "lightL", "type": "pill", "str": "Light", "at": [1560, 700], "color": "@leaf", "enter": {"t": 3.2, "how": "pop"} },
+    { "id": "head", "type": "text", "str": "Chemistry, not fire", "at": [960, 200], "size": 64, "enter": {"t": 0.1, "how": "fade"} }
+  ],
+  "fx": [{ "t": 2.9, "kind": "sparkle", "at": [1560, 470], "dur": 0.9, "color": "#eaf75c" }] } },
+{ "n": 5, "start": 17.6, "duration": 4.2, "narration": "An old light bulb wastes about ninety percent of its energy as heat. A firefly's light stays almost cold.", "spec": {
+  "set": "diagram", "camera": [[0, {"zoom": 1.04}], [4.2, {"zoom": 1.0, "x": 940}, "ioS"]],
+  "items": [
+    { "id": "bulb", "type": "prop", "prop": "bulb", "at": [560, 640], "scale": 1.5, "enter": {"t": 0.1, "how": "pop"} },
+    { "id": "heat", "type": "prop", "prop": "heat", "at": [770, 520], "scale": 0.7, "enter": {"t": 0.9, "how": "pop"} },
+    { "id": "pct", "type": "counter", "at": [560, 790], "from": 0, "to": 90, "suffix": "%", "t0": 0.6, "t1": 1.8, "size": 110, "label": "lost as heat", "labelSize": 36, "fill": "@red", "enter": {"t": 0.5, "how": "pop"} },
+    { "id": "bug", "type": "prop", "prop": "firefly", "at": [1380, 600], "scale": 1.6, "enter": {"t": 2.2, "how": "pop"}, "anim": {"dy": [[2.2, 0], [4.2, -14, "ioS"]]} },
+    { "id": "cold", "type": "pill", "str": "Cold light", "at": [1380, 790], "color": "@teal", "enter": {"t": 2.7, "how": "pop"} }
+  ] } },
+{ "n": 6, "start": 21.8, "duration": 4.4, "narration": "Scientists copy the trick in the lab: glowing enzymes now light up tests for germs and disease.", "spec": {
+  "set": "lab", "camera": [[0, {"x": 960, "zoom": 1.0}], [4.4, {"x": 1000, "zoom": 1.08}, "ioS"]],
+  "items": [
+    { "id": "bench", "type": "prop", "prop": "bench", "at": [960, 900], "z": 1 },
+    { "id": "flask", "type": "prop", "prop": "flask", "at": [1060, 660], "scale": 0.9, "z": 2, "enter": {"t": 0.3, "how": "pop"} },
+    { "id": "sci", "type": "actor", "cast": "sci", "at": [620, 890], "scale": 1.3, "do": [[0, "pose", {"name": "talk"}], [2.4, "pose", {"name": "point"}]], "say": [[0.2, 2.2], [2.6, 3.8]] },
+    { "id": "kid", "type": "actor", "cast": "kid", "at": [1500, 890], "scale": 1.3, "face": -1, "do": [[0, "pose", {"name": "think"}], [2.8, "pose", {"name": "celebrate"}], [2.8, "face", {"eyes": "happy", "mouth": "grin"}]] },
+    { "id": "tag", "type": "tag", "str": "Germ test", "at": [1060, 300], "color": "@teal", "enter": {"t": 1.4, "how": "pop"} }
+  ],
+  "fx": [{ "t": 2.9, "kind": "confetti", "at": [1500, 420], "dur": 1.4 }] } },
+{ "n": 7, "start": 26.2, "duration": 3.8, "narration": "So next time the meadow lights up, you will know: it is chemistry, glowing in the dark.", "spec": {
+  "set": "meadow", "camera": [[0, {"x": 960, "y": 560, "zoom": 1.12}], [3.8, {"x": 960, "y": 520, "zoom": 1.0}, "ioS"]],
+  "items": [
+    { "id": "sci", "type": "actor", "cast": "sci", "at": [820, 890], "scale": 1.1, "do": [[0, "pose", {"name": "sit"}]] },
+    { "id": "kid", "type": "actor", "cast": "kid", "at": [1060, 890], "scale": 1.1, "do": [[0, "pose", {"name": "sit"}], [1.2, "pose", {"name": "cheer"}], [1.2, "face", {"eyes": "happy", "mouth": "grin"}]] },
+    { "id": "f1", "type": "prop", "prop": "spark", "at": [420, 600], "scale": 1.2, "depth": 0.8, "anim": {"dy": [[0, 0], [3.8, -40, "ioS"]]} },
+    { "id": "f2", "type": "prop", "prop": "spark", "at": [1400, 560], "depth": 0.7, "anim": {"dy": [[0, 0], [3.8, -30, "ioS"]]} },
+    { "id": "f3", "type": "prop", "prop": "spark", "at": [1600, 760], "scale": 1.4, "depth": 1.0, "enter": {"t": 0.6, "how": "pop"} },
+    { "id": "f4", "type": "prop", "prop": "spark", "at": [960, 520], "scale": 0.9, "depth": 0.6, "enter": {"t": 1.0, "how": "pop"} },
+    { "id": "f5", "type": "prop", "prop": "spark", "at": [260, 820], "scale": 1.5, "depth": 1.0, "enter": {"t": 1.4, "how": "pop"} },
+    { "id": "end", "type": "text", "str": "Stay curious", "at": [960, 300], "size": 96, "glow": 24, "enter": {"t": 1.6, "how": "type", "dur": 0.8} }
+  ] } }
+]

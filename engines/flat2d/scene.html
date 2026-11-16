@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;overflow:hidden;background:#000}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script src="engine.js"></script>
+<script src="shapes.js"></script>
+<script src="rig.js"></script>
+<script src="ui.js"></script>
+<!-- look extras (looks/<kit>.js) and per-video custom code; build-package always writes both (stubs if unused),
+     so no request ever 404s (a failed load is a console error, which the renderer treats as a template error) -->
+<script src="look.js"></script>
+<script src="custom.js"></script>
+<script>
+(function () {
+  const S = window.__scene, L = S.tokens;
+  const fonts = (L.fontFiles || []).map(f => { const ff = new FontFace(f.family, `url(${f.file})`, { weight: String(f.weight || '400') }); document.fonts.add(ff); return ff.load(); });
+  const imgs = FLAT2D.init(document.getElementById('c'), S);
+  window.__ready = Promise.all([Promise.all(fonts), imgs, document.fonts.ready]);
+  window.__seek = t => FLAT2D.seek(t);
+})();
+</script>
+</body></html>

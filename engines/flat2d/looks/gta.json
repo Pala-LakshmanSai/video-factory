@@ -1,0 +1,37 @@
+{
+  "name": "gta",
+  "notes": "From the approved GTA part-1 look: navy diagram boards with a coral accent, black stick figures with white faces and a warm rim light, bold spaced Montserrat labels, 60 px letterbox. Default outfit = orange jacket, grey trousers, white sneakers (colours only, no named character).",
+  "palette": {
+    "bg": "#29355a", "fg": "#ffffff", "accent": "#e8574e", "muted": "#8a93a3",
+    "ink": "#16161a", "white": "#ffffff", "navy": "#29355a", "navyEdge": "#222b49", "navyMid": "#2f3d63", "pill": "#2b3656",
+    "coral": "#e8574e", "coralSoft": "#f08a80", "pink": "#f4a9b8", "gold": "#f5c26b", "ice": "#bfe4f5", "iceDeep": "#7cc3e6",
+    "jacket": "#ef8a33", "jacketDark": "#c96a1f", "trousers": "#3d4049", "sneaker": "#f4f4f2",
+    "sky": "#8cc8e8", "skyLow": "#f6e6c9", "sea": "#3ec1c9", "sand": "#e9d3a6", "wood": "#a77a52", "wall": "#f3d9b8", "grass": "#7cbf6a",
+    "bar": "#000000", "ground": "#c98f6a"
+  },
+  "fonts": { "display": "Montserrat", "body": "Montserrat", "weightDisplay": 800, "weightBody": 600 },
+  "fontFiles": [{ "family": "Montserrat", "file": "fonts/Montserrat-VF.ttf", "weight": "100 900" }],
+  "safe": { "x": 0.06, "y": 0.1 },
+  "letterbox": 60,
+  "motion": { "in": 0.38, "out": 0.3, "stagger": 0.12, "ease": "cubicOut", "drift": 3 },
+  "pacing": { "wordsPerSecond": 2.6, "minScene": 1.2, "maxScene": 6.0 },
+  "lineWeight": 5,
+  "rig": { "R": 50, "LEG": 172, "TORSO": 132, "TW": 92, "UA": 74, "FA": 70, "TH": 92, "SH": 84, "ARMW": 23, "LEGW": 26, "HAND": 12 },
+  "actor": {
+    "top": { "kind": "jacket", "color": "#ef8a33", "dark": "#c96a1f", "pattern": "none" },
+    "bottom": { "kind": "trousers", "color": "#3d4049" },
+    "shoes": { "color": "#f4f4f2" },
+    "hair": { "style": "none", "color": "#3a2a20" },
+    "hat": { "kind": "none", "color": "#3c4458" },
+    "face": { "eyes": "dot", "mouth": "smile", "brows": "none" },
+    "shadow": 0.18
+  },
+  "rim": { "warm": "#f7cf9f", "cool": "#a9d8f5" },
+  "board": { "mid": "#2f3d63", "body": "#29355a", "edge": "#222b49", "panel": "#28345a", "grid": null },
+  "label": { "spacing": 0.07, "glow": 0, "glowColor": "rgba(8,10,28,.85)" },
+  "text": { "glow": 0 },
+  "card": { "portrait": ["#f6b8a8", "#e58aa6", "#8f6bbf"] },
+  "chart": { "colors": ["#e8574e", "#7cc3e6", "#f5c26b", "#f4a9b8", "#ffffff"] },
+  "confetti": ["#e8574e", "#f5c26b", "#7cc3e6", "#ffffff", "#f4a9b8"],
+  "finish": { "vignette": 0.22, "grain": 0.03 }
+}
