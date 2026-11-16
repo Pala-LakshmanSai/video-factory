@@ -122,8 +122,9 @@ describe("watchdog tick", () => {
 		expect((await getJob(env.DB, "j1"))!.cost_usd).toBeGreaterThan(0);
 	});
 
-	it("6: heartbeat loss on a verifying job whose upload is recorded -> no delete, no re-render", async () => {
+	it("6: heartbeat loss on a verifying job whose upload was just recorded -> no delete, no re-render", async () => {
 		await job("j1", "verifying", { plan_json: "{}", drive_file_id: "f1" });
+		await verifyingSince(30_000);
 		await pod("p1", "j1", 10 * MIN, silent());
 		const calls = mockFetch();
 		await watchdog(env, env.DB);
@@ -210,6 +211,71 @@ describe("watchdog tick", () => {
 		await watchdog(env, env.DB);
 		expect(await state("j1")).toBe("done");
 		expect(calls.some((c) => c.method === "POST" && c.url.includes("runpod"))).toBe(false);
+	});
+
+	it("2: verifying event missing -> grace counts from the pod's last heartbeat, not updated_at (refreshed by cost writes)", async () => {
+		await job("j1", "verifying", upload);
+		await pod("p1", "j1", 20 * MIN, { hello: Date.now() - 19 * MIN, hb: Date.now() - 3 * MIN, deleted: Date.now() - 30_000 });
+		mockFetch(...drive(() => json({ size: "100", md5Checksum: "abc", webViewLink: "https://drive.test/f1" })), ...create);
+		await watchdog(env, env.DB);
+		expect(await state("j1")).toBe("done");
+	});
+
+	it("2: the per-tick cost write does not bump updated_at", async () => {
+		await job("j1", "rendering", { plan_json: "{}" });
+		await env.DB.prepare("UPDATE jobs SET updated_at = 1 WHERE id = 'j1'").run();
+		await pod("p1", "j1", 10 * MIN, { hello: Date.now() - 9 * MIN, hb: Date.now() });
+		mockFetch();
+		await watchdog(env, env.DB);
+		const j = (await getJob(env.DB, "j1"))!;
+		expect(j.cost_usd).toBeGreaterThan(0);
+		expect(j.updated_at).toBe(1);
+	});
+});
+
+describe("recovery publishes its constraints atomically", () => {
+	const twoDcs = catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" }, "EU-RO-1": { [RTX4090]: "HIGH" } });
+
+	it("1: boot timeout -> the first admission to see retrying already sees the failed DC in skip_dcs", async () => {
+		await job("j1", "booting");
+		await pod("p1", "j1", 30 * MIN);
+		await env.DB.prepare("UPDATE pods SET data_center_id = 'AP-IN-1' WHERE id = 'p1'").run();
+		// Snapshot the row right after the first statement that makes 'retrying' visible: that is the earliest moment an
+		// overlapping tick's admission could read it.
+		let seen: { state: string; skip: string } | null = null;
+		const raw = env.DB.prepare.bind(env.DB);
+		(env.DB as { prepare: unknown }).prepare = (sql: string) => {
+			const wrap = (st: D1PreparedStatement): D1PreparedStatement =>
+				Object.assign(Object.create(st), {
+					bind: (...a: unknown[]) => wrap(st.bind(...a)),
+					run: async () => {
+						const r = await st.run();
+						const j = (await raw("SELECT state, skip_dcs FROM jobs WHERE id = 'j1'").first()) as { state: string; skip_dcs: string };
+						if (!seen && j.state === "retrying") seen = { state: j.state, skip: j.skip_dcs };
+						return r;
+					},
+				});
+			return wrap(raw(sql));
+		};
+		const calls = mockFetch(del, (u) => (u.includes("/v2/catalog/datacenters") ? json(twoDcs) : undefined), create[1]);
+		await watchdog(env, env.DB);
+		expect(seen).toEqual({ state: "retrying", skip: '["AP-IN-1"]' });
+		const post = calls.find((c) => c.method === "POST")!.body as { dataCenterIds: string[] };
+		expect(post.dataCenterIds).toEqual(["EU-RO-1"]);
+	});
+
+	it("1: a lost pod at the cap goes straight to failed (never published as retrying), so no admission can rent", async () => {
+		await job("j1", "rendering", { plan_json: "{}", attempts: 2 });
+		await pod("p1", "j1", 10 * MIN, silent());
+		const calls = mockFetch(del, ...create);
+		await watchdog(env, env.DB);
+		const j = (await getJob(env.DB, "j1"))!;
+		expect(j.state).toBe("failed");
+		expect(j.attempts).toBe(3);
+		expect(JSON.parse(j.error_json!).code).toBe("pod_replacements");
+		const states = (await env.DB.prepare("SELECT data_json FROM events WHERE kind = 'state'").all<{ data_json: string }>()).results.map((e) => JSON.parse(e.data_json).to);
+		expect(states).not.toContain("retrying");
+		expect(calls.some((c) => c.method === "POST")).toBe(false);
 	});
 });
 

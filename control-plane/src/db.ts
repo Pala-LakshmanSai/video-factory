@@ -113,7 +113,15 @@ export async function markPodDeleted(db: D1Database, podId: string, reason: stri
 		.bind(now(), reason, podId)
 		.run();
 	const pod = await db.prepare("SELECT job_id FROM pods WHERE id = ?").bind(podId).first<{ job_id: string }>();
-	if (pod) await updateJob(db, pod.job_id, await jobCost(db, pod.job_id));
+	if (pod) await writeCost(db, pod.job_id, await jobCost(db, pod.job_id));
+}
+
+/**
+ * Store a cost snapshot WITHOUT bumping updated_at: cost is rewritten every watchdog tick, so updated_at keeps meaning
+ * "last real change" (reconcileCosts' 24 h window keys on it).
+ */
+export async function writeCost(db: D1Database, jobId: string, c: { cost_usd: number; gpu_seconds: number }) {
+	await db.prepare("UPDATE jobs SET cost_usd = ?, gpu_seconds = ? WHERE id = ?").bind(c.cost_usd, c.gpu_seconds, jobId).run();
 }
 
 /** Recompute the cost of jobs that ended in the last 24 h with every pod confirmed gone; write only what differs. */
@@ -126,7 +134,7 @@ export async function reconcileCosts(db: D1Database) {
 	).results;
 	for (const j of jobs) {
 		const c = await jobCost(db, j.id);
-		if (c.cost_usd !== j.cost_usd || c.gpu_seconds !== j.gpu_seconds) await updateJob(db, j.id, c);
+		if (c.cost_usd !== j.cost_usd || c.gpu_seconds !== j.gpu_seconds) await writeCost(db, j.id, c);
 	}
 }
 

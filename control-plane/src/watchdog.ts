@@ -1,6 +1,6 @@
 // Every-minute cron (Prompt 4a): queue, boot timeout, heartbeat loss, stranded jobs, budget, dev pods.
 import { CONSTANTS, MAX_COST_PER_JOB_USD, MAX_PODS_AT_ONCE, MAX_REPLACEMENTS } from "./config";
-import { getJob, jobCost, logEvent, markPodDeleted, now, updateJob, type JobRow, type PodRow } from "./db";
+import { getJob, jobCost, logEvent, markPodDeleted, now, writeCost, type JobRow, type PodRow } from "./db";
 import { alert } from "./alerts";
 import { busySlots } from "./mcp";
 import { deletePod, podAbsent } from "./runpod";
@@ -93,7 +93,7 @@ export async function watchdog(env: Env, db: D1Database) {
 	const active = (await db.prepare("SELECT * FROM jobs WHERE state NOT IN ('done','failed','cancelled','queued')").all<JobRow>()).results;
 	await each(active, "budget", async (job) => {
 		const c = await jobCost(db, job.id);
-		await updateJob(db, job.id, c);
+		await writeCost(db, job.id, c);
 		if (c.cost_usd > MAX_COST_PER_JOB_USD) await failJob(env, db, job, "budget", `$${c.cost_usd} > $${MAX_COST_PER_JOB_USD}`);
 	});
 
@@ -141,14 +141,15 @@ async function replacePod(env: Env, db: D1Database, job: JobRow, pod: PodRow, re
 }
 
 /**
- * The job's pod is confirmed gone: send it to retrying and select again. The move to retrying is ONE conditional
- * UPDATE fenced on: same state, no undeleted pod, no create claim. So a stale caller (an overlapping tick that saw
- * the old pod after another tick already got a replacement accepted) changes nothing. Only the winner bumps the
- * counters. A lost pod (heartbeat_lost, pod_missing) counts toward MAX_REPLACEMENTS.
+ * The job's pod is confirmed gone: send it to retrying and select again. ONE conditional UPDATE, fenced on the row
+ * as read (state, drive_file_id, attempts, skip_dcs) + no undeleted pod + no create claim, publishes the state AND
+ * every recovery constraint together: the failed data center appended to skip_dcs (boot timeout), attempts + 1 (a
+ * lost pod), admission_at = now, and, when attempts would exceed MAX_REPLACEMENTS, state 'failed' instead of
+ * 'retrying'. So no overlapping admission can see 'retrying' without the constraints, and a stale caller (another
+ * tick already got a replacement accepted) changes nothing.
  */
 async function recover(env: Env, db: D1Database, jobId: string, reason: "boot_timeout" | "heartbeat_lost" | "pod_missing", pod?: PodRow) {
 	const lost = reason === "boot_timeout" ? 0 : 1;
-	let job: JobRow | null = null;
 	for (let i = 0; i < 20; i++) {
 		const cur = await getJob(db, jobId);
 		if (!cur || !canTransition(cur.state, "retrying")) return; // terminal, or already retrying/provisioning
@@ -161,43 +162,50 @@ async function recover(env: Env, db: D1Database, jobId: string, reason: "boot_ti
 			await cancelJob(db, jobId, { reason });
 			return;
 		}
+		const skip = JSON.parse(cur.skip_dcs) as string[];
+		if (!lost && pod?.data_center_id && !skip.includes(pod.data_center_id)) skip.push(pod.data_center_id);
+		const attempts = cur.attempts + lost;
+		const fail = attempts > MAX_REPLACEMENTS;
+		const to = fail ? "failed" : "retrying";
+		const error = fail ? JSON.stringify({ code: "pod_replacements", message: `${attempts} pods lost` }) : cur.error_json;
 		const r = await db
 			.prepare(
-				`UPDATE jobs SET state = 'retrying', attempts = attempts + ?, updated_at = ? WHERE id = ? AND state = ? AND drive_file_id IS ? AND create_claim IS NULL
+				`UPDATE jobs SET state = ?, attempts = ?, skip_dcs = ?, admission_at = ?, error_json = ?, updated_at = ?
+				 WHERE id = ? AND state = ? AND drive_file_id IS ? AND attempts = ? AND skip_dcs = ? AND create_claim IS NULL
 				 AND NOT EXISTS (SELECT 1 FROM pods WHERE job_id = ? AND deleted_at IS NULL)`,
 			)
-			.bind(lost, now(), jobId, cur.state, cur.drive_file_id, jobId)
+			.bind(to, attempts, JSON.stringify(skip), now(), error, now(), jobId, cur.state, cur.drive_file_id, cur.attempts, cur.skip_dcs, jobId)
 			.run();
-		if (r.meta.changes) {
-			await logEvent(db, jobId, "state", { from: cur.state, to: "retrying", reason });
-			job = { ...cur, state: "retrying", attempts: cur.attempts + lost };
-			break;
+		if (!r.meta.changes) {
+			const again = await getJob(db, jobId);
+			const same = again && again.state === cur.state && again.drive_file_id === cur.drive_file_id && again.attempts === cur.attempts && again.skip_dcs === cur.skip_dcs;
+			if (same) return; // fenced: a pod or a create claim exists -> nothing to recover
+			continue;
 		}
-		const again = await getJob(db, jobId);
-		if (again?.state === cur.state && again.drive_file_id === cur.drive_file_id) return; // fenced: a pod or a create claim exists -> nothing to recover
-	}
-	if (!job) return;
-	if (lost) {
-		// Phase 9: silence one pod. The replacement must neither inherit the fault nor receive its stale command.
-		const silence = await hasFault(db, job.id, "silence_heartbeat", true);
-		if (silence) {
-			await db.prepare("UPDATE jobs SET pending_cmd = NULL WHERE id = ? AND pending_cmd = ?")
-				.bind(job.id, `fault:${silence}`).run();
-		}
-		if (job.attempts > MAX_REPLACEMENTS) {
-			await failJob(env, db, job, "pod_replacements", `${job.attempts} pods lost`);
+		await logEvent(db, jobId, "state", { from: cur.state, to, reason, ...(fail ? { code: "pod_replacements" } : {}) });
+		if (fail) {
+			await writeCost(db, jobId, await jobCost(db, jobId)); // no undeleted pod (fenced): nothing to retire
+			await alert(env, db, `job failed: pod_replacements: ${attempts} pods lost`, jobId);
 			return;
 		}
-		if (job.attempts >= 2) await alert(env, db, `job has needed ${job.attempts} pod replacements`, job.id);
-	} else {
-		// Phase 9 slow_boot fault: one boot timeout proves the path; the replacement pod must boot normally.
-		await hasFault(db, job.id, "slow_boot", true);
-		const skip = JSON.parse(job.skip_dcs) as string[];
-		if (pod?.data_center_id && !skip.includes(pod.data_center_id)) skip.push(pod.data_center_id);
-		await updateJob(db, job.id, { skip_dcs: JSON.stringify(skip) });
+		// Phase 9 faults are consumed by the winner only. silence_heartbeat: the replacement must neither inherit the
+		// fault nor receive its stale command. slow_boot: one boot timeout proves the path.
+		if (lost) {
+			const silence = await hasFault(db, jobId, "silence_heartbeat", true);
+			if (silence) {
+				await db.prepare("UPDATE jobs SET pending_cmd = NULL WHERE id = ? AND pending_cmd = ?").bind(jobId, `fault:${silence}`).run();
+			}
+			if (attempts >= 2) await alert(env, db, `job has needed ${attempts} pod replacements`, jobId);
+		} else {
+			await hasFault(db, jobId, "slow_boot", true);
+		}
+		await selectAndCreate(env, db, jobId);
+		return;
 	}
-	await selectAndCreate(env, db, jobId);
 }
+
+const lastPodActivity = async (db: D1Database, jobId: string) =>
+	(await db.prepare("SELECT MAX(COALESCE(last_heartbeat_at, hello_at, created_at)) AS ts FROM pods WHERE job_id = ?").bind(jobId).first<{ ts: number | null }>())?.ts ?? null;
 
 const hasLivePod = async (db: D1Database, jobId: string) =>
 	!!(await db.prepare("SELECT 1 FROM pods WHERE job_id = ? AND deleted_at IS NULL").bind(jobId).first());
@@ -217,7 +225,9 @@ async function resumeVerify(env: Env, db: D1Database, job: JobRow, t: number): P
 		.prepare("SELECT MAX(ts) AS ts FROM events WHERE job_id = ? AND kind = 'state' AND data_json LIKE '%\"to\":\"verifying\"%'")
 		.bind(job.id)
 		.first<{ ts: number | null }>();
-	const since = ev?.ts ?? job.updated_at;
+	// No state event (claim committed, event insert lost): fall back to the pod's last sign of life, which cost
+	// writes never touch (updated_at would be refreshed every tick and hold the job forever).
+	const since = ev?.ts ?? (await lastPodActivity(db, job.id)) ?? 0;
 	if (t - since < DONE_IN_FLIGHT_MS) return true;
 	await logEvent(db, job.id, "verify_resume", { file: job.drive_file_id });
 	try {
