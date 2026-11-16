@@ -77,6 +77,17 @@ export async function catalog(env: Env, db: D1Database): Promise<Catalog> {
 	return json;
 }
 
+/** One CPU flavor from GET /v2/catalog/cpus?include=AVAILABILITY&product=POD (live, not cached: one call per selection). */
+export interface CpuType {
+	id: string; name: string; group: string; vcpu: { min: number; max: number };
+	dataCenters?: { id: string; availability: "NONE" | "LOW" | "MEDIUM" | "HIGH" }[];
+}
+export async function cpuCatalog(env: Env): Promise<CpuType[]> {
+	const res = await rp(env, `${V2}/catalog/cpus?include=AVAILABILITY&product=POD`);
+	if (!res.ok) throw new RunPodError(res.status, await res.text());
+	return ((await res.json()) as { cpus: CpuType[] }).cpus ?? [];
+}
+
 export interface CreatedPod {
 	id: string;
 	costPerHr: number;

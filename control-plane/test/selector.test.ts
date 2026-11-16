@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GPU_RANK, REGION_TIERS } from "../src/config";
 import { getJob } from "../src/db";
 import { deletePod, deps, listPods } from "../src/runpod";
-import { UNCERTAIN_GIVE_UP_MS, planAttempts, selectAndCreate } from "../src/selector";
+import { UNCERTAIN_GIVE_UP_MS, cpuAttempts, planAttempts, selectAndCreate } from "../src/selector";
 import { GPU_FIRST, L40S, RTX4090, catalogOf, gpuFirst, json, makeEnv, mockFetch, v2list, v2pod } from "./helpers";
 
 deps.sleep = async () => {};
@@ -29,6 +29,21 @@ describe("planAttempts: §8 ordering", () => {
 		expect(planAttempts(cat, GPU_RANK, []).map((x) => `${x.computeTier} ${x.dataCenterIds.join(",")}`)).toEqual([
 			"CPU AP-IN-1", "CPU EU-RO-1", "GPU/SECURE AP-IN-1", "GPU/SECURE EU-RO-1", "GPU/COMMUNITY AP-IN-1", "GPU/COMMUNITY EU-RO-1",
 		]);
+	});
+
+	it("CPU attempts: best flavor at its largest size first, halving to 16; no catalog -> cpu5c/cpu3c at 16", () => {
+		const cpus = [
+			{ id: "cpu3c-2-4", name: "Compute-Optimized", group: "Gen 3", vcpu: { min: 2, max: 32 }, dataCenters: [{ id: "EU-RO-1", availability: "HIGH" as const }] },
+			{ id: "cpu5c-2-4", name: "Compute-Optimized", group: "Gen 5", vcpu: { min: 2, max: 64 }, dataCenters: [{ id: "EU-RO-1", availability: "LOW" as const }] },
+			{ id: "cpu3g-2-8", name: "General Purpose", group: "Gen 3", vcpu: { min: 2, max: 128 }, dataCenters: [{ id: "EU-RO-1", availability: "NONE" as const }] },
+		];
+		expect(cpuAttempts(cpus, ["EU-RO-1"])).toEqual([
+			{ cpuFlavorIds: ["cpu5c"], vcpuCount: 64 },
+			{ cpuFlavorIds: ["cpu5c", "cpu3c"], vcpuCount: 32 },
+			{ cpuFlavorIds: ["cpu5c", "cpu3c"], vcpuCount: 16 },
+		]);
+		expect(cpuAttempts(cpus, ["US-TX-3"])).toEqual([]);
+		expect(cpuAttempts(null, ["EU-RO-1"])).toEqual([{ cpuFlavorIds: ["cpu5c", "cpu3c"], vcpuCount: 16 }]);
 	});
 
 	it("all GPUs NONE everywhere -> only CPU attempts", () => {
@@ -335,5 +350,25 @@ describe("deletePod / listPods", () => {
 			(u) => (u === "https://rest.runpod.io/v1/pods" ? json([{ id: "9", name: "vf-old" }]) : undefined),
 		);
 		expect(await listPods(env)).toEqual([{ id: "9", name: "vf-old" }]);
+	});
+});
+
+describe("CPU first, no hourly cap on CPU pods", () => {
+	it("a $3/hr CPU pod is accepted; the first POST is a CPU pod", async () => {
+		const env = makeEnv();
+		deps.v1Denied = false;
+		await env.DB.prepare("INSERT INTO jobs (id, chat_key, state, title, style, voiceover_json, created_at, updated_at) VALUES ('j1','k','provisioning','t','explainer','{\"text\":\"hi\"}',0,0)").run();
+		const bodies: Record<string, unknown>[] = [];
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(catalogOf({ "EU-RO-1": { [RTX4090]: "HIGH" } })) : undefined),
+			(u) => (u.includes("/v2/catalog/cpus") ? json({ cpus: [{ id: "cpu5c-2-4", name: "Compute-Optimized", group: "Gen 5", vcpu: { min: 2, max: 32 }, dataCenters: [{ id: "EU-RO-1", availability: "HIGH" }] }] }) : undefined),
+			(u, i) => {
+				if (!(u.endsWith("/v1/pods") && i.method === "POST")) return undefined;
+				bodies.push(JSON.parse(String(i.body)));
+				return json({ id: "p1", costPerHr: 3.0, machine: { gpuTypeId: null, dataCenterId: "EU-RO-1" } }, 201);
+			},
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
+		expect(bodies[0]).toMatchObject({ computeType: "CPU", cpuFlavorIds: ["cpu5c"], vcpuCount: 32 });
 	});
 });

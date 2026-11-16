@@ -218,6 +218,7 @@ describe("safety review 3", () => {
 		for (const arg of ["abc", "5"]) {
 			env = makeEnv();
 			await job("j1");
+			await gpuFirst(env.DB); // the hourly cap applies to GPU pods only
 			await env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('faults:j1', ?)").bind(JSON.stringify([`price_cap:${arg}`])).run();
 			let n = 0;
 			mockFetch(

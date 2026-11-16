@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getJob } from "../src/db";
 import { deps } from "../src/runpod";
 import { selectAndCreate } from "../src/selector";
-import { RTX4090, catalogOf, json, makeEnv, mockFetch, v2list } from "./helpers";
+import { RTX4090, catalogOf, gpuFirst, json, makeEnv, mockFetch, v2list } from "./helpers";
 
 deps.sleep = async () => {};
 const cat = catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" }, "EU-RO-1": { [RTX4090]: "HIGH" } });
@@ -104,6 +104,7 @@ describe("create claim vs an accepted pod", () => {
 describe("price check survives a crash between pod INSERT and acceptance", () => {
 	for (const [label, price, reason] of [["unpriced", null, "cost_invalid"], ["over-cap", 2.4, "cost_reject"]] as const) {
 		it(`${label} pod: INSERT + claim release in one batch; crash after it holds admission until the pod is confirmed gone`, async () => {
+			await gpuFirst(raw); // the hourly cap applies to GPU pods only
 			const rp = runpod(price, 0.6);
 			const dying = hooked(raw, { afterBatch: async () => { throw new Error("worker died"); } });
 			await expect(selectAndCreate(env, dying, "j1")).rejects.toThrow("worker died");

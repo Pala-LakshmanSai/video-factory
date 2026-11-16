@@ -149,9 +149,9 @@ export interface CreatePodBody {
   dataCenterPriority: "custom";
   gpuCount?: 1;
   minVCPUPerGPU?: 8;
-  cpuFlavorIds?: ["cpu5c", "cpu3c"];          // §6.2b CPU fallback
+  cpuFlavorIds?: string[];                    // §6.2b CPU flavors, best first (live CPU catalog)
   cpuFlavorPriority?: "custom";
-  vcpuCount?: 16;
+  vcpuCount?: number;                         // largest size the flavors offer first, then smaller
   containerDiskInGb: 30;
   volumeInGb: 0;
   ports: [];                                  // Extension

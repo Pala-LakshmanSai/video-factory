@@ -6,7 +6,7 @@ import {
 	COMPUTE_TIERS, CONSTANTS, CPU_FLAVORS, DEV_DUMMY_IMAGE, EXCLUDED_GPUS, GPU_RANK, MAX_REPLACEMENTS, REGION_TIERS, getConfig, norm,
 } from "./config";
 import { activePod, getJob, jobCost, logEvent, markDeletePending, markPodDeleted, now, randomId, sha256Hex, updateJob, type JobRow } from "./db";
-import { catalog, createPod, deletePod, lookupPodByName, type CreatedPod } from "./runpod";
+import { catalog, cpuCatalog, createPod, deletePod, lookupPodByName, type CpuType, type CreatedPod } from "./runpod";
 import { faultArg, hasFault } from "./faults";
 import { IllegalTransition, isTerminal, transition } from "./state";
 
@@ -18,11 +18,38 @@ export interface Attempt {
 	computeTier: (typeof COMPUTE_TIERS)[number];
 	dataCenterIds: string[];
 	gpuTypeIds: string[]; // exact catalog ids, rank order (empty for CPU)
+	cpuFlavorIds?: string[]; // CPU: flavors best first (default CPU_FLAVORS)
+	vcpuCount?: number; // CPU: requested size (default 16)
+}
+
+/** Flavor family id ("cpu5c-2-4" -> "cpu5c"): what pod create takes as cpu.id. */
+const flavorOf = (id: string) => id.split("-")[0];
+/** Best CPU first: newest generation, then compute-optimized, then general purpose, then the rest. */
+const cpuScore = (c: CpuType) => (Number(/\d+/.exec(c.group)?.[0] ?? 0) * 10) + (/compute/i.test(c.name) ? 2 : /general/i.test(c.name) ? 1 : 0);
+
+/**
+ * CPU attempts for one region tier from the live CPU catalog (owner 2026-11-16: best possible CPUs, no hourly price
+ * cap): the largest power-of-two size any available flavor offers first, halving down to 16, each size naming every
+ * available flavor that offers it, best first. No catalog -> the old fixed request (cpu5c, cpu3c at 16 vCPU).
+ */
+export function cpuAttempts(cpus: CpuType[] | null, dcs: string[]): Pick<Attempt, "cpuFlavorIds" | "vcpuCount">[] {
+	if (!cpus) return [{ cpuFlavorIds: [...CPU_FLAVORS], vcpuCount: 16 }];
+	const avail = cpus
+		.filter((c) => c.dataCenters?.some((d) => dcs.includes(d.id) && d.availability !== "NONE"))
+		.sort((a, b) => cpuScore(b) - cpuScore(a));
+	const out: Pick<Attempt, "cpuFlavorIds" | "vcpuCount">[] = [];
+	const top = Math.max(0, ...avail.map((c) => c.vcpu.max));
+	for (let size = 2 ** Math.floor(Math.log2(Math.max(top, 1))); size >= 16; size /= 2) {
+		const ids = [...new Set(avail.filter((c) => c.vcpu.min <= size && c.vcpu.max >= size).map((c) => flavorOf(c.id)))];
+		if (ids.length) out.push({ cpuFlavorIds: ids, vcpuCount: size });
+	}
+	return out;
 }
 
 /** Pure §8 ordering, unit-tested with a fake catalog. */
 export function planAttempts(
 	cat: Catalog, rank: string[], skipDcs: string[], regionTiers = REGION_TIERS, tiers: readonly Attempt["computeTier"][] = COMPUTE_TIERS,
+	cpus: CpuType[] | null = null,
 ): Attempt[] {
 	const out: Attempt[] = [];
 	for (const computeTier of tiers) {
@@ -30,7 +57,8 @@ export function planAttempts(
 			const dcs = cat.dataCenters.filter((dc) => tier.some((p) => matches(p, dc.id)) && !skipDcs.includes(dc.id));
 			if (!dcs.length) continue;
 			if (computeTier === "CPU") {
-				out.push({ computeTier, dataCenterIds: dcs.map((d) => d.id), gpuTypeIds: [] });
+				const ids = dcs.map((d) => d.id);
+				for (const c of cpuAttempts(cpus, ids)) out.push({ computeTier, dataCenterIds: ids, gpuTypeIds: [], ...c });
 				continue;
 			}
 			const gpus: string[] = [];
@@ -69,7 +97,7 @@ export function podBody(env: Env, job: JobRow, a: Attempt, token: string): Creat
 		...(dummy ? { dockerStartCmd: ["sleep", "600"] } : {}),
 	};
 	if (a.computeTier === "CPU") {
-		return { ...base, computeType: "CPU", cpuFlavorIds: [...CPU_FLAVORS] as ["cpu5c", "cpu3c"], cpuFlavorPriority: "custom", vcpuCount: 16 };
+		return { ...base, computeType: "CPU", cpuFlavorIds: a.cpuFlavorIds ?? [...CPU_FLAVORS], cpuFlavorPriority: "custom", vcpuCount: a.vcpuCount ?? 16 };
 	}
 	return {
 		...base,
@@ -183,6 +211,8 @@ export async function selectAndCreate(
 		return "skipped"; // the watchdog retries from admission_at; nothing was claimed or created
 	}
 	const blocked = faultArg(await hasFault(db, job.id, "block_region"));
+	// Live CPU flavors (best effort): unreachable -> the fixed cpu5c/cpu3c 16 vCPU request.
+	const cpus = tiers.includes("CPU") && !opts.gpuOnly ? await cpuCatalog(env).catch(() => null) : null;
 
 	const first = await takeClaim(db, job.id);
 	if (!first) return "held";
@@ -201,7 +231,7 @@ export async function selectAndCreate(
 		await failJob(env, db, job, "pod_replacements", `${job.attempts} pods lost`);
 		return "no_capacity";
 	}
-	const attempts = planAttempts(cat, rank, [...JSON.parse(job.skip_dcs), ...(blocked ? [blocked] : [])], REGION_TIERS, tiers).filter(
+	const attempts = planAttempts(cat, rank, [...JSON.parse(job.skip_dcs), ...(blocked ? [blocked] : [])], REGION_TIERS, tiers, cpus).filter(
 		(a) => !opts.gpuOnly || a.computeTier !== "CPU",
 	);
 
@@ -225,7 +255,7 @@ export async function selectAndCreate(
 			return "held";
 		}
 		if (!res.ok) {
-			await logEvent(db, job.id, "create_failed", { tier: a.computeTier, dcs: a.dataCenterIds, status: res.status, detail: res.body });
+			await logEvent(db, job.id, "create_failed", { tier: a.computeTier, dcs: a.dataCenterIds, ...(a.vcpuCount ? { cpu: a.cpuFlavorIds, vcpu: a.vcpuCount } : {}), status: res.status, detail: res.body });
 			continue;
 		}
 		known.push(res.pod.id);
@@ -259,7 +289,9 @@ async function accept(env: Env, db: D1Database, job: JobRow, pod: CreatedPod, a:
 	const t = now();
 	const compute = a ? (a.computeTier === "CPU" ? "CPU" : "GPU") : pod.gpuTypeId ? "GPU" : null;
 	const costOk = Number.isFinite(pod.costPerHr) && pod.costPerHr >= 0;
-	const reject = !costOk || pod.costPerHr > cap ? (costOk ? "cost_reject" : "cost_invalid") : null;
+	// CPU pods have no hourly price cap (owner 2026-11-16: best possible CPUs); the per-job budget still applies.
+	const hourlyCap = compute === "CPU" || (!a && !pod.gpuTypeId) ? Infinity : cap;
+	const reject = !costOk || pod.costPerHr > hourlyCap ? (costOk ? "cost_reject" : "cost_invalid") : null;
 	// A rejected pod is recorded already delete-pending (same statement): its row never looks like an active,
 	// valid-priced pod, so a crash before the DELETE leaves it to the pending-delete retry, never to repair/boot.
 	// Its create is resolved, so claim c is released in the SAME batch: no crash can leave a stale claim behind
