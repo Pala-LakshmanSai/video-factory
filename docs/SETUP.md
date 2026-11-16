@@ -153,6 +153,13 @@ zero open jobs, zero live pods, zero armed faults. Renderer pin at B7: `sha256:2
   verified, auto `done` 04:28:49 UTC; RunPod Audit Log created 04:24:39, deleted 04:28:50 UTC; $0.0619. No
   `heartbeat tick late` lines. Fallback is now proven on two GeForce hosts. TTS took 2 min 6 s on this 64-vCPU host
   (hello 04:25:28, `voiceover 35.51 s` 04:27:34) with heartbeats intact.
+- **B10 — slim image + GeForce 4-worker NVENC qualified (2026-11-16).** Image `sha256:b48d0590…7d87` (421382a,
+  CI 43806769904: pushed amd64 config == smoke-tested image id; 922 MB compressed vs 3,264 MB). Job
+  `j_ea4fe49422244635`, RTX 4090 pod `e4qxyzcmryakr7` (EU-RO-1): boot 18.4 s (hello 05:03:38 UTC), narration ready
+  05:03:52 (child-process TTS), `final encode ok: encoder=h264_nvenc segments=4 workers=4 frames=1045`, no fallback
+  or late-tick lines; 3,943,370 bytes, md5 `45910ae9…`, auto `done`, pod deleted `done`; RunPod Audit Log created
+  05:03:18, deleted 05:05:03 UTC; 105 GPU-s, $0.0259. The 4-worker NVENC path is qualified on this host/image;
+  hosts whose NVENC probe fails keep the automatic libx264 fallback (B8/B9).
 - **Why GeForce NVENC fails — suspected, unverified:** the symptoms match a known NVIDIA driver bug on
   multi-GPU hosts with drivers ≥ 570 (reported through 610.x): a container given a subset of GPUs can open NVENC
   only on the host's "primary" GPU; others get `unsupported device (2)` / `No capable devices found`
