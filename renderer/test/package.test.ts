@@ -1,11 +1,12 @@
 // Per-job style package: extraction + validation, and a real-engine preview from an extracted package.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { createHash } from "node:crypto";
 import { PACKAGE_MAX_ENTRIES, extractPackage, fetchPackage, scanArchive } from "../agent/package.ts";
 import { renderPreviews } from "../engine/render.ts";
 import { run } from "../engine/ffmpeg.ts";
@@ -58,12 +59,13 @@ test("oversize package is rejected", async () => {
 
 test("missing tokens.json is rejected; bad id rejected before fetch", async () => {
 	await assert.rejects(extractPackage(pack((d) => writeFileSync(join(d, "title.html"), TITLE)), join(tmp(), "pkg")), /tokens\.json missing/);
-	await assert.rejects(fetchPackage("pk_nope", tmp(), () => { throw new Error("fetched"); }), /invalid style package id/);
+	await assert.rejects(fetchPackage("pk_nope", undefined, tmp(), () => { throw new Error("fetched"); }), /invalid style package id/);
 });
 
 test("fetchPackage + renderPreviews with style custom draws the box", { timeout: 120_000 }, async () => {
 	const bytes = execFileSync("cat", [pack(good)]);
-	const stylesDir = await fetchPackage("pk_" + "a".repeat(24), tmp(), async () => new Response(new Uint8Array(bytes)));
+	const sha = createHash("sha256").update(bytes).digest("hex");
+	const stylesDir = await fetchPackage("pk_" + sha.slice(0, 24), sha, tmp(), async () => new Response(new Uint8Array(bytes)));
 	const plan = { style: "custom", fps: 30, resolution: "640x360", scenes: [{ n: 1, template: "title", props: {}, duration_s: 3, narration: "hi", transition: "cut" }] };
 	const frames = await renderPreviews({ plan, stylesDir, workDir: tmp(), audioPath: "", audioSeconds: 3 }, [1]);
 	const jpg = join(tmp(), "f.jpg");
@@ -118,4 +120,16 @@ test("too many entries and pax/link records are rejected before extraction", () 
 test("gzip bomb is cut off by the bounded inflate", () => {
 	const bomb = gzipSync(Buffer.alloc(32 * 1024 * 1024));
 	assert.throws(() => scanArchive(bomb, 1024 * 1024), /within the size limit/);
+});
+
+test("fetchPackage rejects bytes that do not match the sha256 or the id, before writing anything", async () => {
+	const bytes = execFileSync("cat", [pack(good)]);
+	const sha = createHash("sha256").update(bytes).digest("hex");
+	const id = "pk_" + sha.slice(0, 24);
+	const body = async () => new Response(new Uint8Array(bytes));
+	for (const [i, s] of [[id, "0".repeat(64)], ["pk_" + "b".repeat(24), sha], ["pk_" + "b".repeat(24), undefined]] as const) {
+		const work = join(tmp(), "w");
+		await assert.rejects(fetchPackage(i, s, work, body), /content hash mismatch/);
+		assert.ok(!existsSync(work) || readdirSync(work).length === 0, "nothing written");
+	}
 });

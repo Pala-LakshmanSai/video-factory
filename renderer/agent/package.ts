@@ -1,4 +1,5 @@
 // Per-job custom style package: GET /input/package (.tar.gz) -> WORK/pkg/custom/, rendered with stylesDir = WORK/pkg.
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
@@ -66,12 +67,16 @@ export async function extractPackage(archive: string, root: string, maxBytes = P
 }
 
 /** Download the package for `id` to `${work}/pkg.tar.gz` and extract it to `${work}/pkg`. Returns the stylesDir. */
-export async function fetchPackage(id: string, work: string, get: () => Promise<Response>): Promise<string> {
+export async function fetchPackage(id: string, sha256: string | undefined, work: string, get: () => Promise<Response>): Promise<string> {
 	if (!PACKAGE_ID.test(id)) throw new Error(`invalid style package id "${id}"`);
 	const res = await get();
 	if (!res.ok) throw new Error(`GET /input/package ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`);
+	const bytes = new Uint8Array(await res.arrayBuffer());
+	// Content-addressed: the bytes must be the package the spec named, never another plan's (nothing written otherwise).
+	const got = createHash("sha256").update(bytes).digest("hex");
+	if ((sha256 && got !== sha256.toLowerCase()) || "pk_" + got.slice(0, 24) !== id) throw new Error("style package rejected: content hash mismatch");
 	await mkdir(work, { recursive: true });
 	const archive = join(work, "pkg.tar.gz");
-	await writeFile(archive, new Uint8Array(await res.arrayBuffer()));
+	await writeFile(archive, bytes);
 	return extractPackage(archive, join(work, "pkg"));
 }

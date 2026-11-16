@@ -98,6 +98,7 @@ export interface SpecOut {
   fps: number;               // Extension: rest of scene_plan, needed to render
   resolution: string;        // Extension
   package?: string;          // style "custom": fetch GET /agent/{job}/input/package (application/gzip .tar.gz)
+  package_sha256?: string;   // full hex sha256 of that package; the agent verifies the bytes against it and the id
 }
 
 /** POST /heartbeat every 15 s. */

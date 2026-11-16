@@ -184,7 +184,7 @@ async function main() {
 		const id = s.package ?? "";
 		if (pkg?.id !== id) {
 			pkg = null;
-			pkg = { id, dir: await fetchPackage(id, WORK, () => cp.pkg()) };
+			pkg = { id, dir: await fetchPackage(id, s.package_sha256, WORK, () => cp.pkg()) };
 			log(`style package ${id} ready`);
 		}
 		return pkg.dir;

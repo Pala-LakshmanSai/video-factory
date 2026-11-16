@@ -21,3 +21,9 @@ export async function putPackage(kv: KVNamespace, name: string, dataB64: string)
 
 /** The package bytes, or null when the key never existed or expired. */
 export const getPackage = (kv: KVNamespace, id: string) => kv.get(pkgKey(id), "arrayBuffer");
+
+/** Full hex sha256 of a stored package, computed from the bytes; undefined if gone. */
+export async function packageSha256(kv: KVNamespace, id: string): Promise<string | undefined> {
+	const bytes = await getPackage(kv, id);
+	return bytes ? [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("") : undefined;
+}

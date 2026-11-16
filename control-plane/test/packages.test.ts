@@ -85,3 +85,43 @@ describe("GET /agent/:job/input/package", () => {
 		expect((await get("/input/package")).status).toBe(404);
 	});
 });
+
+describe("concurrent submit_job on waiting_for_plan (package race)", () => {
+	it("only plan A is ever stored; B errors; /spec and /input/package both serve A", async () => {
+		const TGZ_B = gzipSync(Buffer.from("tokens.json other tar"));
+		const a = (await putPackage(env.OAUTH_KV, "a", b64(TGZ))) as { package_id: string; sha256: string };
+		const b = (await putPackage(env.OAUTH_KV, "b", b64(TGZ_B))) as { package_id: string };
+		await seed("custom");
+		// B reads waiting_for_plan, then pauses (inside its KV package check) while A submits and starts rendering.
+		const kvGet = env.OAUTH_KV.get;
+		let resume!: () => void;
+		const paused = new Promise<void>((r) => (resume = r));
+		let entered!: () => void;
+		const inB = new Promise<void>((r) => (entered = r));
+		(env.OAUTH_KV as { get: unknown }).get = async (k: string, t?: string) => {
+			if (k === `pkg:${b.package_id}`) { entered(); await paused; }
+			return kvGet(k, t as never);
+		};
+		const pB = submitJob(env.DB, "j1", planOf("custom", { package: b.package_id }), env.OAUTH_KV);
+		await inB;
+		(env.OAUTH_KV as { get: unknown }).get = kvGet;
+		expect(await submitJob(env.DB, "j1", planOf("custom", { package: a.package_id }), env.OAUTH_KV)).toMatchObject({ state: "rendering" });
+		resume();
+		expect(await pB).toMatchObject({ error: expect.stringMatching(/plan already rendering/) });
+		const row = await env.DB.prepare("SELECT state, plan_json FROM jobs WHERE id = 'j1'").first<{ state: string; plan_json: string }>();
+		expect(row!.state).toBe("rendering");
+		expect(JSON.parse(row!.plan_json).package).toBe(a.package_id);
+		const spec = (await (await get("/spec")).json()) as { package: string; package_sha256: string };
+		expect(spec).toMatchObject({ package: a.package_id, package_sha256: a.sha256 });
+		expect(Buffer.from(await (await get("/input/package")).arrayBuffer())).toEqual(TGZ);
+		const events = (await env.DB.prepare("SELECT kind, data_json FROM events WHERE job_id = 'j1' ORDER BY id").all<{ kind: string; data_json: string }>()).results;
+		expect(events.map((e) => e.kind)).toEqual(["plan_submitted", "state"]);
+	});
+
+	it("a pre-pod resubmit replaces the plan without changing state", async () => {
+		const a = (await putPackage(env.OAUTH_KV, "a", b64(TGZ))) as { package_id: string };
+		await seed("custom");
+		await env.DB.prepare("UPDATE jobs SET state = 'booting' WHERE id = 'j1'").run();
+		expect(await submitJob(env.DB, "j1", planOf("custom", { package: a.package_id }), env.OAUTH_KV)).toMatchObject({ state: "booting" });
+	});
+});

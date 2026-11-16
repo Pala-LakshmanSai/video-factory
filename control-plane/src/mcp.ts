@@ -63,14 +63,37 @@ export async function submitJob(db: D1Database, jobId: string, scenePlan: unknow
 	if (errs.length) return { error: "scene_plan invalid; fix and call submit_job again:\n- " + errs.join("\n- ") };
 	const pkg = (scenePlan as ScenePlan).package;
 	if (pkg && !(kv && (await getPackage(kv, pkg)))) return { error: `package ${pkg} not found or expired; call upload_package again` };
-	if (job.plan_json && !["queued", "provisioning", "booting", "waiting_for_plan", "retrying"].includes(job.state)) {
-		return { error: `plan already rendering (state ${job.state}); use revise_scene to change a scene` };
+	// Compare-and-set on the state, never an unconditional write: a concurrent submit that already moved the job to
+	// rendering must win, or /spec and /input/package could disagree about which plan (and package) the pod renders.
+	const planJson = JSON.stringify(scenePlan);
+	for (let cur = job; ; ) {
+		if (cur.state === "waiting_for_plan") {
+			const r = await db
+				.prepare("UPDATE jobs SET plan_json = ?, state = 'rendering', updated_at = ? WHERE id = ? AND state = 'waiting_for_plan'")
+				.bind(planJson, now(), cur.id)
+				.run();
+			if (r.meta.changes) {
+				await logEvent(db, cur.id, "plan_submitted", { scenes: (scenePlan as ScenePlan).scenes.length });
+				await logEvent(db, cur.id, "state", { from: "waiting_for_plan", to: "rendering" });
+				return { state: "rendering" as JobState, gpu: cur.gpu_label };
+			}
+		} else if (PRE_POD.includes(cur.state)) {
+			const r = await db
+				.prepare(`UPDATE jobs SET plan_json = ?, updated_at = ? WHERE id = ? AND state IN (${PRE_POD.map(() => "?").join(", ")})`)
+				.bind(planJson, now(), cur.id, ...PRE_POD)
+				.run();
+			if (r.meta.changes) {
+				await logEvent(db, cur.id, "plan_submitted", { scenes: (scenePlan as ScenePlan).scenes.length });
+				return { state: cur.state, gpu: cur.gpu_label };
+			}
+		} else if (isTerminal(cur.state)) return { error: `job is ${cur.state}` };
+		else return { error: `plan already rendering (state ${cur.state}); use revise_scene to change a scene` };
+		cur = (await getJob(db, jobId))!; // lost the race: re-read and apply the rule to the new state
 	}
-	await updateJob(db, job.id, { plan_json: JSON.stringify(scenePlan) });
-	await logEvent(db, job.id, "plan_submitted", { scenes: (scenePlan as ScenePlan).scenes.length });
-	if (job.state === "waiting_for_plan") await transition(db, job, "rendering");
-	return { state: job.state, gpu: job.gpu_label };
 }
+
+/** States before a pod is asking for the plan: a resubmitted plan simply replaces the stored one. */
+const PRE_POD: JobState[] = ["queued", "provisioning", "booting", "retrying"];
 
 /** Long-poll D1 every 2 s; return early on the target state, a terminal state or an unseen render error. */
 export async function waitJob(db: D1Database, jobId: string, until: "preview" | "done", timeoutS = 50) {

@@ -10,7 +10,7 @@ import {
 } from "./db";
 import { DriveAuthError, createSession, fileMeta, shareAnyone, streamFile } from "./drive";
 import { alert } from "./alerts";
-import { getPackage } from "./packages";
+import { getPackage, packageSha256 } from "./packages";
 import { recordBench } from "./bench";
 import { hasFault } from "./faults";
 import { failJob, retirePod } from "./selector";
@@ -61,7 +61,7 @@ agentApp.get("/spec", async (c) => {
 	for (;;) {
 		const p = plan(job);
 		if (p && !isTerminal(job.state) && job.state !== "waiting_for_plan") {
-			const out: SpecOut = { style: p.style, scenes: p.scenes, voiceover: voiceover(job), fps: p.fps, resolution: p.resolution, ...(p.package ? { package: p.package } : {}) };
+			const out: SpecOut = { style: p.style, scenes: p.scenes, voiceover: voiceover(job), fps: p.fps, resolution: p.resolution, ...(p.package ? { package: p.package, package_sha256: await packageSha256(c.env.OAUTH_KV, p.package) } : {}) };
 			return c.json(out);
 		}
 		if (now() + deps.pollMs > deadline) return c.body(null, 204);
