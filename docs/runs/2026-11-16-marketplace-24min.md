@@ -39,6 +39,18 @@ Result: job `j_986bde208a484c29`, 488 MB mp4, public Drive link, total GPU spend
 
 Image `sha256:62882afa…d797` (0a00653) passed renderer CI 43832677299 and qualify-image 43836679190 (blockworld=true); Worker eb3df26a.
 
+## Speed-up (0f06781, image sha256:12d1424f…7de8, Worker af92c182)
+Cause: the GeForce NVENC 4-session cap also capped frame capture (CPU-bound Chromium raster), one Chromium served all pages, and previews rendered one scene at a time.
+Fix: capture workers = 3/4 of the cores (max 24); x264 when more workers fit than NVENC sessions; one Chromium per 6 pages; previews on a worker pool.
+
+Measured on a real pod: job `j_1cb5f87a752942a3`, first 181.3 s of this video, 31 scenes, RTX PRO 4500 Blackwell, 48 vCPU, $0.037.
+| Step | Before (24 min job, 4 workers) | After (0f06781) |
+|---|---|---|
+| Boot (create → hello) | 57 s | 44 s |
+| Previews | 0.94 s/scene (259 in 4:03) | 0.42 s/scene (31 in 13 s) |
+| Final render | 0.82x real time (24.7 fps) | **1.59x real time** (181 s in 114 s, ~48 fps) |
+| A 24 min video, final render | 29 min 36 s | ~15 min (projected) |
+Output check: md5 matches the Drive file, 1920x1080 h264 + aac, 181.33 s, no black frames, spot frame clean.
+
 ## Open
-- Final render runs at 0.82x real time (a 24 min video takes ~30 min). The 4-worker cap protects GeForce NVENC sessions; a 128-vCPU pod has room for more workers (x264, or the NVENC cap only when the GPU allows it).
 - QA left one cosmetic issue: scene 132's grey "Pavement" box sits low on the dusk background.
