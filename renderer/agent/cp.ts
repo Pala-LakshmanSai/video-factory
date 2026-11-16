@@ -6,6 +6,8 @@ import type {
 export class Gone extends Error {} // job terminal or token rejected: stop and self-destruct
 export class Held extends Error {} // control plane answered but deliberately held us (X-VF-Hold): reachable, retry
 
+export const PREVIEW_CHUNK = 60;
+
 export class ControlPlane {
 	base: string;
 	token: string;
@@ -77,10 +79,15 @@ export class ControlPlane {
 		}
 	}
 
+	/** Posted in chunks of PREVIEW_CHUNK frames: one request with a long video's ~800 frames exceeds Worker limits.
+	 *  The control plane marks the round ready once every scene has its 3 frames, whichever request brings the last. */
 	async previews(frames: Map<string, Buffer>) {
-		const form = new FormData();
-		for (const [name, jpeg] of frames) form.append(name, new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }), `${name}.jpg`);
-		const res = await this.req("/previews", { method: "POST", body: form });
-		if (res.status !== 201) throw new Error(`/previews: ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`);
+		const all = [...frames];
+		for (let i = 0; i < all.length; i += PREVIEW_CHUNK) {
+			const form = new FormData();
+			for (const [name, jpeg] of all.slice(i, i + PREVIEW_CHUNK)) form.append(name, new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }), `${name}.jpg`);
+			const res = await this.req("/previews", { method: "POST", body: form });
+			if (res.status !== 201) throw new Error(`/previews: ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`);
+		}
 	}
 }
