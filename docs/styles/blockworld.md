@@ -163,9 +163,9 @@ hit, SFX on cards/status changes, ambience beds, mastered to −15.4 LUFS / −1
 
 **Why on the pod.** The control plane is a Cloudflare Worker (no numpy/scipy/ffmpeg), so a control-plane step
 would need a new service; a manual Drive upload breaks the Project chat flow. Cost of the pod route:
-- image ≈ +230 MB (python3 ≈ 25 MB, numpy 2.2.6 ≈ 40 MB, scipy 1.15.3 ≈ 100 MB, samples 63 MB tarball / 69 MB
-  unpacked) — estimate, not yet measured on a built image;
-- ≈ 1 s of CPU per second of audio on a Mac (5 s episode in ~5 s; reviewer measured 21 s in a sandbox). Scoring
+- image +261 MB compressed (1186 MB vs 925 MB; measured on candidate CI 43821505423): python3, numpy 2.2.6,
+  scipy 1.15.3 and the 69 MB samples;
+- ≈ 1 s of CPU per second of audio on a Mac (5 s episode in ~5 s; two runs in 6.0 s inside the candidate image; reviewer measured 21 s in a sandbox). Scoring
   runs in parallel with preview frames, so it only adds wall time to the final when it is the slower of the two;
 - deterministic per image: fixed seeds + `PYTHONHASHSEED=0` give byte-identical WAVs for the same episode
   (pinned numpy/scipy; a different library version may change bits, not length or loudness).
