@@ -1,6 +1,7 @@
 // Voiceover (Decision): a Drive audio file streamed via GET /input/voiceover, or text -> Kokoro-82M on the pod
 // (weights baked into the image, no network at run time). Cached per job in workDir. Output: 48 kHz mono WAV.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,7 +42,19 @@ export async function tts(text: string, out: string) {
 	tf.env.allowRemoteModels = process.env.TTS_ALLOW_DOWNLOAD === "1"; // image build only
 	if (process.env.TTS_CACHE) tf.env.cacheDir = process.env.TTS_CACHE;
 	const { KokoroTTS } = await import("kokoro-js");
-	const model = await KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8", device: "cpu" });
+	// KokoroTTS.from_pretrained drops session_options, so load the parts ourselves to cap ONNX threads:
+	// onnxruntime defaults to one intra-op thread per host core, which thrashes in a CPU-quota'd container.
+	const threads = ttsThreads();
+	console.error(`tts: onnx intraOpNumThreads=${threads} interOpNumThreads=1`);
+	const [m, tok] = await Promise.all([
+		tf.StyleTextToSpeech2Model.from_pretrained(KOKORO_MODEL, {
+			dtype: "q8",
+			device: "cpu",
+			session_options: { intraOpNumThreads: threads, interOpNumThreads: 1 },
+		}),
+		tf.AutoTokenizer.from_pretrained(KOKORO_MODEL),
+	]);
+	const model = new KokoroTTS(m as never, tok as never);
 	const sentences = text.match(/[^.!?。！？]+[.!?。！？]*\s*/g)?.map((s) => s.trim()).filter(Boolean) ?? [text];
 	const parts: Float32Array[] = [];
 	let rate = 24000;
@@ -57,6 +70,18 @@ export async function tts(text: string, out: string) {
 	const raw = out.replace(/\.wav$/, ".24k.wav");
 	await writeFile(raw, wav(pcm, rate));
 	await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", raw, "-ac", "1", "-ar", "48000", out]);
+}
+
+/** TTS_THREADS, else min(8, cgroup v2 CPU quota or available cores). */
+export function ttsThreads(): number {
+	const env = Number(process.env.TTS_THREADS);
+	if (env >= 1) return Math.floor(env);
+	let cores = availableParallelism();
+	try {
+		const [quota, period] = readFileSync("/sys/fs/cgroup/cpu.max", "utf8").trim().split(/\s+/);
+		if (quota !== "max") cores = Math.min(cores, Math.max(1, Math.ceil(Number(quota) / Number(period))));
+	} catch {} // no cgroup v2 (macOS, v1 hosts): host cores
+	return Math.min(8, cores);
 }
 
 function wav(pcm: Float32Array, rate: number): Buffer {
