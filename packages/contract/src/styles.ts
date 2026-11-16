@@ -25,14 +25,17 @@ export const STYLE_REGISTRY: Record<string, StyleEntry> = {
   flatglow: { version: "1", status: "ready", label: "Flatglow", summary: "Kurzgesagt-like flat glowing science animation: worlds, labelled objects, neon kinetic type, diagrams.", templates: ["title", "scene", "kinetic", "diagram", "list", "end-card"], audio: "voiceover" },
   pov: { version: "1", status: "pending", label: "POV Escalation", summary: "First-person low-poly 3D journey with a stat HUD and italic captions.", templates: ["journey", "title", "end-card"], audio: "voiceover", blocked: "WebGL under the engine flags is verified on macOS only; needs the Linux CI/container fixture" },
   blockworld: { version: "1", status: "pending", label: "Blockworld", summary: "Blocky low-poly 3D 'What if you kept getting ___' episodes with HUD counters and serif captions.", templates: ["episode"], audio: "voiceover", blocked: "needs a music/SFX layer; WebGL verified on macOS only" },
-  discovery: { version: "1", status: "ready", label: "Discovery Documentary", summary: "Calm real-media documentary: graded photos with slow moves, gold-pin maps, then/now reveals, serif title/chapter/quote cards.", templates: ["title", "chapter", "photo", "map", "compare", "quote", "end"], audio: "voiceover" },
+    discovery: { version: "1", status: "ready", label: "Discovery Documentary", summary: "Calm real-media documentary: graded photos with slow moves, gold-pin maps, then/now reveals, serif title/chapter/quote cards.", templates: ["title", "chapter", "photo", "map", "compare", "quote", "end"], audio: "voiceover" },
+  // Special: no registry templates; the job's code ships as a package (control-plane upload_package, scene_plan.package).
+  custom: { version: "1", status: "ready", label: "Custom kit package", summary: "Per-video code built from a style kit; requires scene_plan.package from upload_package.", templates: [], audio: "voiceover" },
 };
 
-/** Ready styles only: what acquire, submit/revise and the template loader accept. */
+/** Ready styles the renderer ships in renderer/styles/ (not "custom", whose code comes per job in a package). */
 export const STYLE_TEMPLATES: Record<string, readonly string[]> = Object.fromEntries(
-  Object.entries(STYLE_REGISTRY).filter(([, s]) => s.status === "ready").map(([id, s]) => [id, s.templates]),
+  Object.entries(STYLE_REGISTRY).filter(([id, s]) => s.status === "ready" && id !== "custom").map(([id, s]) => [id, s.templates]),
 );
-export const READY_STYLES = Object.keys(STYLE_TEMPLATES);
+/** What acquire and submit/revise accept: every ready style, including "custom". */
+export const READY_STYLES = Object.keys(STYLE_REGISTRY).filter((id) => STYLE_REGISTRY[id].status === "ready");
 
 /** Templates of any registered style, including retired ones: accepted jobs keep validating against their style. */
 export const templatesFor = (style: string): readonly string[] => STYLE_REGISTRY[style]?.templates ?? [];

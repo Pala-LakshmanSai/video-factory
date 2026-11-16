@@ -66,6 +66,7 @@ export class ControlPlane {
 	}
 	bench = (render_s: number) => this.post<unknown>("/bench", { render_s });
 	voiceover = () => this.req("/input/voiceover", {}, 600_000);
+	pkg = () => this.req("/input/package", {}, 600_000); // style "custom": .tar.gz of the job's style package
 
 	/** Long-poll until a plan arrives. */
 	async spec(): Promise<SpecOut> {

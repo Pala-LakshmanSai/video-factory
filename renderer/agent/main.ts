@@ -14,6 +14,7 @@ import { encoderArgs, pickEncoder, run } from "../engine/ffmpeg.ts";
 import { md5File, renderFinal, renderPreviews, TemplateError, type RenderInput } from "../engine/render.ts";
 import { prepareVoice, silence } from "../engine/voice.ts";
 import { ControlPlane, Gone, Held } from "./cp.ts";
+import { fetchPackage } from "./package.ts";
 import { resumableUpload } from "./upload.ts";
 
 const env = process.env;
@@ -176,8 +177,20 @@ async function main() {
 	status.stage = "tts";
 	const voice = await prepareVoice(spec.voiceover, join(WORK, "audio"), () => cp.voiceover());
 	log(`voiceover ${voice.seconds.toFixed(2)} s`);
-	const input = (s: SpecOut): RenderInput => ({
-		plan: planOf(s), stylesDir: STYLES_DIR, workDir: join(WORK, "final"), audioPath: voice.path, audioSeconds: voice.seconds,
+	// style "custom": the job's own package, fetched once per pod and again only if the plan's package id changes.
+	let pkg: { id: string; dir: string } | null = null;
+	const stylesFor = async (s: SpecOut): Promise<string> => {
+		if (s.style !== "custom") return STYLES_DIR;
+		const id = s.package ?? "";
+		if (pkg?.id !== id) {
+			pkg = null;
+			pkg = { id, dir: await fetchPackage(id, WORK, () => cp.pkg()) };
+			log(`style package ${id} ready`);
+		}
+		return pkg.dir;
+	};
+	const input = (s: SpecOut, stylesDir: string): RenderInput => ({
+		plan: planOf(s), stylesDir, workDir: join(WORK, "final"), audioPath: voice.path, audioSeconds: voice.seconds,
 		failScene: faults.renderErrorScene,
 		onProgress: (pct, scene) => Object.assign(status, { pct, scene }),
 	});
@@ -208,13 +221,13 @@ async function main() {
 	const doPreviews = (only?: number[]) =>
 		attempt("preview", async () => {
 			const scenes = only && [...new Set([...only, ...spec.scenes.map((s) => s.n).filter((n) => !previewed.has(n))])];
-			await cp.previews(await renderPreviews(input(spec), scenes));
+			await cp.previews(await renderPreviews(input(spec, await stylesFor(spec)), scenes));
 			for (const n of scenes ?? spec.scenes.map((s) => s.n)) previewed.add(n);
 		});
 	let resumeReport: Promise<unknown> | null = null;
 	const doFinal = () =>
 		attempt("final_render", async () => {
-			const file = await renderFinal(input(spec));
+			const file = await renderFinal(input(spec, await stylesFor(spec)));
 			const { md5, size } = await md5File(file);
 			status.stage = "uploading";
 			const fileId = await resumableUpload(file, size, {

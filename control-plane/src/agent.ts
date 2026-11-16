@@ -10,6 +10,7 @@ import {
 } from "./db";
 import { DriveAuthError, createSession, fileMeta, shareAnyone, streamFile } from "./drive";
 import { alert } from "./alerts";
+import { getPackage } from "./packages";
 import { recordBench } from "./bench";
 import { hasFault } from "./faults";
 import { failJob, retirePod } from "./selector";
@@ -60,7 +61,7 @@ agentApp.get("/spec", async (c) => {
 	for (;;) {
 		const p = plan(job);
 		if (p && !isTerminal(job.state) && job.state !== "waiting_for_plan") {
-			const out: SpecOut = { style: p.style, scenes: p.scenes, voiceover: voiceover(job), fps: p.fps, resolution: p.resolution };
+			const out: SpecOut = { style: p.style, scenes: p.scenes, voiceover: voiceover(job), fps: p.fps, resolution: p.resolution, ...(p.package ? { package: p.package } : {}) };
 			return c.json(out);
 		}
 		if (now() + deps.pollMs > deadline) return c.body(null, 204);
@@ -266,6 +267,14 @@ agentApp.get("/input/voiceover", async (c) => {
 	const vo = voiceover(c.get("job"));
 	if (!vo.drive_file_id) return c.json({ error: "voiceover is text" }, 404);
 	return streamFile(c.env, vo.drive_file_id);
+});
+
+/** Style "custom": the job's package (.tar.gz) from upload_package. */
+agentApp.get("/input/package", async (c) => {
+	const id = plan(c.get("job"))?.package;
+	const bytes = id ? await getPackage(c.env.OAUTH_KV, id) : null;
+	if (!bytes) return c.json({ error: id ? `package ${id} expired` : "job has no package" }, 404);
+	return c.body(bytes, 200, { "Content-Type": "application/gzip" });
 });
 
 /** Bench mode (env BENCH=1): the agent reports how long the 60 s test video took. */

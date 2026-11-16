@@ -3,6 +3,8 @@ import type { ScenePlan } from "../../packages/contract/src/index";
 import { TRANSITIONS, templatesFor } from "../../packages/contract/src/styles";
 import { CONSTANTS } from "./config";
 
+export const PACKAGE_ID = /^pk_[0-9a-f]{24}$/;
+
 export function validatePlan(p: unknown, jobStyle: string): string[] {
 	const errs: string[] = [];
 	const plan = p as Partial<ScenePlan>;
@@ -12,12 +14,16 @@ export function validatePlan(p: unknown, jobStyle: string): string[] {
 	const m = typeof plan.resolution === "string" ? /^(\d{3,4})x(\d{3,4})$/.exec(plan.resolution) : null;
 	if (!m || +m[1] > 3840 || +m[2] > 3840 || +m[1] % 2 || +m[2] % 2) errs.push('resolution must be "<even width>x<even height>" up to 3840, e.g. "1920x1080"');
 	if (!Array.isArray(plan.scenes) || !plan.scenes.length) return [...errs, "scenes must be a non-empty array"];
+	const custom = jobStyle === "custom";
+	if (custom) {
+		if (typeof plan.package !== "string" || !PACKAGE_ID.test(plan.package)) errs.push('package must be a package_id from upload_package ("pk_" + 24 hex) for style custom');
+	} else if (plan.package !== undefined) errs.push(`package is only allowed with style "custom", not ${jobStyle}`);
 	const templates = templatesFor(jobStyle);
 	let total = 0;
 	plan.scenes.forEach((s, i) => {
 		const at = `scenes[${i}]`;
 		if (s?.n !== i + 1) errs.push(`${at}.n must be ${i + 1} (1-based, contiguous)`);
-		if (!templates.includes(s?.template)) errs.push(`${at}.template "${s?.template}" is not in style ${jobStyle}: ${templates.join(", ")}`);
+		if (custom ? !(typeof s?.template === "string" && /^[a-z0-9-]{1,40}$/.test(s.template)) : !templates.includes(s?.template)) errs.push(custom ? `${at}.template must match [a-z0-9-]{1,40} (a <template>.html in the package)` : `${at}.template "${s?.template}" is not in style ${jobStyle}: ${templates.join(", ")}`);
 		if (!s?.props || typeof s.props !== "object" || Array.isArray(s.props)) errs.push(`${at}.props must be an object`);
 		if (typeof s?.duration_s !== "number" || !(s.duration_s > 0)) errs.push(`${at}.duration_s must be a number > 0`);
 		else total += s.duration_s;

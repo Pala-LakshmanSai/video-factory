@@ -96,7 +96,7 @@ describe("tools/list", () => {
 	});
 
 	it("registers the six SPEC §4 tools plus list_styles", () => {
-		expect(Object.keys(tools).sort()).toEqual(["acquire_gpu", "approve", "list_styles", "release", "revise_scene", "submit_job", "wait_job"]);
+		expect(Object.keys(tools).sort()).toEqual(["acquire_gpu", "approve", "list_styles", "release", "revise_scene", "submit_job", "upload_package", "wait_job"]);
 	});
 
 	it("input schemas are JSON Schema objects with the SPEC field names", () => {

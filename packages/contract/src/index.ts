@@ -77,6 +77,7 @@ export interface ScenePlan {
   fps: number;               // e.g. 30
   resolution: string;        // "<width>x<height>", e.g. "1920x1080" or "1080x1920"
   scenes: Scene[];
+  package?: string;          // style "custom" only: package_id from upload_package (pk_ + 24 hex); absent otherwise
 }
 export interface Scene {
   n: number;                 // 1-based, contiguous, in playback order
@@ -96,6 +97,7 @@ export interface SpecOut {
   voiceover: Voiceover;
   fps: number;               // Extension: rest of scene_plan, needed to render
   resolution: string;        // Extension
+  package?: string;          // style "custom": fetch GET /agent/{job}/input/package (application/gzip .tar.gz)
 }
 
 /** POST /heartbeat every 15 s. */

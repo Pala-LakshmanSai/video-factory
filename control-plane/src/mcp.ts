@@ -8,6 +8,7 @@ import { CONSTANTS, MAX_PODS_AT_ONCE, STYLES } from "./config";
 import { STYLE_REGISTRY } from "../../packages/contract/src/styles";
 import { activePod, getJob, jobCost, logEvent, now, plan, randomId, updateJob, type JobRow } from "./db";
 import { mergePatch, validatePlan } from "./plan";
+import { getPackage, putPackage } from "./packages";
 import { retirePod, selectAndCreate } from "./selector";
 import { cancelJob, isTerminal, transition } from "./state";
 
@@ -54,12 +55,14 @@ export async function acquireGpu(e: Env, db: D1Database, a: { style: string; tit
 	return { job_id: id, state, created: true as const };
 }
 
-export async function submitJob(db: D1Database, jobId: string, scenePlan: unknown) {
+export async function submitJob(db: D1Database, jobId: string, scenePlan: unknown, kv?: KVNamespace) {
 	const job = await getJob(db, jobId);
 	if (!job) return { error: `no job ${jobId}` };
 	if (isTerminal(job.state)) return { error: `job is ${job.state}` };
 	const errs = validatePlan(scenePlan, job.style);
 	if (errs.length) return { error: "scene_plan invalid; fix and call submit_job again:\n- " + errs.join("\n- ") };
+	const pkg = (scenePlan as ScenePlan).package;
+	if (pkg && !(kv && (await getPackage(kv, pkg)))) return { error: `package ${pkg} not found or expired; call upload_package again` };
 	if (job.plan_json && !["queued", "provisioning", "booting", "waiting_for_plan", "retrying"].includes(job.state)) {
 		return { error: `plan already rendering (state ${job.state}); use revise_scene to change a scene` };
 	}
@@ -211,7 +214,7 @@ export function createServer() {
 		"acquire_gpu",
 		{
 			description:
-				"Call for a new video request once the style is known, before planning: rents a fresh GPU while you plan. style is a registry id from list_styles (e.g. \"explainer\"), not its label; only ready styles are accepted, so call list_styles first if the user hasn't picked one. Pass a random 8-letter chat_key you make once per chat and reuse it on any repeat call (same chat -> same job). Returns {job_id, state} in under 1 s. " + NEXT.acquire,
+				"Call for a new video request once the style is known, before planning: rents a fresh GPU while you plan. style is a registry id from list_styles (e.g. \"explainer\"), not its label; style \"custom\" means per-video code: call upload_package and set scene_plan.package before submit_job. Only ready styles are accepted, so call list_styles first if the user hasn't picked one. Pass a random 8-letter chat_key you make once per chat and reuse it on any repeat call (same chat -> same job). Returns {job_id, state} in under 1 s. " + NEXT.acquire,
 			inputSchema: z.object({
 				style: z.string().min(1).max(64).describe("registry id of a ready style from list_styles"),
 				title: z.string().min(1).max(200),
@@ -229,6 +232,19 @@ export function createServer() {
 	);
 
 	server.registerTool(
+		"upload_package",
+		{
+			description:
+				'For style "custom" only: upload the per-video style package (base64 of a .tar.gz, max 8 MiB, root has tokens.json and one <template>.html per template id). Rents nothing; same bytes -> same package_id. Kept 7 days. Next: put package_id in scene_plan.package and call submit_job.',
+			inputSchema: z.object({ name: z.string().regex(/^[a-z0-9-]{1,64}$/), data_b64: z.string().min(1) }),
+		},
+		async ({ name, data_b64 }) => {
+			const r = await putPackage(env.OAUTH_KV, name, data_b64);
+			return "error" in r ? fail(r.error!) : json(r);
+		},
+	);
+
+	server.registerTool(
 		"submit_job",
 		{
 			description:
@@ -236,7 +252,7 @@ export function createServer() {
 			inputSchema: z.object({ job_id: z.string(), scene_plan: z.record(z.string(), z.unknown()) }),
 		},
 		async ({ job_id, scene_plan }) => {
-			const r = await submitJob(db, job_id, scene_plan);
+			const r = await submitJob(db, job_id, scene_plan, env.OAUTH_KV);
 			return "error" in r ? fail(r.error!) : json(r);
 		},
 	);
