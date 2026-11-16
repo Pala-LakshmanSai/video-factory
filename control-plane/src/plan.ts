@@ -5,10 +5,15 @@ import { CONSTANTS } from "./config";
 
 export const PACKAGE_ID = /^pk_[0-9a-f]{24}$/;
 
+export const PLAN_MAX_BYTES = 1_500_000;
+
 export function validatePlan(p: unknown, jobStyle: string): string[] {
 	const errs: string[] = [];
 	const plan = p as Partial<ScenePlan>;
 	if (!plan || typeof plan !== "object") return ["scene_plan must be an object {style, fps, resolution, scenes}"];
+	// jobs.plan_json is one D1 row (2,000,000-byte row limit): keep a margin for the other columns.
+	const bytes = new TextEncoder().encode(JSON.stringify(p)).length;
+	if (bytes > PLAN_MAX_BYTES) errs.push(`scene_plan is ${(bytes / 1e6).toFixed(2)} MB serialized; the limit is 1.5 MB including inline data: images. Resize/recompress images (about 1280 px, JPEG q75) or use fewer, then resubmit`);
 	if (plan.style !== jobStyle) errs.push(`style must be "${jobStyle}" (the job's style), got ${JSON.stringify(plan.style)}`);
 	if (typeof plan.fps !== "number" || !Number.isInteger(plan.fps) || plan.fps < 12 || plan.fps > 60) errs.push("fps must be an integer 12..60, e.g. 30");
 	const m = typeof plan.resolution === "string" ? /^(\d{3,4})x(\d{3,4})$/.exec(plan.resolution) : null;

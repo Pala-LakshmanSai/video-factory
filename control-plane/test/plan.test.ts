@@ -24,3 +24,15 @@ describe("helpers", () => {
 		expect(rerank(["A", "B", "C", "D", "E"], res)).toEqual(["D", "B", "A", "C", "E"]);
 	});
 });
+
+describe("plan size limit", () => {
+	it("rejects a serialized plan over 1.5 MB with a clear message, accepts one just under", () => {
+		const base = { style: "explainer", fps: 30, resolution: "1920x1080", scenes: [{ n: 1, template: "title", props: { title: "x", image: "" }, duration_s: 3, narration: "x", transition: "cut" }] };
+		const big = structuredClone(base);
+		big.scenes[0].props.image = "data:image/jpeg;base64," + "A".repeat(1_500_001);
+		expect(validatePlan(big, "explainer").join("\n")).toMatch(/limit is 1\.5 MB/);
+		const ok = structuredClone(base);
+		ok.scenes[0].props.image = "data:image/jpeg;base64," + "A".repeat(1_400_000);
+		expect(validatePlan(ok, "explainer").filter((e) => /MB/.test(e))).toEqual([]);
+	});
+});
