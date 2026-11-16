@@ -2,7 +2,7 @@
 // Auth: Bearer JOB_TOKEN, SHA-256 compared in constant time; rejected after TTL or once the job is terminal.
 import { Hono } from "hono";
 import type {
-	DoneIn, ErrorCode, ErrorIn, HeartbeatIn, HelloIn, ScenePlan, SpecOut, UploadSessionIn,
+	DoneIn, ErrorCode, ErrorIn, HeartbeatIn, HelloIn, JobState, ScenePlan, SpecOut, UploadSessionIn,
 } from "../../packages/contract/src/index";
 import { CONSTANTS, MAX_REUPLOADS } from "./config";
 import {
@@ -51,8 +51,18 @@ agentApp.post("/hello", async (c) => {
 	}
 	if (pod) await c.env.DB.prepare("UPDATE pods SET hello_at = ?, last_heartbeat_at = ? WHERE id = ?").bind(now(), now(), pod.id).run();
 	await logEvent(c.env.DB, job.id, "hello", body);
-	if (job.state === "booting") await transition(c.env.DB, job, job.plan_json ? "rendering" : "waiting_for_plan");
-	return c.json({ state: job.state === "rendering" ? "rendering" : "waiting_for_plan" });
+	if (job.state === "booting") {
+		// One CAS decides from the row's current plan_json, not the auth-time snapshot: a submit_job landing while
+		// this request was in flight must start rendering, never leave a planned job parked in waiting_for_plan.
+		const r = await c.env.DB.prepare(
+			"UPDATE jobs SET state = CASE WHEN plan_json IS NULL THEN 'waiting_for_plan' ELSE 'rendering' END, updated_at = ? WHERE id = ? AND state = 'booting' AND job_token_sha256 = ? RETURNING state",
+		)
+			.bind(now(), job.id, job.job_token_sha256)
+			.first<{ state: JobState }>();
+		if (r) await logEvent(c.env.DB, job.id, "state", { from: "booting", to: r.state });
+	}
+	const cur = (await getJob(c.env.DB, job.id))!;
+	return c.json({ state: cur.state === "rendering" ? "rendering" : "waiting_for_plan" });
 });
 
 agentApp.get("/spec", async (c) => {
