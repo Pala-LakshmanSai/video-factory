@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>blockworld episode</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas#out{display:block;width:100vw;height:auto}</style>
+</head><body><canvas id="out"></canvas>
+<script>
+// Plan scene n plays episode scene n (props.episode = whole episode, identical in every plan scene).
+// Default `from` = start of episode scene n; that scene's `dur` is stretched to the (audio-rescaled) plan duration.
+// Explicit props.from keeps the kit's raw mapping (offset into the episode, no stretch).
+(function () {
+  var S = window.__scene; if (!S) return;
+  var P = S.props = S.props || {}, ep = P.episode;
+  if (!ep || !Array.isArray(ep.scenes) || !ep.scenes.length) throw new Error('blockworld: props.episode must be an episode object with a non-empty scenes array');
+  ep.scenes.forEach(function (s, j) { if (!(s && s.dur > 0)) throw new Error('blockworld: episode.scenes[' + j + '].dur must be a positive number'); });
+  ep.meta = Object.assign({}, ep.meta, { quality: P.quality || 'final' });
+  var i = Math.min(S.n - 1, ep.scenes.length - 1), sc = ep.scenes[i];
+  if (!sc.captions && !sc.caption && S.narration) sc.caption = S.narration;
+  if (P.from == null) { var a = 0; for (var k = 0; k < i; k++) a += ep.scenes[k].dur; window.__vfMap = { from: a, k: (sc.dur || S.duration) / S.duration }; }
+})();
+</script>
+<script src="./bundle.js"></script>
+<script>
+if (window.__vfMap) { var m = window.__vfMap; window.__seek = function (t) { window.__ep.frame(Math.min(m.from + t * m.k, window.__ep.duration - 1e-3)); }; }
+</script>
+</body></html>

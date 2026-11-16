@@ -22,6 +22,8 @@
     "DEV_ROUTES": "0",
     // "1" lets the selector rent pods (paid); the weekly benchmark also needs BENCH_ENABLED. Keep "0" until a paid test is approved.
     "ADMISSION_ENABLED": "1",
+    // "0" refuses NEW acquire_gpu calls (same-chat replays still answer) while accepted jobs keep running: drain before rollback.
+    "ACQUIRE_ENABLED": "1",
     // "1" lets the Sunday 03:00 UTC benchmark rent pods (needs ADMISSION_ENABLED too). Separate paid switch.
     "BENCH_ENABLED": "0"
   },

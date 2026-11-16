@@ -1,0 +1,12 @@
+{
+  "style": "pov",
+  "fps": 30,
+  "resolution": "1920x1080",
+  "scenes": [
+    { "n": 1, "template": "title", "props": { "biome": "suburb", "rig": "bike", "title": ["What if your bike", "couldn't stop speeding up?"], "hud": false }, "duration_s": 4.0, "narration": "What if your bike couldn't stop speeding up?", "transition": "cut" },
+    { "n": 2, "template": "journey", "props": { "biome": "city", "rig": "bike", "speed": [60, 115], "hud": "speed", "caption": "A cheetah couldn't keep up." }, "duration_s": 4.0, "narration": "Downtown, a cheetah couldn't keep up.", "transition": "cut" },
+    { "n": 3, "template": "journey", "props": { "biome": "highway", "speed": [300, 1300], "hud": { "label": "YOUR SPEED", "from": 300, "to": 1300, "unit": "km/h", "sub": "FASTER THAN SOUND", "next": { "name": "THE FARMLAND", "value": "4.2 km" } }, "caption": "Ring your bell. The sound can't catch you." }, "duration_s": 4.0, "narration": "Ring your bell. The sound can't catch you.", "transition": "fade" },
+    { "n": 4, "template": "journey", "props": { "biome": "orbit", "camera": "look-back", "hud": { "label": "YOUR SPEED", "from": 28000, "to": 40270, "unit": "km/h", "sub": "FAST ENOUGH TO ORBIT" }, "counter": { "label": "FROM YOUR FRONT DOOR", "from": 90, "to": 160, "sub": "KILOMETRES" }, "caption": "That blue ball is home." }, "duration_s": 4.5, "narration": "Look behind you. That blue ball is home.", "transition": "cut" },
+    { "n": 5, "template": "end-card", "props": { "biome": "space", "hud": false, "caption": "The light fills everything." }, "duration_s": 4.0, "narration": "The light fills everything.", "transition": "cut" }
+  ]
+}

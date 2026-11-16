@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body>
+<script src="kit.js"></script>
+<script src="stage.js"></script>
+<script>
+// number — a data beat: the number drops in digit by digit in gold on the navy void while the camera pushes in.
+const { E, W, H, alpha, circle, glow, layer, ramp, rnd, text, voidBg } = SK;
+stickman((x, t, f, S) => {
+  const p = S.props;
+  const value = SM.req(p.value, "value");
+  const label = SM.str(p.label), caption = SM.str(p.caption);
+  const push = 1 + 0.03 * ramp(t, 0, S.duration, E.linear);
+  layer(x, {}, (x) => {
+    voidBg(x, "#1d2740", 960, 520);
+    glow(x, 960, 520, 620, "#ff9a3c", 0.10);
+    for (let i = 0; i < 40; i++) alpha(x, 0.25 * (0.6 + 0.4 * Math.sin(t * 1.5 + i)), () => circle(x, rnd(i, 3) * W, (((rnd(i, 4) * H - t * 12 * (0.5 + rnd(i, 5))) % H) + H) % H, 1 + rnd(i, 6) * 1.5, "#ffe9c4"));
+  });
+  SK.at(x, 960, 540, 0, push, push, () => {
+    x.translate(-960, -540);
+    if (caption) {
+      const s = SM.fit(x, caption, 1600, 56, 24, 700, 0.06);
+      alpha(x, ramp(t, 0.05, 0.35, E.out), () => text(x, caption.toUpperCase(), 960, 330, { size: s, weight: 700, track: 0.06, fill: "#f9edd4", align: "center" }));
+    }
+    const size = SM.fit(x, value, 1640, 260, 60);
+    const chars = [...value];
+    x.font = `800 ${size}px "Inter", sans-serif`;
+    const widths = chars.map((c) => x.measureText(c).width);
+    let lx = 960 - widths.reduce((a, b) => a + b, 0) / 2;
+    const step = Math.min(0.12, (S.duration * 0.35) / Math.max(1, chars.length));
+    chars.forEach((c, i) => {
+      const a = ramp(t, 0.2 + i * step, 0.2 + i * step + 0.25, E.out);
+      const cx = lx + widths[i] / 2;
+      lx += widths[i];
+      alpha(x, a, () => text(x, c, cx, 540 + size * 0.36 - (1 - a) * 70, { size, fill: "#f4b748", align: "center", glow: ["#ff9a3c", 4, 18, 0.8] }));
+    });
+    if (label) {
+      const k = ramp(t, 0.25 + chars.length * step, 0.55 + chars.length * step, E.linear);
+      SK.pill(x, label, 960, 540 + size * 0.36 + 120, k, { size: SM.fit(x, label, 1400, 40, 22, 800, 0.06), accent: SM.accent(p.accent, 1) });
+    }
+  });
+});
+</script>
+</body></html>

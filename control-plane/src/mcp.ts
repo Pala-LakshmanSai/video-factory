@@ -35,7 +35,9 @@ export async function busySlots(db: D1Database) {
 export async function acquireGpu(e: Env, db: D1Database, a: { style: string; title: string; voiceover: Voiceover; chat_key: string }, opts: { dev_mode?: string } = {}) {
 	const byKey = () => db.prepare("SELECT * FROM jobs WHERE chat_key = ?").bind(a.chat_key).first<JobRow>();
 	const existing = await byKey();
-	if (existing) return { job_id: existing.id, state: existing.state };
+	if (existing) return { job_id: existing.id, state: existing.state }; // same-chat replay works even if the style was later hidden
+	if ((e as unknown as Record<string, string>).ACQUIRE_ENABLED === "0") throw new Error("Video Factory is not accepting new videos right now (maintenance). Try again later.");
+	if (!STYLES.includes(a.style)) throw new Error(`style "${a.style}" is not available for new videos; call list_styles and use a ready style id`);
 	const id = randomId("j_");
 	const state: JobState = (await busySlots(db)) >= MAX_PODS_AT_ONCE ? "queued" : "provisioning";
 	const t = now();
@@ -211,7 +213,7 @@ export function createServer() {
 			description:
 				"Call for a new video request once the style is known, before planning: rents a fresh GPU while you plan. style is a registry id from list_styles (e.g. \"explainer\"), not its label; only ready styles are accepted, so call list_styles first if the user hasn't picked one. Pass a random 8-letter chat_key you make once per chat and reuse it on any repeat call (same chat -> same job). Returns {job_id, state} in under 1 s. " + NEXT.acquire,
 			inputSchema: z.object({
-				style: z.enum(STYLES as [string, ...string[]]),
+				style: z.string().min(1).max(64).describe("registry id of a ready style from list_styles"),
 				title: z.string().min(1).max(200),
 				voiceover: voiceoverSchema,
 				chat_key: z.string().min(4).max(64),

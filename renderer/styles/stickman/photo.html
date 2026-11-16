@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body>
+<script src="kit.js"></script>
+<script src="stage.js"></script>
+<script>
+// photo — a real photo (data: URI) as a framed print under a picture light, a sweeping lamp, a caption pill, a credit.
+const { E, W, H, alpha, at, credit, framedPrint, lampSweep, ramp, text } = SK;
+stickman((x, t, f, S) => {
+  const p = S.props;
+  const im = S.img.image;
+  const caption = SM.str(p.caption);
+  const push = 1 + 0.03 * ramp(t, 0, S.duration, E.linear);
+  at(x, 960, 500, 0, push, push, () => {
+    x.translate(-960, -500);
+    framedPrint(x, im || null, im ? im.naturalWidth : 4, im ? im.naturalHeight : 5, 960, 500, 700);
+    if (!im) text(x, "[missing image]", 960, 510, { size: 36, fill: "#f9edd4", align: "center" });
+  });
+  lampSweep(x, ramp(t, 0, S.duration, E.inOut), [700, 380], [1220, 560]);
+  if (caption) SK.pill(x, caption, 960, 930, ramp(t, 0.3, 0.6, E.linear), { size: SM.fit(x, caption, 1500, 38, 22, 800, 0.06), accent: SM.accent(p.accent, 0) });
+  const c = SM.str(p.credit);
+  if (c) return () => credit(x, c);
+}, ["image"]);
+</script>
+</body></html>

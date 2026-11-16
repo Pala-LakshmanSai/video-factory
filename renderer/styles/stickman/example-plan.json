@@ -1,0 +1,117 @@
+{
+  "style": "stickman",
+  "fps": 24,
+  "resolution": "1920x1080",
+  "scenes": [
+    {
+      "n": 1,
+      "template": "hero",
+      "props": {
+        "set": "void",
+        "mood": "worried",
+        "action": "stand",
+        "pills": [
+          "2 HOURS A DAY",
+          "IN TRAFFIC"
+        ]
+      },
+      "duration_s": 3.0,
+      "narration": "You spend two hours a day stuck in traffic.",
+      "transition": "cut"
+    },
+    {
+      "n": 2,
+      "template": "title",
+      "props": {
+        "line": "WHAT IF YOU COULD",
+        "word": "FLY?"
+      },
+      "duration_s": 3.0,
+      "narration": "So what if you could fly?",
+      "transition": "cut"
+    },
+    {
+      "n": 3,
+      "template": "hero",
+      "props": {
+        "set": "dawn",
+        "mood": "happy",
+        "action": "wave",
+        "hoodie": "red",
+        "pills": [
+          "NO TRAFFIC"
+        ],
+        "accent": "teal"
+      },
+      "duration_s": 2.5,
+      "narration": "No traffic, ever again.",
+      "transition": "cut"
+    },
+    {
+      "n": 4,
+      "template": "stages",
+      "props": {
+        "heading": "HOW HIGH?",
+        "items": [
+          {
+            "value": "2.45 m",
+            "label": "highest human jump"
+          },
+          {
+            "value": "4 km",
+            "label": "skydivers"
+          },
+          {
+            "value": "11 km",
+            "label": "airliners"
+          }
+        ]
+      },
+      "duration_s": 4.5,
+      "narration": "The highest jump is two point four five metres. Skydivers start at four kilometres. Airliners cruise at eleven.",
+      "transition": "cut"
+    },
+    {
+      "n": 5,
+      "template": "number",
+      "props": {
+        "value": "-56°C",
+        "label": "AT 11 KM",
+        "caption": "the air outside",
+        "accent": "red"
+      },
+      "duration_s": 3.0,
+      "narration": "And up there it's minus fifty-six degrees.",
+      "transition": "cut"
+    },
+    {
+      "n": 6,
+      "template": "hero",
+      "props": {
+        "set": "night",
+        "mood": "shocked",
+        "action": "shrug",
+        "pills": [
+          "TOO COLD",
+          "TOO THIN"
+        ],
+        "accent": "red"
+      },
+      "duration_s": 3.0,
+      "narration": "Too cold, and the air is too thin to breathe.",
+      "transition": "cut"
+    },
+    {
+      "n": 7,
+      "template": "photo",
+      "props": {
+        "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgQEBMQExYWFhYWFhoYGhsbGxoaGhobGxsdHR0iIiIdHR0bGx0dICAiIiUmJSMjIiMmJigoKDAwLi44ODpFRVP/xABXAAEBAQEBAQEAAAAAAAAAAAAAAgMBBgQFAQEBAQEBAQAAAAAAAAAAAAACAAEDBQYQAQEAAAAAAAAAAAAAAAAAAAABEQEBAAAAAAAAAAAAAAAAAAAAAf/AABEIAHgAYAMBEgACEgADEgD/2gAMAwEAAhEDEQA/APti49ejXmNaRUCjTa1io50abWsVAo02tYqBRptaxUc6NNrWKgUabWsVAo0yaxUCjSJrHXNhNdEkgSSeDio+to184TWKgUabWsVAo02tYqOdGm1rFQKNNrWKgUabWsVHOjTa1ioFGm1rFQKJtUMTUCSQJJPERUfU1lfPk1io50aRNYqBRptaxUc6NNrWKgUabWsVAo02tYqBRptaxUc6NNq3RRIEkgSSBJJ42Kj6ajXhE1io50aRNYqBRpE1ioFGm1rFRzo02tYqBRptaxUCjTa0igYTQSSBJIEkgSSeSio+io14pNYqBRpE1io50aRNYqBRpE1io51lImsVHOjTa1ioFYbXRiSBJIEkgSSBJJ5eKj3qNeQTWKgUaRNYqOdGkTWKgUaRNYqBRpE1io51lIlgpqBJIEkgSSBJIEknnIqPao15bWsVAo0yaxUCjSJrFRzo0iaxUCjSJo6LCQJJAkkCSQJJAkkCST8GOx61Vecm0djlWV0a2jsc6ym2No7HOsptbQjkjaoYkgSSBJIEkgSSBJIEkn//2Q==",
+        "caption": "THE WRIGHT FLYER, 1903",
+        "credit": "Placeholder image (generated)"
+      },
+      "duration_s": 3.0,
+      "narration": "Humans only got off the ground in 1903, with a machine.",
+      "transition": "cut"
+    }
+  ]
+}

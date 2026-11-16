@@ -1,6 +1,6 @@
 // scene_plan validation (CONTRACT Extension 6). Returns precise errors Claude can fix and resubmit.
 import type { ScenePlan } from "../../packages/contract/src/index";
-import { STYLE_TEMPLATES, TRANSITIONS } from "../../packages/contract/src/styles";
+import { TRANSITIONS, templatesFor } from "../../packages/contract/src/styles";
 import { CONSTANTS } from "./config";
 
 export function validatePlan(p: unknown, jobStyle: string): string[] {
@@ -12,7 +12,7 @@ export function validatePlan(p: unknown, jobStyle: string): string[] {
 	const m = typeof plan.resolution === "string" ? /^(\d{3,4})x(\d{3,4})$/.exec(plan.resolution) : null;
 	if (!m || +m[1] > 3840 || +m[2] > 3840 || +m[1] % 2 || +m[2] % 2) errs.push('resolution must be "<even width>x<even height>" up to 3840, e.g. "1920x1080"');
 	if (!Array.isArray(plan.scenes) || !plan.scenes.length) return [...errs, "scenes must be a non-empty array"];
-	const templates = STYLE_TEMPLATES[jobStyle] ?? [];
+	const templates = templatesFor(jobStyle);
 	let total = 0;
 	plan.scenes.forEach((s, i) => {
 		const at = `scenes[${i}]`;

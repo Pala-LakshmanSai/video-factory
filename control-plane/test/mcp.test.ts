@@ -106,7 +106,7 @@ describe("tools/list", () => {
 		}
 		const a = tools.acquire_gpu.inputSchema;
 		expect(a.required!.sort()).toEqual(["chat_key", "style", "title", "voiceover"]);
-		expect(a.properties!.style.enum).toEqual(READY_STYLES); // only ready styles can be rented for
+		expect(a.properties!.style.type).toBe("string"); // readiness is checked in acquire (same-chat replay of a hidden style still answers)
 		expect(a.properties!.voiceover.anyOf!.map((s) => s.required)).toEqual([["text"], ["drive_file_id"]]);
 		expect(a.properties!.voiceover.anyOf!.every((s) => s.additionalProperties === false)).toBe(true); // never both
 
@@ -178,7 +178,7 @@ describe("tools/call", () => {
 	});
 
 	it("a pending (or unknown) style id is rejected by acquire_gpu with an otherwise valid request", async () => {
-		const notReady = Object.keys(STYLE_REGISTRY).find((k) => STYLE_REGISTRY[k].status === "pending") ?? "stickman";
+		const notReady = Object.keys(STYLE_REGISTRY).find((k) => STYLE_REGISTRY[k].status === "pending") ?? "not-a-style";
 		expect(READY_STYLES).not.toContain(notReady);
 		const r = await call("acquire_gpu", { ...ACQ, style: notReady });
 		expect(r.isError).toBe(true);
@@ -196,8 +196,27 @@ describe("tools/call", () => {
 	it("bad acquire_gpu input is a tool error, not a crash", async () => {
 		const r = await call("acquire_gpu", { ...ACQ, style: "cartoon", voiceover: { text: "a", drive_file_id: "b" } });
 		expect(r.isError).toBe(true);
-		expect(textOf(r)).toMatch(/style/);
-		expect(textOf(r)).toMatch(/voiceover/);
+		expect(textOf(r)).toMatch(/voiceover/); // schema errors first; style readiness is checked in acquire
+		const r2 = await call("acquire_gpu", { ...ACQ, style: "cartoon" });
+		expect(r2.isError).toBe(true);
+		expect(textOf(r2)).toMatch(/style "cartoon" is not available/);
+	});
+
+	it("same-chat replay still answers after its style is hidden; ACQUIRE_ENABLED=0 refuses only new jobs", async () => {
+		const first = jsonOf(await call("acquire_gpu", ACQ));
+		await Promise.all(pending.splice(0));
+		await stubEnv.DB.prepare("UPDATE jobs SET style = 'retired-x' WHERE id = ?").bind(first.job_id).run();
+		const replay = await call("acquire_gpu", { ...ACQ, style: "retired-x" });
+		expect(jsonOf(replay).job_id).toBe(first.job_id);
+		(stubEnv as unknown as Record<string, string>).ACQUIRE_ENABLED = "0";
+		try {
+			expect(jsonOf(await call("acquire_gpu", ACQ)).job_id).toBe(first.job_id);
+			const fresh = await call("acquire_gpu", { ...ACQ, chat_key: "chatkeyB" });
+			expect(fresh.isError).toBe(true);
+			expect(textOf(fresh)).toMatch(/not accepting new videos/);
+		} finally {
+			delete (stubEnv as unknown as Record<string, string>).ACQUIRE_ENABLED;
+		}
 	});
 
 	it("submit_job with an invalid plan returns isError with every problem", async () => {

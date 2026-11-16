@@ -1,0 +1,7 @@
+@font-face { font-family: "Newsreader"; font-weight: 400; src: url(fonts/newsreader-latin-400-normal.woff2); }
+@font-face { font-family: "Newsreader"; font-weight: 400; font-style: italic; src: url(fonts/newsreader-latin-400-italic.woff2); }
+@font-face { font-family: "Newsreader"; font-weight: 500; src: url(fonts/newsreader-latin-500-normal.woff2); }
+@font-face { font-family: "Newsreader"; font-weight: 600; src: url(fonts/newsreader-latin-600-normal.woff2); }
+html, body { margin: 0; background: #000; overflow: hidden; }
+canvas { position: absolute; left: 0; top: 0; }
+#add { mix-blend-mode: plus-lighter; }

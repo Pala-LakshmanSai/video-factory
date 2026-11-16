@@ -27,7 +27,16 @@ if the style registry is unreachable.
 
 ## Before rolling back past the style registry
 
-Jobs created after a148db5 may use imported styles that the stable-v1 image lacks. Each job pins its own
-renderer image (`jobs.renderer_image`, migration 0003), but stable-v1 ignores that column. So before
-`wrangler rollback` to stable-v1: set `ADMISSION_ENABLED="0"` and wait until no job is open
-(`SELECT COUNT(*) FROM jobs WHERE state NOT IN ('done','failed','cancelled')` = 0).
+Jobs created after a148db5 may use imported styles that the stable-v1 image lacks. Each job pins its renderer
+image (`jobs.renderer_image`, migration 0003), but stable-v1 ignores that column, and jobs created before 0003
+(NULL pin) follow the current image on replacement. Order matters:
+
+1. Stop new jobs at the acquire boundary: deploy with `--var ACQUIRE_ENABLED:0` (same-chat replays still answer;
+   admission stays on so queued/retrying jobs keep getting pods).
+2. Let accepted jobs finish, or `release` them, while the selector can still make progress.
+3. Only then set `ADMISSION_ENABLED="0"` and verify zero open jobs:
+   `SELECT COUNT(*) FROM jobs WHERE state NOT IN ('done','failed','cancelled')` = 0.
+4. `wrangler rollback` to stable-v1.
+
+Turning admission off first can strand queued or retrying jobs. Never delete a registry entry: retire it
+(`status: "retired"`) so jobs pinned to it still validate and same-chat replays still answer.

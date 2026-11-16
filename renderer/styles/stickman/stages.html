@@ -1,0 +1,48 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body>
+<script src="kit.js"></script>
+<script src="stage.js"></script>
+<script>
+// stages — an altitude/distance ruler: labelled stages stack upward and the camera whips from one to the next.
+const { E, W, H, alpha, circle, glow, layer, line, path, ramp, rect, text, voidBg, track } = SK;
+stickman((x, t, f, S) => {
+  const p = S.props;
+  let items = (Array.isArray(p.items) ? p.items : []).slice(0, 6).map((it) =>
+    typeof it === "string" ? { label: it, value: "" } : { label: SM.str(it && it.label), value: SM.str(it && it.value) },
+  ).filter((it) => it.label || it.value);
+  if (items.length < 2) items = [{ label: "[missing items]", value: "" }, { label: "need 2–6", value: "" }];
+  const heading = SM.str(p.heading);
+  const GAP = 660, n = items.length;
+  // dwell on each stage, whip (0.35 s, fastest mid-way) to the next; the last one holds
+  const dwell = (S.duration - 0.3) / n;
+  const keys = [[0, 0]];
+  for (let i = 1; i < n; i++) keys.push([i * dwell, i - 1], [i * dwell + 0.35, i, E.inOut]);
+  const pos = track(t, keys);
+  const speed = Math.abs(track(t + 0.02, keys) - pos) / 0.02;
+  const cy = -pos * GAP;
+  layer(x, {}, (x) => voidBg(x, "#1d2740", 960, 560));
+  // speed streaks while whipping
+  for (let i = 0; i < 14; i++) alpha(x, Math.min(0.35, speed * 0.1), () => line(x, 200 + ((i * 397) % 1500), ((i * 211 + t * 2400) % 1300) - 100, 200 + ((i * 397) % 1500), ((i * 211 + t * 2400) % 1300) + 120, 3, "#dfe8ff"));
+  layer(x, { cam: { cx: 960, cy: 540 + cy, s: 1 } }, (x) => {
+    const top = -(n - 1) * GAP - 400, bot = 900;
+    rect(x, 560, top, 34, bot - top, "#dfd0a1");
+    for (let y = bot; y > top; y -= 40) line(x, 560, y, 560 + (Math.round((bot - y) / 40) % 5 === 0 ? 30 : 16), y, 2, "#6d6247", "butt");
+    items.forEach((it, i) => {
+      const y = 540 - i * GAP;
+      const on = ramp(pos, i - 0.6, i, E.linear);
+      glow(x, 577, y, 260, "#ff9a3c", 0.25 * on);
+      circle(x, 577, y, 20, on > 0.5 ? "#f4b748" : "#8a8170");
+      line(x, 600, y, 680, y, 4, on > 0.5 ? "#f4b748" : "#8a8170");
+      const vs = it.value ? SM.fit(x, it.value, 1100, 120, 40) : 0;
+      if (it.value) text(x, it.value, 710, y + vs * 0.36, { size: vs, fill: on > 0.5 ? "#f4b748" : "#7c7466", glow: on > 0.5 ? ["#ff9a3c", 3, 14, 0.7] : undefined });
+      const ls = SM.fit(x, it.label.toUpperCase(), 1100, 46, 22, 700, 0.06);
+      text(x, it.label.toUpperCase(), 712, y + (it.value ? vs * 0.36 + ls * 1.5 : ls * 0.36), { size: ls, weight: 700, track: 0.06, fill: on > 0.5 ? "#f9edd4" : "#8a8170" });
+    });
+  });
+  if (heading) {
+    const hs = SM.fit(x, heading, 1600, 44, 22, 800, 0.06);
+    SK.pill(x, heading, 960, 140, ramp(t, 0.05, 0.35, E.linear), { size: hs, accent: SM.accent(p.accent, 0) });
+  }
+});
+</script>
+</body></html>

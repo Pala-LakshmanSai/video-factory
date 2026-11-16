@@ -1,0 +1,13 @@
+{
+  "style": "flatglow",
+  "fps": 30,
+  "resolution": "1920x1080",
+  "scenes": [
+    {"n": 1, "template": "title", "props": {"kicker": "Tiny giants", "title": "The Animal That Survives Space", "subtitle": "Meet the tardigrade", "world": "space"}, "duration_s": 3.0, "narration": "There is an animal that can survive the vacuum of space.", "transition": "fade"},
+    {"n": 2, "template": "scene", "props": {"world": "bio", "objects": [{"kind": "cell", "x": 0.3, "y": 0.5, "size": 0.38, "color": "#ef7327", "label": "Water bear", "at": 0.2}, {"kind": "bacterium", "x": 0.72, "y": 0.38, "size": 0.16, "label": "Bacteria", "labelStyle": "line", "at": 0.8}, {"kind": "virus", "x": 0.75, "y": 0.72, "size": 0.14, "at": 1.1}], "caption": "Half a millimetre long, and almost indestructible"}, "duration_s": 3.5, "narration": "It is half a millimetre long and almost indestructible.", "transition": "slide"},
+    {"n": 3, "template": "kinetic", "props": {"text": "It can go thirty years without water", "emphasis": ["thirty", "years"]}, "duration_s": 3.0, "narration": "It can go thirty years without a drop of water.", "transition": "fade"},
+    {"n": 4, "template": "diagram", "props": {"heading": "How it survives", "nodes": [{"label": "Dry out", "kind": "orb"}, {"label": "Curl up", "kind": "cell", "color": "#ef7327"}, {"label": "Wait", "kind": "moon"}, {"label": "Revive", "kind": "star"}]}, "duration_s": 3.5, "narration": "It dries out, curls into a ball, waits, and revives.", "transition": "slide"},
+    {"n": 5, "template": "list", "props": {"heading": "It has survived", "items": ["Boiling water", "Near absolute zero", "The vacuum of space"]}, "duration_s": 3.5, "narration": "It has survived boiling, near absolute zero, and open space.", "transition": "fade"},
+    {"n": 6, "template": "end-card", "props": {"title": "Stay curious", "tagline": "Big questions, small pictures", "cta": "Subscribe", "sources": ["Jonsson et al. 2008, Current Biology"]}, "duration_s": 2.5, "narration": "Stay curious.", "transition": "cut"}
+  ]
+}

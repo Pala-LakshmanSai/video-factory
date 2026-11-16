@@ -1,0 +1,66 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body>
+<script src="kit.js"></script>
+<script src="stage.js"></script>
+<script>
+// title — the gold title card: a cream lead-in line, then the payoff word whose letters rise in one by one and hover.
+const { E, W, H, alpha, at, circle, ellipse, glow, layer, linGrad, path, radGrad, ramp, rnd, text } = SK;
+stickman((x, t, f, S) => {
+  const line = SM.str(S.props.line) || "WHAT IF YOU COULD";
+  const word = SM.req(S.props.word, "word").toUpperCase();
+  const hit = Math.min(0.6, S.duration * 0.25);
+  const l1 = ramp(t, 0.05, 0.32, E.out);
+  const l2 = ramp(t, hit, hit + 0.28, E.inOut);
+  const flash = t < hit ? 0 : Math.exp(-(t - hit) / 0.22);
+  const push = 1 + 0.035 * ramp(t, 0, 3, E.linear);
+  layer(x, {}, (x) => {
+    x.fillStyle = radGrad(x, 960, 560, 1250, [[0, "#22304d"], [1, "#05080d"]]);
+    x.fillRect(0, 0, W, H);
+    for (let i = 0; i < 9; i++) {
+      const cx = ((i * 330 + t * (30 + i * 6)) % 2400) - 240;
+      alpha(x, 0.06 + 0.04 * rnd(i, 3), () => {
+        ellipse(x, cx, 760 + rnd(i, 4) * 220, 220, 40, "#cfd9ee");
+        ellipse(x, cx + 90, 744 + rnd(i, 4) * 220, 120, 34, "#cfd9ee");
+      });
+    }
+    glow(x, 960, 500, 560, "#e8a868", 0.12);
+    glow(x, 960, 480, 900, "#fff1d6", 0.55 * flash);
+    if (t > hit)
+      for (let i = 0; i < 18; i++) {
+        const a = rnd(i, 2) * Math.PI * 2;
+        const d = (t - hit) * (120 + rnd(i, 3) * 420);
+        alpha(x, 0.8 * Math.exp(-(t - hit) / 0.7), () => circle(x, 960 + Math.cos(a) * (240 + d), 480 + Math.sin(a) * (140 + d * 0.6), 1.6 + rnd(i, 4) * 1.8, "#ffe7b8"));
+      }
+    for (let i = 0; i < 7; i++) {
+      const k = (t * 0.45 + i / 7) % 1;
+      alpha(x, 0.18 * Math.sin(k * Math.PI), () => path(x, `M ${-200 + k * 2400} ${300 + i * 80} q 120 -40 240 0 t 240 0`, null, "#dfe8ff", 3));
+    }
+  });
+  at(x, 960, 500, 0, push, push, () => {
+    x.translate(-960, -500);
+    const s1 = SM.fit(x, line, 1640, 84, 30, 800, 0.085);
+    alpha(x, l1, () => text(x, line, 960, 420, { size: s1, track: 0.085, fill: "#fdf2e3", align: "center", glow: ["#ff9a3c", 3, 12, 0.85] }));
+    if (t < hit) return;
+    const size = SM.fit(x, word, 1700, 230, 60, 800, 6 / 230);
+    const letters = [...word];
+    x.font = `800 ${size}px "Inter", sans-serif`;
+    x.letterSpacing = "6px";
+    const widths = letters.map((c) => x.measureText(c).width + 6);
+    x.letterSpacing = "0px";
+    let lx = 960 - widths.reduce((a, b) => a + b, 0) / 2;
+    const base = 420 + 40 + size * 0.78;
+    letters.forEach((c, i) => {
+      const hover = Math.sin(t * 2.4 + i * 0.9) * 10 * ramp(t, hit + 0.3, hit + 0.8);
+      const lift = (1 - E.out(ramp(t, hit + i * 0.04, hit + 0.3 + i * 0.04))) * 60;
+      const cx = lx + widths[i] / 2;
+      lx += widths[i];
+      alpha(x, 0.4 + 0.6 * l2, () => {
+        const g = linGrad(x, 0, base - size * 0.76, 0, base + 10, [[0, "#ffe3a1"], [1, "#f3b552"]]);
+        text(x, c, cx, base + hover + lift, { size, fill: g, align: "center", stroke: "#3e2410", strokeWidth: 8 * size / 230, glow: ["#ff8a24", 6, 22, 0.95] });
+        alpha(x, 0.7 * (1 - l2), () => text(x, c, cx, base + hover + lift, { size, fill: "#4a2c14", align: "center" }));
+      });
+    });
+  });
+});
+</script>
+</body></html>

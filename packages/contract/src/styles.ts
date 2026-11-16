@@ -9,7 +9,7 @@ export const TRANSITIONS = ["cut", "fade", "slide"] as const;
 
 export interface StyleEntry {
   version: string;
-  status: "ready" | "pending";
+  status: "ready" | "pending" | "retired"; // retired: hidden from new jobs, still valid for jobs that pinned it
   label: string;
   summary: string; // one line for list_styles
   templates: readonly string[];
@@ -21,6 +21,11 @@ export const STYLE_REGISTRY: Record<string, StyleEntry> = {
   explainer: { version: "1", status: "ready", label: "Explainer", summary: "Clean narrated explainer: titles, kinetic text, lists, quotes.", templates: TEMPLATES, audio: "voiceover" },
   "bold-shorts": { version: "1", status: "ready", label: "Bold Shorts", summary: "Loud high-contrast short-form, big type, fast cuts.", templates: TEMPLATES, audio: "voiceover" },
   documentary: { version: "1", status: "ready", label: "Documentary", summary: "Calm serif documentary look with captions over b-roll.", templates: TEMPLATES, audio: "voiceover" },
+  stickman: { version: "1", status: "ready", label: "Stickman Explainer", summary: "Flat stick-figure explainer: hoodie hero, letterbox, gold numbers, label pills, fast cuts.", templates: ["hero", "title", "number", "stages", "photo"], audio: "voiceover" },
+  flatglow: { version: "1", status: "ready", label: "Flatglow", summary: "Kurzgesagt-like flat glowing science animation: worlds, labelled objects, neon kinetic type, diagrams.", templates: ["title", "scene", "kinetic", "diagram", "list", "end-card"], audio: "voiceover" },
+  pov: { version: "1", status: "pending", label: "POV Escalation", summary: "First-person low-poly 3D journey with a stat HUD and italic captions.", templates: ["journey", "title", "end-card"], audio: "voiceover", blocked: "WebGL under the engine flags is verified on macOS only; needs the Linux CI/container fixture" },
+  blockworld: { version: "1", status: "pending", label: "Blockworld", summary: "Blocky low-poly 3D 'What if you kept getting ___' episodes with HUD counters and serif captions.", templates: ["episode"], audio: "voiceover", blocked: "needs a music/SFX layer; WebGL verified on macOS only" },
+  discovery: { version: "1", status: "ready", label: "Discovery Documentary", summary: "Calm real-media documentary: graded photos with slow moves, gold-pin maps, then/now reveals, serif title/chapter/quote cards.", templates: ["title", "chapter", "photo", "map", "compare", "quote", "end"], audio: "voiceover" },
 };
 
 /** Ready styles only: what acquire, submit/revise and the template loader accept. */
@@ -28,3 +33,6 @@ export const STYLE_TEMPLATES: Record<string, readonly string[]> = Object.fromEnt
   Object.entries(STYLE_REGISTRY).filter(([, s]) => s.status === "ready").map(([id, s]) => [id, s.templates]),
 );
 export const READY_STYLES = Object.keys(STYLE_TEMPLATES);
+
+/** Templates of any registered style, including retired ones: accepted jobs keep validating against their style. */
+export const templatesFor = (style: string): readonly string[] => STYLE_REGISTRY[style]?.templates ?? [];
