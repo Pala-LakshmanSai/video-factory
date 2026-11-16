@@ -8,7 +8,7 @@ import { activePod, getJob, jobCost, logEvent, now } from "./db";
 import { acquireGpu, release } from "./mcp";
 import { catalog } from "./runpod";
 import { retirePod, selectAndCreate } from "./selector";
-import { isTerminal, transition } from "./state";
+import { IllegalTransition, isTerminal, transition } from "./state";
 
 const BUDGET_USD = 2;
 const EST_MIN_PER_RUN = 12; // boot + 60 s render on a slow pod, generous
@@ -17,7 +17,20 @@ const RUN_TIMEOUT_MS = 60 * 60_000;
 interface BenchRun {
 	started_at: number;
 	jobs: { job_id: string; gpu: string; cost_per_hr: number }[];
-	results: Record<string, { boot_s: number; render_s: number; cost_per_hr: number; score: number }>;
+}
+type BenchResult = { boot_s: number; render_s: number; cost_per_hr: number; score: number };
+/** One row per bench job, written once (INSERT OR IGNORE): concurrent pod reports never overwrite each other. */
+const resultKey = (jobId: string) => `bench_result:${jobId}`;
+
+/** Cancel unless already terminal; a concurrent cancel (lost the SQL state guard) is fine. */
+async function cancel(db: D1Database, jobId: string, reason: string) {
+	const job = await getJob(db, jobId);
+	if (!job || isTerminal(job.state)) return;
+	try {
+		await transition(db, job, "cancelled", { reason });
+	} catch (e) {
+		if (!(e instanceof IllegalTransition)) throw e;
+	}
 }
 
 export async function startBench(env: Env, db: D1Database) {
@@ -27,7 +40,7 @@ export async function startBench(env: Env, db: D1Database) {
 	const rank = await getConfig<string[]>(db, "gpu_rank", GPU_RANK);
 	const cat = await catalog(env, db);
 	const available = rank.filter((g) => cat.dataCenters.some((dc) => dc.gpuAvailability?.some((a) => norm(a.id) === norm(g) && a.availability !== "NONE")));
-	const run: BenchRun = { started_at: now(), jobs: [], results: {} };
+	const run: BenchRun = { started_at: now(), jobs: [] };
 	let estimate = 0;
 	for (const gpu of available) {
 		const { job_id } = await acquireGpu(env, db, {
@@ -44,10 +57,9 @@ export async function startBench(env: Env, db: D1Database) {
 		}
 		const cost = (pod.cost_per_hr * EST_MIN_PER_RUN) / 60;
 		if (estimate + cost > BUDGET_USD) {
-			// Abort: this run would spend more than $2.
+			// Abort: this run would spend more than $2. Terminal state first, then the pod.
+			await cancel(db, job_id, "bench_budget");
 			await retirePod(env, db, pod.job_id, pod.id, "bench_budget");
-			const job = await getJob(db, job_id);
-			if (job && !isTerminal(job.state)) await transition(db, job, "cancelled", { reason: "bench_budget" });
 			break;
 		}
 		estimate += cost;
@@ -57,27 +69,32 @@ export async function startBench(env: Env, db: D1Database) {
 	return `bench started: ${run.jobs.length} GPUs, est $${estimate.toFixed(2)}`;
 }
 
-/** POST /agent/{job}/bench handler body. */
-export async function recordBench(env: Env, db: D1Database, jobId: string, renderS: number) {
+/**
+ * POST /agent/{job}/bench handler body. Result row and terminal state are written BEFORE the pod delete:
+ * deleting the pod kills the agent and its open request, so the delete goes last, through `defer` (waitUntil).
+ */
+export async function recordBench(env: Env, db: D1Database, jobId: string, renderS: number, defer: (p: Promise<unknown>) => void = () => {}) {
 	const run = await getConfig<BenchRun | null>(db, "bench_run", null);
 	const entry = run?.jobs.find((j) => j.job_id === jobId);
 	const pod = await activePod(db, jobId);
-	if (run && entry && pod?.hello_at) {
+	let result: BenchResult | null = null;
+	if (entry && pod?.hello_at) {
 		const boot_s = (pod.hello_at - pod.created_at) / 1000;
 		const score = (entry.cost_per_hr * (boot_s + renderS)) / 3600;
-		run.results[entry.gpu] = { boot_s: Math.round(boot_s), render_s: Math.round(renderS), cost_per_hr: entry.cost_per_hr, score: Math.round(score * 10000) / 10000 };
-		await setConfig(db, "bench_run", run);
+		result = { boot_s: Math.round(boot_s), render_s: Math.round(renderS), cost_per_hr: entry.cost_per_hr, score: Math.round(score * 10000) / 10000 };
+		await db.prepare("INSERT OR IGNORE INTO config (key, value_json) VALUES (?, ?)").bind(resultKey(jobId), JSON.stringify(result)).run();
 	}
+	await cancel(db, jobId, "bench_done");
+	await logEvent(db, jobId, "bench_result", result);
 	if (pod) {
-		await retirePod(env, db, pod.job_id, pod.id, "bench_done");
+		const retire = retirePod(env, db, pod.job_id, pod.id, "bench_done");
+		defer(retire);
+		await retire;
 	}
-	const job = await getJob(db, jobId);
-	if (job && !isTerminal(job.state)) await transition(db, job, "cancelled", { reason: "bench_done" });
-	await logEvent(db, jobId, "bench_result", run?.results[entry?.gpu ?? ""] ?? null);
 }
 
 /** Pure re-rank, unit-tested. */
-export function rerank(rank: string[], results: BenchRun["results"]): string[] {
+export function rerank(rank: string[], results: Record<string, BenchResult>): string[] {
 	const tested = rank.filter((g) => results[g]).sort((a, b) => results[a].score - results[b].score);
 	return [...tested, ...rank.filter((g) => !results[g])];
 }
@@ -96,16 +113,19 @@ export async function finishBench(env: Env, db: D1Database) {
 	for (const j of jobs) {
 		if (!j || isTerminal(j.state)) continue;
 		const pod = await activePod(db, j.id);
-		if (pod) {
-			await retirePod(env, db, pod.job_id, pod.id, reason);
-		}
-		await transition(db, j, "cancelled", { reason });
+		await cancel(db, j.id, reason); // terminal first, so a failed/slow delete never leaves a live bench job
+		if (pod) await retirePod(env, db, pod.job_id, pod.id, reason);
+	}
+	const results: Record<string, BenchResult> = {};
+	for (const j of run.jobs) {
+		const r = await getConfig<BenchResult | null>(db, resultKey(j.job_id), null);
+		if (r) results[j.gpu] = r;
 	}
 	const rank = await getConfig<string[]>(db, "gpu_rank", GPU_RANK);
-	const next = rerank(rank, run.results);
-	if (Object.keys(run.results).length) await setConfig(db, "gpu_rank", next);
-	await setConfig(db, "bench_last", { ...run, finished_at: now(), rank: next });
-	await db.prepare("DELETE FROM config WHERE key = 'bench_run'").run();
-	const lines = next.map((g, i) => `${i + 1}. ${g}${run.results[g] ? ` $${run.results[g].score} (boot ${run.results[g].boot_s}s, render ${run.results[g].render_s}s)` : " (untested)"}`);
+	const next = rerank(rank, results);
+	if (Object.keys(results).length) await setConfig(db, "gpu_rank", next);
+	await setConfig(db, "bench_last", { ...run, results, finished_at: now(), rank: next });
+	await db.prepare("DELETE FROM config WHERE key = 'bench_run' OR key LIKE 'bench_result:%'").run();
+	const lines = next.map((g, i) => `${i + 1}. ${g}${results[g] ? ` $${results[g].score} (boot ${results[g].boot_s}s, render ${results[g].render_s}s)` : " (untested)"}`);
 	await alert(env, null, `weekly GPU ranking ($ per 60 s test video)\n${lines.join("\n")}`);
 }

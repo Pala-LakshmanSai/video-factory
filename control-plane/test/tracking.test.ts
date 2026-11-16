@@ -524,4 +524,74 @@ describe("Sunday benchmark accounting", () => {
 		await finishBench(env, env.DB);
 		expect((await getJob(env.DB, "b1"))!.state).toBe("rendering");
 	});
+
+	const benchRun = (jobs: [string, string][]) =>
+		env.DB.prepare("INSERT INTO config (key, value_json) VALUES ('bench_run', ?)")
+			.bind(JSON.stringify({ started_at: Date.now() - 10 * MIN, jobs: jobs.map(([job_id, gpu]) => ({ job_id, gpu, cost_per_hr: 0.6 })) }))
+			.run();
+	const results = async () =>
+		(await env.DB.prepare("SELECT key, value_json FROM config WHERE key LIKE 'bench_result:%' ORDER BY key").all<{ key: string; value_json: string }>()).results.map((r) => [r.key, JSON.parse(r.value_json)]);
+
+	it("two concurrent bench reports both land and finishBench ranks both", async () => {
+		const { recordBench, finishBench } = await import("../src/bench");
+		await job("b1", "rendering", "dev_mode='bench'");
+		await job("b2", "rendering", "dev_mode='bench'");
+		await pod("p1", "b1", 10 * MIN, { hello: Date.now() - 9 * MIN });
+		await pod("p2", "b2", 10 * MIN, { hello: Date.now() - 9 * MIN });
+		await benchRun([["b1", RTX4090], ["b2", "NVIDIA L40S"]]);
+		mockFetch((u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined));
+		await Promise.all([recordBench(env, env.DB, "b1", 100), recordBench(env, env.DB, "b2", 50)]);
+		expect((await results()).map(([k]) => k)).toEqual(["bench_result:b1", "bench_result:b2"]);
+		await finishBench(env, env.DB);
+		const last = JSON.parse((await env.DB.prepare("SELECT value_json FROM config WHERE key = 'bench_last'").first<{ value_json: string }>())!.value_json);
+		expect(Object.keys(last.results).sort()).toEqual(["NVIDIA GeForce RTX 4090", "NVIDIA L40S"]);
+		expect(last.rank.slice(0, 2)).toEqual(["NVIDIA L40S", RTX4090]); // L40S rendered faster at same $/h
+		expect(await results()).toEqual([]);
+	});
+
+	it("bench job is terminal in the DB before the pod delete finishes (delayed) and even if it throws", async () => {
+		const { recordBench } = await import("../src/bench");
+		await job("b1", "rendering", "dev_mode='bench'");
+		await job("b2", "rendering", "dev_mode='bench'");
+		await pod("p1", "b1", 10 * MIN, { hello: Date.now() - 9 * MIN });
+		await pod("p2", "b2", 10 * MIN, { hello: Date.now() - 9 * MIN });
+		await benchRun([["b1", RTX4090], ["b2", "NVIDIA L40S"]]);
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		const deferred: Promise<unknown>[] = [];
+		mockFetch(async (u, i) => {
+			if (i.method !== "DELETE") return undefined;
+			if (u.includes("p2")) throw new Error("network down");
+			await gate;
+			return new Response(null, { status: 204 });
+		});
+		const pending = recordBench(env, env.DB, "b1", 60, (p) => deferred.push(p));
+		await new Promise((r) => setTimeout(r, 20)); // now inside the DELETE
+		expect((await getJob(env.DB, "b1"))!.state).toBe("cancelled");
+		expect(await results()).toHaveLength(1);
+		expect(deferred).toHaveLength(1); // the delete went through waitUntil
+		release();
+		await pending;
+		expect((await row("p1"))!.delete_reason).toBe("bench_done");
+
+		await recordBench(env, env.DB, "b2", 60);
+		expect((await getJob(env.DB, "b2"))!.state).toBe("cancelled");
+		expect(await row("p2")).toEqual({ deleted_at: null, delete_reason: "bench_done" }); // still tracked; reaper retries
+	});
+
+	it("duplicate bench report from the same pod is idempotent: first result stands, no throw", async () => {
+		const { recordBench } = await import("../src/bench");
+		await job("b1", "rendering", "dev_mode='bench'");
+		await pod("p1", "b1", 10 * MIN, { hello: Date.now() - 9 * MIN });
+		await benchRun([["b1", RTX4090]]);
+		mockFetch((u, i) => (i.method === "DELETE" ? new Response(null, { status: 204 }) : undefined));
+		await Promise.all([recordBench(env, env.DB, "b1", 100), recordBench(env, env.DB, "b1", 999)]);
+		await recordBench(env, env.DB, "b1", 5); // late retry after the pod is gone
+		const r = await results();
+		expect(r).toHaveLength(1);
+		expect(r[0][1].render_s).toBe(100);
+		expect((await getJob(env.DB, "b1"))!.state).toBe("cancelled");
+		const cancels = await env.DB.prepare("SELECT COUNT(*) n FROM events WHERE job_id = 'b1' AND kind = 'state'").first<{ n: number }>();
+		expect(cancels).toEqual({ n: 1 });
+	});
 });

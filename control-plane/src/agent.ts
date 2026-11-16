@@ -219,7 +219,7 @@ agentApp.get("/input/voiceover", async (c) => {
 /** Bench mode (env BENCH=1): the agent reports how long the 60 s test video took. */
 agentApp.post("/bench", async (c) => {
 	const { render_s } = await c.req.json<{ render_s: number }>();
-	await recordBench(c.env, c.env.DB, c.get("job").id, render_s);
+	await recordBench(c.env, c.env.DB, c.get("job").id, render_s, deferOf(c));
 	return c.json({ cmd: "cancel" });
 });
 
