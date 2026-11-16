@@ -8,7 +8,7 @@ import { activePod, getJob, jobCost, logEvent, now } from "./db";
 import { acquireGpu, release } from "./mcp";
 import { catalog } from "./runpod";
 import { retirePod, selectAndCreate } from "./selector";
-import { IllegalTransition, isTerminal, transition } from "./state";
+import { cancelJob, isTerminal } from "./state";
 
 const BUDGET_USD = 2;
 const EST_MIN_PER_RUN = 12; // boot + 60 s render on a slow pod, generous
@@ -22,24 +22,7 @@ type BenchResult = { boot_s: number; render_s: number; cost_per_hr: number; scor
 /** One row per bench job, written once (INSERT OR IGNORE): concurrent pod reports never overwrite each other. */
 const resultKey = (jobId: string) => `bench_result:${jobId}`;
 
-/**
- * Drive the job to a terminal state; returns only once a re-read shows it terminal (throws otherwise), so callers
- * may retire the pod afterwards. A lost compare-and-set (a concurrent /hello moved booting -> waiting_for_plan)
- * re-reads and retries; transition() keeps the state event history coherent (from = the state actually replaced).
- */
-async function cancel(db: D1Database, jobId: string, reason: string) {
-	for (let i = 0; i < 20; i++) {
-		const job = await getJob(db, jobId);
-		if (!job || isTerminal(job.state)) return;
-		try {
-			await transition(db, job, "cancelled", { reason });
-			return;
-		} catch (e) {
-			if (!(e instanceof IllegalTransition)) throw e;
-		}
-	}
-	throw new Error(`bench: job ${jobId} still not terminal after 20 cancel attempts`);
-}
+const cancel = (db: D1Database, jobId: string, reason: string) => cancelJob(db, jobId, { reason });
 
 export async function startBench(env: Env, db: D1Database) {
 	if (String(env.BENCH_ENABLED) !== "1") return "bench disabled: benchmark not started";

@@ -8,7 +8,7 @@ import { CONSTANTS, MAX_PODS_AT_ONCE, STYLES } from "./config";
 import { activePod, getJob, jobCost, logEvent, now, plan, randomId, updateJob, type JobRow } from "./db";
 import { mergePatch, validatePlan } from "./plan";
 import { retirePod, selectAndCreate } from "./selector";
-import { isTerminal, transition } from "./state";
+import { cancelJob, isTerminal, transition } from "./state";
 
 export const deps = { sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)), pollMs: 2000 };
 
@@ -162,16 +162,23 @@ export async function reviseScene(db: D1Database, jobId: string, scene: number, 
 	return { state: "rerendering" as const, scene };
 }
 
-export async function release(e: Env, db: D1Database, jobId: string) {
-	const job = await getJob(db, jobId);
-	if (!job) return { error: `no job ${jobId}` };
-	const pod = await activePod(db, job.id);
-	if (pod) {
-		await retirePod(e, db, job.id, pod.id, "released");
+/**
+ * Terminal state FIRST, pod delete after (deferred via waitUntil): a concurrent /hello, /done or watchdog step can
+ * never leave a non-terminal job without its pod. A job already terminal by another path (e.g. done) is reported
+ * as is; that path owns its pod (the reaper backstops), so nothing is retired twice.
+ */
+export async function release(e: Env, db: D1Database, jobId: string, defer: (p: Promise<unknown>) => void = waitUntil) {
+	if (!(await getJob(db, jobId))) return { error: `no job ${jobId}` };
+	if (await cancelJob(db, jobId)) {
+		const pod = await activePod(db, jobId);
+		if (pod) {
+			const retire = retirePod(e, db, jobId, pod.id, "released");
+			defer(retire);
+			await retire;
+		}
+		await updateJob(db, jobId, await jobCost(db, jobId));
 	}
-	if (!isTerminal(job.state)) await transition(db, job, "cancelled");
-	await updateJob(db, job.id, await jobCost(db, job.id));
-	return { state: job.state };
+	return { state: (await getJob(db, jobId))!.state };
 }
 
 const voiceoverSchema = z.union([

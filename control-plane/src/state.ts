@@ -1,7 +1,7 @@
 // SPEC §10 + CONTRACT state table. Every change writes an event; illegal transitions throw.
 import type { JobState } from "../../packages/contract/src/index";
 import { TERMINAL_STATES } from "../../packages/contract/src/index";
-import { logEvent, now, type JobRow } from "./db";
+import { getJob, logEvent, now, type JobRow } from "./db";
 
 const NEXT: Partial<Record<JobState, JobState[]>> = {
 	queued: ["provisioning"],
@@ -50,4 +50,23 @@ export async function transition(db: D1Database, job: Pick<JobRow, "id" | "state
 	if (!r.meta.changes) throw new IllegalTransition(job.state, to);
 	await logEvent(db, job.id, "state", { from: job.state, to, ...(data as object) });
 	(job as { state: JobState }).state = to;
+}
+
+/**
+ * Drive the job to `cancelled`; returns only once a re-read shows it terminal (throws otherwise), so callers may
+ * retire the pod afterwards. A lost compare-and-set (a concurrent /hello moved booting -> waiting_for_plan) re-reads
+ * and retries. Returns true if this call cancelled it, false if it was (or became) terminal by another path.
+ */
+export async function cancelJob(db: D1Database, jobId: string, data?: unknown): Promise<boolean> {
+	for (let i = 0; i < 20; i++) {
+		const job = await getJob(db, jobId);
+		if (!job || isTerminal(job.state)) return false;
+		try {
+			await transition(db, job, "cancelled", data);
+			return true;
+		} catch (e) {
+			if (!(e instanceof IllegalTransition)) throw e;
+		}
+	}
+	throw new Error(`job ${jobId} still not terminal after 20 cancel attempts`);
 }

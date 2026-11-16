@@ -658,4 +658,43 @@ describe("Sunday benchmark accounting", () => {
 		expect(last.results[RTX4090]).toMatchObject({ boot_s: 30, render_s: 60, cost_per_hr: 0.6 });
 		expect(last.rank[0]).toBe(RTX4090);
 	});
+
+	it("release: concurrent /hello between read and cancel -> job ends cancelled, pod retired only after", async () => {
+		const { release } = await import("../src/mcp");
+		await job("r1", "booting");
+		await pod("p1", "r1", 10 * MIN);
+		const raw = env.DB;
+		let raced = false;
+		const db = hooked(raw, { before: async (sql, a) => {
+			if (!raced && sql.startsWith("UPDATE jobs SET state = ?") && a[0] === "cancelled") {
+				raced = true;
+				await raw.prepare("UPDATE jobs SET state = 'waiting_for_plan' WHERE id = 'r1'").run();
+			}
+		} });
+		const atDelete: string[] = [];
+		mockFetch(async (u, i) => {
+			if (i.method !== "DELETE") return undefined;
+			atDelete.push((await getJob(raw, "r1"))!.state);
+			return new Response(null, { status: 204 });
+		});
+		const deferred: Promise<unknown>[] = [];
+		expect(await release(env, db, "r1", (p) => deferred.push(p))).toEqual({ state: "cancelled" });
+		expect(raced).toBe(true);
+		expect(deferred).toHaveLength(1);
+		expect(atDelete).toEqual(["cancelled"]);
+		expect((await row("p1"))!.delete_reason).toBe("released");
+	});
+
+	it("release on an already-done job reports done, does not throw, does not retire again", async () => {
+		const { release } = await import("../src/mcp");
+		await job("r2", "done");
+		await pod("p2", "r2", 10 * MIN);
+		const deletes: string[] = [];
+		mockFetch((u, i) => (i.method === "DELETE" ? (deletes.push(u), new Response(null, { status: 204 })) : undefined));
+		expect(await release(env, env.DB, "r2", () => {})).toEqual({ state: "done" });
+		expect(deletes).toEqual([]);
+		expect((await row("p2"))!.delete_reason).toBeNull();
+		const ev = await env.DB.prepare("SELECT COUNT(*) n FROM events WHERE job_id = 'r2' AND kind = 'state'").first<{ n: number }>();
+		expect(ev).toEqual({ n: 0 });
+	});
 });
