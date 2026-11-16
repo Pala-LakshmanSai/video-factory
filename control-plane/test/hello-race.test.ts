@@ -45,3 +45,27 @@ it("without a plan, /hello still moves booting -> waiting_for_plan", async () =>
 	expect(await res.json()).toEqual({ state: "waiting_for_plan" });
 	expect((await getJob(env.DB, "j1"))!.state).toBe("waiting_for_plan");
 });
+
+it("a paused hello from a replaced pod does not mark the replacement as booted", async () => {
+	await env.DB.prepare("INSERT INTO pods (id, job_id, cost_per_hr, created_at) VALUES ('podA', 'j1', 0.6, ?)").bind(Date.now()).run();
+	let release!: () => void;
+	const gate = new Promise<void>((r) => (release = r));
+	const body = new ReadableStream<Uint8Array>({
+		async start(ctl) {
+			await gate;
+			ctl.enqueue(new TextEncoder().encode("{}"));
+			ctl.close();
+		},
+	});
+	const old = agentApp.fetch(new Request("https://cp.test/agent/j1/hello", { method: "POST", headers: { Authorization: "Bearer tok" }, body, duplex: "half" } as RequestInit), env);
+	await new Promise((r) => setTimeout(r, 20));
+	// Watchdog replaces A with B: A deleted, B active, job token rotated.
+	await env.DB.prepare("UPDATE pods SET deleted_at = ? WHERE id = 'podA'").bind(Date.now()).run();
+	await env.DB.prepare("INSERT INTO pods (id, job_id, cost_per_hr, created_at) VALUES ('podB', 'j1', 0.6, ?)").bind(Date.now()).run();
+	await env.DB.prepare("UPDATE jobs SET job_token_sha256 = ? WHERE id = 'j1'").bind(await sha256Hex("tokB")).run();
+	release();
+	await old;
+	const b = await env.DB.prepare("SELECT hello_at, last_heartbeat_at FROM pods WHERE id = 'podB'").first<{ hello_at: number | null; last_heartbeat_at: number | null }>();
+	expect(b).toEqual({ hello_at: null, last_heartbeat_at: null });
+	expect((await getJob(env.DB, "j1"))!.state).toBe("booting");
+});

@@ -49,7 +49,13 @@ agentApp.post("/hello", async (c) => {
 	if (pod && (await hasFault(c.env.DB, job.id, "slow_boot"))) {
 		return c.json({ error: "slow_boot fault: try again" }, 503, { "X-VF-Hold": "slow_boot" }); // agent: reachable, keep retrying
 	}
-	if (pod) await c.env.DB.prepare("UPDATE pods SET hello_at = ?, last_heartbeat_at = ? WHERE id = ?").bind(now(), now(), pod.id).run();
+	// Fenced to the token this request authenticated with: a paused hello from a replaced pod must not mark the
+	// replacement as booted (that would skip its boot timeout and leave a cold pod billed until TTL).
+	if (pod) {
+		await c.env.DB.prepare("UPDATE pods SET hello_at = ?, last_heartbeat_at = ? WHERE id = ? AND EXISTS (SELECT 1 FROM jobs WHERE id = ? AND job_token_sha256 = ?)")
+			.bind(now(), now(), pod.id, job.id, job.job_token_sha256)
+			.run();
+	}
 	await logEvent(c.env.DB, job.id, "hello", body);
 	if (job.state === "booting") {
 		// One CAS decides from the row's current plan_json, not the auth-time snapshot: a submit_job landing while
