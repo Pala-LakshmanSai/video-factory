@@ -17,3 +17,9 @@ Video Factory (repo Pala-LakshmanSai/video-factory, private) is fully set up and
 
 **Styles (2026-11-16):** registry in packages/contract/src/styles.ts (ready/pending/retired; list_styles MCP tool; jobs pin renderer_image, migration 0003). Live (Worker 30f0f4be, image def0de88… from 17b67d6, 2026-11-16): all 9 ready — explainer, bold-shorts, documentary, stickman, flatglow, discovery, pov, blockworld (episode score, voiceover {none:true}), custom (per-video packages via upload_package). Qualify an image without rebuilding: dispatch .github/workflows/qualify-image.yml with the exact digest (optional blockworld=true). Release from a clean base when local main holds unreviewed commits; head pin commit carries [skip ci]. Kits live in style-kits/ (gitignored). Owner wants each video's cast/sets unique (docs/KIT_WORKFLOW.md). Rollback: docs/ROLLBACK.md (stable-v1; stop acquire → drain → admission off → rollback).
 Update: Worker 66a2fa2b + image a24422ca… (0be9613): custom and pov now ready (exact-digest qualified). Blockworld still pending; its audio/score-sync work (f35f660, 12b99c5, 31bd334) sits on local main only, unreviewed, needs samples tarball hosted + bigger image (~+230 MB) qualified.
+
+**Cross-account sync (2026-11-18):** Worker 4df7aabc (D1 migrations 0004, 0005) serves /sync/* and the MCP tools
+project_brief, style_guide, add_preference, retire_preference. 7 roots synced (style-kits + 6 skills, 3275 files,
+21 release assets for a fresh machine). Old single-file assets from the first seed are orphans; `scripts/vf gc --days 0 --yes`
+removes them (GitHub rate limits deletes, so let it run in the background). Renderer CI skips the onnxruntime CUDA
+download (upstream 404); the Dockerfile already did.
