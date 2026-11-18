@@ -11,8 +11,11 @@ dist/
 __pycache__/
 renderer/test/out/
 .venv/
-style-kits/
+/style-kits
 
 # blockworld samples: baked into the image from a pinned tarball (renderer/Dockerfile), never committed
 renderer/audio/blockworld/assets/
 renderer/audio/blockworld/samples.tar.gz
+
+# vf sync: per-machine state (docs/SYNC.md)
+.vf/local/

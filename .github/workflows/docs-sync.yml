@@ -1,0 +1,21 @@
+# Publishes docs from main to the control plane so every claude.ai Project gets them live through
+# the connector's project_brief / style_guide tools (docs/SYNC.md). Auth: this run's GITHUB_TOKEN,
+# which the Worker accepts because it can read this private repo. Free, no secrets to manage.
+name: docs-sync
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "scripts/vf.mjs", ".github/workflows/docs-sync.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22.20.0" }
+      - run: node scripts/vf.mjs docs publish
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["agent", "engine", "test", "../packages/contract/src", "../bench/*.ts"]
+  "include": ["agent", "engine", "test", "tools", "../packages/contract/src", "../bench/*.ts"]
 }

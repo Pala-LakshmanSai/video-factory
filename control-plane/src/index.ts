@@ -2,6 +2,7 @@
 //   /mcp            MCP tools (§4), behind GitHub OAuth (template) locked to ALLOWED_GITHUB_LOGIN
 //   /agent/{job}/*  agent API (§5), per-job Bearer token, no OAuth
 //   /admin/*        status page + fault injection, GitHub sign-in cookie
+//   /sync/*         cross-account sync: file index, owner preferences, docs (docs/SYNC.md); GitHub-token auth
 //   crons           watchdog (1 min), reaper + bench finish (5 min), benchmark (Sunday 03:00 UTC)
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "agents/mcp/server";
@@ -17,6 +18,7 @@ import { constantTimeEqual } from "./db";
 import { uploadInput } from "./drive";
 import { putPackageBytes } from "./packages";
 import { submitJob } from "./mcp";
+import { syncRoute } from "./sync";
 
 const mcpHandler = createMcpHandler(createServer);
 
@@ -55,6 +57,7 @@ export default {
 		const path = new URL(req.url).pathname;
 		if (path.startsWith("/agent/")) return agentApp.fetch(req, e, ctx);
 		if (path.startsWith("/admin") || path === "/callback/admin") return adminApp.fetch(req, e, ctx);
+		if (path.startsWith("/sync/")) return syncRoute(req, e);
 		if ((path === "/upload/input" || path === "/upload/plan" || path === "/upload/package") && req.method === "POST") return uploadRoute(req, e);
 		return oauth.fetch(req, e, ctx);
 	},

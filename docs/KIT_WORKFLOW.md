@@ -5,8 +5,8 @@ The registry templates (`list_styles`) stay available for quick or simple videos
 
 ## Where things live
 
-- **Kits** (source of truth): `style-kits/` in this project (gitignored, on the KIOXIA drive). One folder or
-  standalone `.md` per style, each with its `AUDIT*.md`. Add a style by dropping its kit here and auditing it
+- **Kits** (source of truth): `style-kits/` in this project (not in git; synced to every machine and Claude account by
+  `scripts/vf`, see docs/SYNC.md). One folder or standalone `.md` per style, each with its `AUDIT*.md`. Add a style by dropping its kit here and auditing it
   (no Remotion, offline, `window.__seek(t)` contract).
 - **Per-video packages**: built in a scratch/work folder, uploaded per job, kept 7 days in the control plane.
 

@@ -16,6 +16,8 @@
     // Phase 4 CI output, e.g. docker.io/<user>/video-renderer:<git sha>
     "RENDERER_IMAGE": "docker.io/lakshmansai121/video-renderer@sha256:12d1424f753084415218f170b9ea520eb1862c5ace04fb6af19f7a02d0497de8",
     "ALLOWED_GITHUB_LOGIN": "Pala-LakshmanSai",
+    // /sync/* accepts any GitHub token that can read this (private) repo; release assets there hold synced file bytes
+    "SYNC_REPO": "Pala-LakshmanSai/video-factory",
     // "1" only while running the Phase 9 drills
     "FAULTS_ENABLED": "0",
     // "1" only in .dev.vars (local): enables POST /dev/acquire

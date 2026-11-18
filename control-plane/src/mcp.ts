@@ -11,6 +11,7 @@ import { canon, mergePatch, validatePlan } from "./plan";
 import { getPackage, putPackage } from "./packages";
 import { retirePod, selectAndCreate } from "./selector";
 import { canTransition, cancelJob, isTerminal, transition } from "./state";
+import { addPref, docNames, getDoc, groupPrefs, listPrefs, retirePref } from "./sync";
 
 export const deps = { sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)), pollMs: 2000 };
 
@@ -19,7 +20,7 @@ const json = (o: unknown, extra: Content[] = []) => ({ content: [{ type: "text" 
 const fail = (msg: string) => ({ content: [{ type: "text" as const, text: msg }], isError: true });
 
 const NEXT = {
-	acquire: "Next: write the scene_plan from the style doc and call submit_job. Do not call acquire_gpu again in this chat.",
+	acquire: "Next: if you have not yet in this chat, call style_guide {style} (live style doc + owner preferences, which override older Project knowledge), then write the scene_plan from it and call submit_job. Do not call acquire_gpu again in this chat.",
 	submit: 'Next: call wait_job {job_id, until:"preview", timeout_s:50} repeatedly until state is preview_ready.',
 	preview: "Next: inspect every preview frame; fix problems with revise_scene (max 2 rounds), then call approve.",
 	done: 'Next: call wait_job {job_id, until:"done", timeout_s:50} repeatedly until state is done.',
@@ -270,7 +271,75 @@ export function createServer() {
 			json({
 				styles: Object.entries(STYLE_REGISTRY).map(([id, s]) => ({ id, version: s.version, status: s.status, label: s.label, summary: s.summary, templates: s.templates, ...(s.blocked ? { blocked: s.blocked } : {}) })),
 				new_style: "To add a new style, the user uploads the kit (.md/.zip) to the operator; it appears here as pending, then ready after its preview + final fixture pass.",
+				preferences: "Owner preferences are live: call project_brief once per chat and style_guide {style} before planning.",
 			}),
+	);
+
+	server.registerTool(
+		"project_brief",
+		{
+			description:
+				"Call FIRST in every chat (read-only, rents nothing). Returns the live Video Factory instructions and the owner's current preferences, shared by every Claude account. They override anything older in the Project's instructions or knowledge; follow them. Then call style_guide {style} before planning a video.",
+			inputSchema: z.object({}),
+		},
+		async () => {
+			const doc = await getDoc(db, "PROJECT_INSTRUCTIONS.md");
+			const block = doc ? (/```[a-z]*\n([\s\S]*?)```/.exec(doc.body)?.[1] ?? doc.body) : null;
+			const prefs = groupPrefs(await listPrefs(db));
+			return json({
+				instructions: block ?? "(instructions not published yet: follow the Project's own instructions)",
+				instructions_updated_at: doc ? new Date(doc.updated_at).toISOString() : null,
+				preferences_global: prefs.global ?? [],
+				preferences_by_style: Object.fromEntries(Object.entries(prefs).filter(([k]) => k !== "global")),
+				style_docs: (await docNames(db)).filter((n) => n.startsWith("styles/")).map((n) => n.slice(7, -3)),
+				rules: "When the user states a lasting preference, save it with add_preference (scope global or the style id) so every account gets it. If it replaces an older one, retire_preference that id.",
+			});
+		},
+	);
+
+	server.registerTool(
+		"style_guide",
+		{
+			description:
+				"Call before writing a scene_plan for a style (read-only). Returns the live style doc (template props, pacing) and the owner's preferences for that style plus global ones. Follow the preferences over any older Project knowledge file.",
+			inputSchema: z.object({ style: z.string().min(1).max(64).describe("style id, e.g. flatglow") }),
+		},
+		async ({ style }) => {
+			const doc = await getDoc(db, `styles/${style}.md`);
+			const prefs = groupPrefs(await listPrefs(db));
+			return json({
+				style,
+				registry: STYLE_REGISTRY[style] ? { status: STYLE_REGISTRY[style].status, templates: STYLE_REGISTRY[style].templates } : null,
+				preferences_global: prefs.global ?? [],
+				preferences_style: prefs[style] ?? [],
+				doc: doc?.body ?? (STYLE_REGISTRY[style] ? "(style doc not published yet)" : "No registry doc: this style is made in Claude Code with its skill or kit; the preferences above still apply."),
+			});
+		},
+	);
+
+	server.registerTool(
+		"add_preference",
+		{
+			description:
+				"Save a lasting owner preference (call when the user says how videos or a style should always look/sound/be made). It applies immediately to every Claude account and Claude Code. scope: \"global\" or a style id. One clear rule per call, in the user's intent, e.g. \"flatglow: captions never cover characters\".",
+			inputSchema: z.object({ scope: z.string().min(1).max(40), text: z.string().min(1).max(2000) }),
+		},
+		async ({ scope, text }) => {
+			const r = await addPref(db, scope, text, "claude.ai");
+			return "error" in r ? fail(r.error!) : json(r);
+		},
+	);
+
+	server.registerTool(
+		"retire_preference",
+		{
+			description: "Retire an owner preference by id (from project_brief/style_guide) when the user withdraws or replaces it. Kept in history.",
+			inputSchema: z.object({ id: z.number().int().positive(), reason: z.string().max(500).default("") }),
+		},
+		async ({ id, reason }) => {
+			const r = await retirePref(db, id, reason);
+			return "error" in r ? fail(r.error!) : json(r);
+		},
 	);
 
 	server.registerTool(

@@ -88,6 +88,26 @@ describe("list_styles", () => {
 	});
 });
 
+describe("live preferences (project_brief / style_guide / add / retire)", () => {
+	it("a preference saved in one chat shows up in every later brief and style guide, until retired", async () => {
+		await stubEnv.DB.prepare("INSERT INTO docs (name, body, sha, updated_at) VALUES (?, ?, ?, ?)").bind("PROJECT_INSTRUCTIONS.md", "# x\n```\nLIVE RULES\n```\n", "s1", 1).run();
+		await stubEnv.DB.prepare("INSERT INTO docs (name, body, sha, updated_at) VALUES (?, ?, ?, ?)").bind("styles/flatglow.md", "FLATGLOW DOC", "s2", 1).run();
+		const a = jsonOf(await call("add_preference", { scope: "flatglow", text: "captions never cover characters" }));
+		jsonOf(await call("add_preference", { scope: "global", text: "no overlaps" }));
+		const brief = jsonOf(await call("project_brief", {}));
+		expect(brief.instructions).toBe("LIVE RULES\n");
+		expect(brief.preferences_global.map((p: { text: string }) => p.text)).toEqual(["no overlaps"]);
+		expect(brief.preferences_by_style.flatglow[0].text).toBe("captions never cover characters");
+		expect(brief.style_docs).toEqual(["flatglow"]);
+		const g = jsonOf(await call("style_guide", { style: "flatglow" }));
+		expect([g.doc, g.preferences_style.length, g.preferences_global.length]).toEqual(["FLATGLOW DOC", 1, 1]);
+		expect(jsonOf(await call("add_preference", { scope: "flatglow", text: "captions never cover characters" })).duplicate).toBe(true);
+		jsonOf(await call("retire_preference", { id: a.id, reason: "replaced" }));
+		expect(jsonOf(await call("style_guide", { style: "flatglow" })).preferences_style).toEqual([]);
+		expect((await call("add_preference", { scope: "Bad Scope", text: "x" })).isError).toBe(true);
+	});
+});
+
 describe("tools/list", () => {
 	let tools: Record<string, Tool>;
 	beforeEach(async () => {
@@ -95,8 +115,8 @@ describe("tools/list", () => {
 		tools = Object.fromEntries(list.map((t) => [t.name, t]));
 	});
 
-	it("registers the six SPEC §4 tools plus list_styles", () => {
-		expect(Object.keys(tools).sort()).toEqual(["acquire_gpu", "approve", "list_styles", "release", "revise_scene", "submit_job", "upload_package", "wait_job"]);
+	it("registers the six SPEC §4 tools plus list_styles and the live preference tools", () => {
+		expect(Object.keys(tools).sort()).toEqual(["acquire_gpu", "add_preference", "approve", "list_styles", "project_brief", "release", "retire_preference", "revise_scene", "style_guide", "submit_job", "upload_package", "wait_job"]);
 	});
 
 	it("input schemas are JSON Schema objects with the SPEC field names", () => {

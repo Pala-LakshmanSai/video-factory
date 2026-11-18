@@ -1,0 +1,3 @@
+#!/bin/sh
+# Video Factory sync CLI (docs/SYNC.md). Usage: scripts/vf <setup|pull|push|status|prefs|pref add ...>
+exec node "$(dirname "$0")/vf.mjs" "$@"
