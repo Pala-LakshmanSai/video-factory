@@ -7,7 +7,7 @@
 //   GitHub release assets   file bytes of skills + style kits (content-addressed)      -> this tool
 // One credential everywhere: your GitHub login (gh auth login). No other secrets.
 //
-// Commands: setup | pull | push | status | track | untrack | resolve | gc | prefs | pref add|retire | docs publish | hook session-start|stop
+// Commands: setup | pull | push | status | track | untrack | resolve | repack | gc | prefs | pref add|retire | docs publish | hook session-start|stop
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -564,6 +564,18 @@ async function push(state, opts = {}) {
 	const need = [...new Map(changes.filter((c) => c.sha && !assets.has(c.sha)).map((c) => [c.sha, c])).values()];
 	const total = need.reduce((a, c) => a + c.size, 0);
 	if (need.length) say(`uploading ${need.length} file(s), ${fmtB(total)}`);
+	await uploadAll(need, assets, report, total);
+	await commitChanges(state, changes, assets, report);
+	if (report.conflicts.length) {
+		// someone else changed these first: pull marks real conflicts (or no-ops when identical) for `vf resolve`
+		await pull(state);
+	}
+	writeJson(LAST_F, { at: Date.now(), kind: "push", ...summary(state, report) });
+	return report;
+}
+
+/** Upload file bytes: big files one asset each, small files packed into ~64 MB assets (GitHub limits uploads per hour). */
+async function uploadAll(need, assets, report, total) {
 	// big files: one asset each; small files: packed into ~64 MB assets (few uploads, GitHub rate limits)
 	const big = need.filter((c) => c.size >= BIG);
 	const small = need.filter((c) => c.size < BIG);
@@ -614,6 +626,10 @@ async function push(state, opts = {}) {
 		progress(1, c.size);
 	})));
 	for (const [c, e] of upErr) report.errors.push(`${c.root}:${c.path}: ${e.message}`);
+}
+
+/** Commit changes to the index in chunks; updates state for every change the server accepted. */
+async function commitChanges(state, changes, assets, report) {
 	const ready = changes.filter((c) => c.sha === null || assets.has(c.sha));
 	for (let i = 0; i < ready.length; i += CHUNK) {
 		const chunk = ready.slice(i, i + CHUNK).map(({ abs, ...c }) => (c.sha ? { ...c, ...assets.get(c.sha) } : c));
@@ -630,12 +646,6 @@ async function push(state, opts = {}) {
 		}
 		saveState(state);
 	}
-	if (report.conflicts.length) {
-		// someone else changed these first: pull marks real conflicts (or no-ops when identical) for `vf resolve`
-		await pull(state);
-	}
-	writeJson(LAST_F, { at: Date.now(), kind: "push", ...summary(state, report) });
-	return report;
 }
 
 function summary(state, rep) {
@@ -834,6 +844,31 @@ async function main() {
 			if (r.status !== 200) throw new Error(r.json.error);
 			const p = await push(state, { only: name });
 			return say(`tracking ${name} -> ${target}; uploaded ${p.uploaded} (${fmtB(p.bytes)}), committed ${p.committed}`);
+		}
+		if (cmd === "repack") {
+			// Re-store small files that were uploaded one asset each into packs, so a new machine downloads
+			// a few dozen assets instead of thousands (GitHub allows 5000 API calls per hour).
+			await pull(state);
+			const roots = new Map(state.roots.map((x) => [x.name, x]));
+			const items = [];
+			for (const [k, f] of Object.entries(state.files)) {
+				if (!f.sha || f.off != null || f.asset === 0 || f.size >= BIG || state.conflicts[k]) continue;
+				const [rn, path] = splitKey(k);
+				if (!roots.has(rn)) continue;
+				const abs = join(resolveTarget(roots.get(rn).target), path);
+				if ((await shaOf(abs)) === f.sha) items.push({ root: rn, path, sha: f.sha, size: f.size, mode: f.mode, prev: f.sha, abs });
+			}
+			const need = [...new Map(items.map((c) => [c.sha, c])).values()];
+			const report = { uploaded: 0, bytes: 0, committed: 0, conflicts: [], errors: [] };
+			const total = need.reduce((a, c) => a + c.size, 0);
+			say(`repacking ${items.length} small file(s) (${fmtB(total)})`);
+			const assets = new Map();
+			await uploadAll(need, assets, report, total);
+			await commitChanges(state, items.filter((c) => assets.has(c.sha)), assets, report);
+			saveState(state);
+			say(`repacked ${report.committed} file(s) into packs; run \`vf gc --days 0 --yes\` later to delete the old single-file copies`);
+			if (report.errors.length) (warn(`errors:\n  ${report.errors.slice(0, 20).join("\n  ")}`), (process.exitCode = 1));
+			return;
 		}
 		if (cmd === "gc") {
 			// Deletes blob assets no current file uses (old versions, failed pushes) once older than --days (default 30).
