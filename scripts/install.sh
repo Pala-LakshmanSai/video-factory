@@ -19,10 +19,10 @@ fi
 brew --version | head -1
 
 step "Tools"
-want=(git gh node ffmpeg yt-dlp python@3.12 uv whisper-cpp)
+want="git:git gh:gh node:node ffmpeg:ffmpeg yt-dlp:yt-dlp python3.12:python@3.12 uv:uv whisper-cli:whisper-cpp" # command:formula
 missing=()
-for f in "${want[@]}"; do brew list --formula "$f" >/dev/null 2>&1 || missing+=("$f"); done
-if [ ${#missing[@]} -gt 0 ]; then brew install "${missing[@]}"; else echo "all present: ${want[*]}"; fi
+for w in $want; do command -v "${w%%:*}" >/dev/null || missing+=("${w#*:}"); done
+if [ ${#missing[@]} -gt 0 ]; then brew install "${missing[@]}"; else echo "all present"; fi
 node -e 'const [a,b]=process.versions.node.split(".").map(Number); if (a<22||(a===22&&b<18)) process.exit(1)' || brew upgrade node
 [ -d "/Applications/Google Chrome.app" ] || brew install --cask google-chrome
 
