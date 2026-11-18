@@ -97,7 +97,7 @@ async function sample() {
 		const par = Math.max(1, Math.floor(availableParallelism() / 4));
 		const env = { ...process.env, TTS_ALLOW_DOWNLOAD: "1", TTS_THREADS: "4", ...(opt("--voice") ? { TTS_VOICE: opt("--voice") } : {}) };
 		const voiceTs = join(RENDERER, "engine", "voice.ts");
-		await pool(plan.scenes, par, async (s: { n: number; narration: string }) => {
+		const one = async (s: { n: number; narration: string }) => {
 			const raw = join(out, `vo_${s.n}.wav`);
 			const txt = join(out, `vo_${s.n}.txt`);
 			const prev = existsSync(txt) ? readFileSync(txt, "utf8") : "";
@@ -105,7 +105,10 @@ async function sample() {
 				writeFileSync(txt, s.narration);
 				await run(process.execPath, [voiceTs, txt, raw], { env, maxBuffer: 1 << 26 });
 			}
-		});
+		};
+		// first scene alone: on a new machine it downloads the voice model once, then the rest run in parallel
+		await one(plan.scenes[0]);
+		await pool(plan.scenes.slice(1), par, one);
 		const list: string[] = [];
 		for (const s of plan.scenes) {
 			const pad = join(out, `vp_${s.n}.wav`);
