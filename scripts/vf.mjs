@@ -667,6 +667,7 @@ async function publishDocs() {
 	const list = ["PROJECT_INSTRUCTIONS.md", "CONTRACT.md", "KIT_WORKFLOW.md", "ENGINE_FLAT2D.md", "SYNC.md"]
 		.filter((f) => existsSync(join(REPO, "docs", f)))
 		.map((f) => ({ name: f, body: readFileSync(join(REPO, "docs", f), "utf8") }));
+	list.push({ name: "install.sh", body: readFileSync(join(REPO, "scripts", "install.sh"), "utf8") }); // served at GET /install
 	for (const sub of ["styles", "prompts"]) {
 		const d = join(REPO, "docs", sub);
 		if (existsSync(d)) for (const f of readdirSync(d).filter((x) => x.endsWith(".md"))) list.push({ name: `${sub}/${f}`, body: readFileSync(join(d, f), "utf8") });
@@ -688,6 +689,54 @@ function have(cmd, args = ["--version"]) {
 function npmCi(dir) {
 	say(`  npm ci in ${dir}`);
 	execFileSync("npm", ["ci", "--no-audit", "--no-fund", ...(dir.endsWith("control-plane") ? ["--legacy-peer-deps"] : [])], { cwd: dir, stdio: QUIET ? "ignore" : "inherit" });
+}
+// Big per-machine downloads the skills need (not synced: they are public and large). Each is skipped when present.
+async function fetchTo(url, dest, minBytes) {
+	if (existsSync(dest) && statSync(dest).size >= minBytes) return false;
+	mkdirSync(dirname(dest), { recursive: true });
+	say(`  downloading ${url.split("/").at(-1)}...`);
+	execFileSync("curl", ["-fL", "--retry", "3", "-o", `${dest}.part`, url], { stdio: QUIET ? "ignore" : "inherit" });
+	if (statSync(`${dest}.part`).size < minBytes) throw new Error(`${url}: download too small`);
+	renameSync(`${dest}.part`, dest);
+	return true;
+}
+async function setupModels(skills) {
+	const names = new Set(skills.map((s) => s.split(sep).at(-1)));
+	const step = async (what, fn) => {
+		try {
+			await fn();
+		} catch (e) {
+			warn(`  ${what} failed: ${e.message.split("\n")[0]}`);
+		}
+	};
+	if (["gta", "aviation", "paper-style"].some((n) => names.has(n)))
+		await step("whisper model", () => fetchTo("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin", join(process.env.WHISPER_MODEL ? dirname(process.env.WHISPER_MODEL) : join(homedir(), ".whisper-models"), "ggml-large-v3-turbo.bin"), 1_000_000_000));
+	const paper = skills.find((s) => s.endsWith(`${sep}paper-style`));
+	if (paper) {
+		const kok = process.env.KOKORO_DIR ?? join(homedir(), ".cache", "kokoro");
+		const rel = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0";
+		await step("kokoro model", () => fetchTo(`${rel}/kokoro-v1.0.onnx`, join(kok, "kokoro-v1.0.onnx"), 300_000_000));
+		await step("kokoro voices", () => fetchTo(`${rel}/voices-v1.0.bin`, join(kok, "voices-v1.0.bin"), 20_000_000));
+		const venv = join(paper, "audio", ".venv");
+		if (!existsSync(join(venv, "bin", "python")))
+			await step("paper-style audio venv", () => {
+				say("  making paper-style audio venv...");
+				execFileSync("uv", ["venv", "--python", "3.12", venv], { stdio: QUIET ? "ignore" : "inherit" });
+				execFileSync("uv", ["pip", "install", "kokoro-onnx", "soundfile"], { env: { ...process.env, VIRTUAL_ENV: venv }, stdio: QUIET ? "ignore" : "inherit" });
+			});
+	}
+}
+// Registers the factory's MCP connector for every Claude Code session of this user (sign-in happens on first use).
+function connectMcp() {
+	const claude = [join(homedir(), ".local", "bin", "claude"), "claude"].find((c) => have(c));
+	if (!claude) return `claude command not found; later run: claude mcp add --transport http --scope user video-factory ${CFG.api}/mcp`;
+	if (have(claude, ["mcp", "get", "video-factory"])) return "already added";
+	try {
+		execFileSync(claude, ["mcp", "add", "--transport", "http", "--scope", "user", "video-factory", `${CFG.api}/mcp`], { stdio: "ignore" });
+		return "added (Claude asks you to sign in with GitHub the first time it uses it; type /mcp if needed)";
+	} catch (e) {
+		return `could not add (${e.message.split("\n")[0]}); run: claude mcp add --transport http --scope user video-factory ${CFG.api}/mcp`;
+	}
 }
 async function setup(state) {
 	const [maj, min] = process.versions.node.split(".").map(Number);
@@ -725,11 +774,24 @@ async function setup(state) {
 			}
 	}
 	const skills = state.roots.filter((r) => r.target.startsWith("~/.claude/skills/")).map((r) => resolveTarget(r.target));
-	const checkers = skills.filter((s) => existsSync(join(s, "scripts", "check_setup.py")));
 	say(`\nskills synced: ${skills.map((s) => s.split(sep).at(-1)).join(", ") || "(none)"}`);
-	if (checkers.length) say(`run each skill's own setup check (installs its Python/tools):\n${checkers.map((s) => `  python3 "${join(s, "scripts", "check_setup.py")}"`).join("\n")}`);
-	say(`\nconnect the factory (once per Claude account):\n  claude mcp add --transport http video-factory ${CFG.api}/mcp`);
+	if (!flag("--no-models")) await setupModels(skills);
+	const bad = [];
+	for (const s of skills.filter((s) => existsSync(join(s, "scripts", "check_setup.py")))) {
+		let out;
+		try {
+			out = execFileSync("python3", [join(s, "scripts", "check_setup.py")], { encoding: "utf8", timeout: 120_000 });
+		} catch (e) {
+			out = `${e.stdout ?? ""}${e.stderr ?? e.message}`;
+		}
+		const left = out.split("\n").filter((l) => l.startsWith("MISSING"));
+		say(`  ${s.split(sep).at(-1)}: ${left.length ? `${left.length} missing` : "all good"}`);
+		for (const l of left) bad.push(`${s.split(sep).at(-1)}: ${l.replace(/^MISSING\s+/, "")}`);
+	}
+	say(`\nconnector for Claude Code: ${connectMcp()}`);
 	say(`\nlive owner preferences:\n${await prefsText()}`);
+	if (bad.length) say(`\nstill to fix:\n${bad.map((b) => `  - ${b}`).join("\n")}`);
+	else say("\nsetup complete: everything checks out");
 	writeJson(LAST_F, { at: Date.now(), kind: "setup", ...summary(state, rep) });
 }
 

@@ -18,7 +18,7 @@ import { constantTimeEqual } from "./db";
 import { uploadInput } from "./drive";
 import { putPackageBytes } from "./packages";
 import { submitJob } from "./mcp";
-import { syncRoute } from "./sync";
+import { getDoc, syncRoute } from "./sync";
 
 const mcpHandler = createMcpHandler(createServer);
 
@@ -52,12 +52,21 @@ async function uploadRoute(req: Request, e: Env) {
 	return Response.json({ drive_file_id: id });
 }
 
+// GET /install: the new-Mac setup script (scripts/install.sh, published with the docs). Public: it holds no secrets,
+// and everything it fetches from the factory needs the owner's GitHub sign-in.
+async function installScript(e: Env) {
+	const doc = await getDoc(e.DB, "install.sh");
+	if (!doc) return new Response("echo 'install script not published yet' >&2; exit 1\n", { status: 503, headers: { "Content-Type": "text/plain" } });
+	return new Response(doc.body, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
 export default {
 	fetch(req: Request, e: Env, ctx: ExecutionContext) {
 		const path = new URL(req.url).pathname;
 		if (path.startsWith("/agent/")) return agentApp.fetch(req, e, ctx);
 		if (path.startsWith("/admin") || path === "/callback/admin") return adminApp.fetch(req, e, ctx);
 		if (path.startsWith("/sync/")) return syncRoute(req, e);
+		if (path === "/install" && req.method === "GET") return installScript(e);
 		if ((path === "/upload/input" || path === "/upload/plan" || path === "/upload/package") && req.method === "POST") return uploadRoute(req, e);
 		return oauth.fetch(req, e, ctx);
 	},

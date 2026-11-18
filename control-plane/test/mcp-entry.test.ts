@@ -42,6 +42,13 @@ function memKv() {
 const req = (path: string, init: RequestInit = {}) => worker.fetch(new Request(ORIGIN + path, init), e, ctx);
 
 describe("routing", () => {
+	it("GET /install serves the published setup script without auth", async () => {
+		expect((await req("/install")).status).toBe(503);
+		await e.DB.prepare("INSERT INTO docs (name, body, sha, updated_at) VALUES ('install.sh', '#!/bin/bash\necho hi', 'x', 1)").run();
+		const r = await req("/install");
+		expect(r.status).toBe(200);
+		expect(await r.text()).toBe("#!/bin/bash\necho hi");
+	});
 	it("/agent/* goes to the agent API (job token, not OAuth)", async () => {
 		const r = await req("/agent/j1/spec");
 		expect(r.status).toBe(401);
