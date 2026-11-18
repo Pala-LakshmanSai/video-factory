@@ -21,7 +21,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-inter fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji
       - working-directory: renderer
         run: |
-          npm ci --no-audit --no-fund
+          ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --no-audit --no-fund # TTS runs on CPU; upstream CUDA binary URL 404s
           npx playwright install --with-deps chromium
           npx tsc --noEmit
           TEST_OUT=test/out node --test test/*.test.ts
