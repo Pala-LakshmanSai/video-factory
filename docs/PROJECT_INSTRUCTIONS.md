@@ -2,7 +2,7 @@
 
 The block below is served LIVE to every claude.ai Project through the Video Factory connector's `project_brief`
 tool (published from git main by `.github/workflows/docs-sync.yml`). Do not paste it into a Project: paste only the
-short bootstrap in `docs/prompts/NEW_ACCOUNT_SETUP.md` (part B), once. Then any change merged here, and every owner
+one-line bootstrap in `docs/prompts/NEW_ACCOUNT_SETUP.md` (part B), once. Then any change merged here, and every owner
 preference saved with `add_preference` / `scripts/vf pref add`, reaches every account on its next chat.
 No Project knowledge files are needed (style docs come live from `style_guide`).
 

@@ -20,7 +20,7 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
 
 | Command | What it does |
 |---|---|
-| `setup` | New machine: checks tools, pulls everything, installs npm deps (repo + skill engines), Playwright browser, prints the skill checks to run and the connector command. |
+| `setup` | New machine (the one-command installer `curl -fsSL <api>/install \| bash` runs it): checks tools, pulls everything, installs npm deps (repo + skill engines), Playwright browser, whisper/Kokoro models and paper-style's audio venv (`--no-models` skips them), adds the Claude Code connector, runs every skill's check and lists what is still missing. |
 | `pull` | Fast-forward git, then download every synced file that changed elsewhere. |
 | `push` | Upload local changes in skills/kits and commit them to the index (also runs automatically after each Claude Code turn). |
 | `status` | Local changes not pushed yet, conflicts, tracked roots. |
@@ -48,6 +48,7 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
 - One file up to 1.9 GB. Release assets: about 1000 per shard × 16 shards; run `vf gc --yes` now and then.
 - Skills edited from a Claude Code session started outside this repo are pushed on the next `vf push` or the next
   session in this repo.
-- An existing claude.ai Project created before 2026-11-18 should replace its instructions with the bootstrap in
-  `docs/prompts/NEW_ACCOUNT_SETUP.md` (part B) once. Even without it, `acquire_gpu` and `list_styles` now point
-  every chat at the live `style_guide`, so preferences still apply.
+- An existing claude.ai Project created before 2026-11-18 should replace its instructions with the one-line bootstrap in
+  `docs/prompts/NEW_ACCOUNT_SETUP.md` (part B) once. Even without it, the connector's server instructions tell
+  Claude to call `project_brief` first, and `acquire_gpu` / `list_styles` point at the live `style_guide`.
+- `GET /install` serves `scripts/install.sh` as published by `docs publish` (CI, on every push to main touching it).

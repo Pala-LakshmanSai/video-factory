@@ -396,7 +396,7 @@ const lockBusy = () => {
 
 // ---------------------------------------------------------------- git fast-forward
 function git(...a) {
-	return execFileSync("git", ["-C", REPO, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	return execFileSync("git", ["-C", REPO, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }).trim();
 }
 function gitFastForward() {
 	try {
@@ -678,121 +678,151 @@ async function publishDocs() {
 }
 
 // ---------------------------------------------------------------- setup (new machine / new account)
+// Never hangs (every step has a timeout), never stops halfway (each step's failure is collected), safe to re-run
+// (finished work is skipped), and ends with "setup complete" or a "still to fix" list (exit code 1).
 function have(cmd, args = ["--version"]) {
 	try {
-		execFileSync(cmd, args, { stdio: "ignore" });
+		execFileSync(cmd, args, { stdio: "ignore", timeout: 30_000, killSignal: "SIGKILL" });
 		return true;
 	} catch {
 		return false;
 	}
 }
+const run = (cmd, args, o = {}) => execFileSync(cmd, args, { stdio: QUIET ? "ignore" : ["ignore", "inherit", "inherit"], killSignal: "SIGKILL", ...o });
+// node_modules is current when npm's own record of the install is newer than the lockfile (catches half-done installs).
+function depsCurrent(dir) {
+	const rec = join(dir, "node_modules", ".package-lock.json");
+	return existsSync(rec) && statSync(rec).mtimeMs >= statSync(join(dir, "package-lock.json")).mtimeMs;
+}
 function npmCi(dir) {
 	say(`  npm ci in ${dir}`);
-	execFileSync("npm", ["ci", "--no-audit", "--no-fund", ...(dir.endsWith("control-plane") ? ["--legacy-peer-deps"] : [])], { cwd: dir, stdio: QUIET ? "ignore" : "inherit" });
+	run("npm", ["ci", "--no-audit", "--no-fund", ...(dir.endsWith("control-plane") ? ["--legacy-peer-deps"] : [])], { cwd: dir, timeout: 900_000 });
 }
-// Big per-machine downloads the skills need (not synced: they are public and large). Each is skipped when present.
-async function fetchTo(url, dest, minBytes) {
-	if (existsSync(dest) && statSync(dest).size >= minBytes) return false;
+// Big per-machine downloads the skills need (public and large, so not synced). Resumes a partial download.
+function fetchTo(url, dest, minBytes) {
+	if (existsSync(dest) && statSync(dest).size >= minBytes) return;
 	mkdirSync(dirname(dest), { recursive: true });
 	say(`  downloading ${url.split("/").at(-1)}...`);
-	execFileSync("curl", ["-fL", "--retry", "3", "-o", `${dest}.part`, url], { stdio: QUIET ? "ignore" : "inherit" });
+	try {
+		run("curl", ["-fL", "-C", "-", "--retry", "3", "--connect-timeout", "30", "--speed-limit", "10000", "--speed-time", "60", "-o", `${dest}.part`, url]);
+	} catch (e) {
+		if (e.status === 22 || e.status === 33) rmSync(`${dest}.part`, { force: true }); // HTTP error / can't resume: start over next time
+		throw e;
+	}
 	if (statSync(`${dest}.part`).size < minBytes) throw new Error(`${url}: download too small`);
 	renameSync(`${dest}.part`, dest);
-	return true;
-}
-async function setupModels(skills) {
-	const names = new Set(skills.map((s) => s.split(sep).at(-1)));
-	const step = async (what, fn) => {
-		try {
-			await fn();
-		} catch (e) {
-			warn(`  ${what} failed: ${e.message.split("\n")[0]}`);
-		}
-	};
-	if (["gta", "aviation", "paper-style"].some((n) => names.has(n)))
-		await step("whisper model", () => fetchTo("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin", join(process.env.WHISPER_MODEL ? dirname(process.env.WHISPER_MODEL) : join(homedir(), ".whisper-models"), "ggml-large-v3-turbo.bin"), 1_000_000_000));
-	const paper = skills.find((s) => s.endsWith(`${sep}paper-style`));
-	if (paper) {
-		const kok = process.env.KOKORO_DIR ?? join(homedir(), ".cache", "kokoro");
-		const rel = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0";
-		await step("kokoro model", () => fetchTo(`${rel}/kokoro-v1.0.onnx`, join(kok, "kokoro-v1.0.onnx"), 300_000_000));
-		await step("kokoro voices", () => fetchTo(`${rel}/voices-v1.0.bin`, join(kok, "voices-v1.0.bin"), 20_000_000));
-		const venv = join(paper, "audio", ".venv");
-		if (!existsSync(join(venv, "bin", "python")))
-			await step("paper-style audio venv", () => {
-				say("  making paper-style audio venv...");
-				execFileSync("uv", ["venv", "--python", "3.12", venv], { stdio: QUIET ? "ignore" : "inherit" });
-				execFileSync("uv", ["pip", "install", "kokoro-onnx", "soundfile"], { env: { ...process.env, VIRTUAL_ENV: venv }, stdio: QUIET ? "ignore" : "inherit" });
-			});
-	}
 }
 // Registers the factory's MCP connector for every Claude Code session of this user (sign-in happens on first use).
 function connectMcp() {
 	const claude = [join(homedir(), ".local", "bin", "claude"), "claude"].find((c) => have(c));
-	if (!claude) return `claude command not found; later run: claude mcp add --transport http --scope user video-factory ${CFG.api}/mcp`;
+	if (!claude) throw new Error("claude command not found (install: curl -fsSL https://claude.ai/install.sh | bash)");
 	if (have(claude, ["mcp", "get", "video-factory"])) return "already added";
-	try {
-		execFileSync(claude, ["mcp", "add", "--transport", "http", "--scope", "user", "video-factory", `${CFG.api}/mcp`], { stdio: "ignore" });
-		return "added (Claude asks you to sign in with GitHub the first time it uses it; type /mcp if needed)";
-	} catch (e) {
-		return `could not add (${e.message.split("\n")[0]}); run: claude mcp add --transport http --scope user video-factory ${CFG.api}/mcp`;
-	}
+	run(claude, ["mcp", "add", "--transport", "http", "--scope", "user", "video-factory", `${CFG.api}/mcp`], { stdio: "ignore", timeout: 60_000 });
+	return "added (Claude asks you to sign in with GitHub the first time it uses it; type /mcp if needed)";
 }
 async function setup(state) {
+	const bad = [];
+	const step = async (what, fn) => {
+		try {
+			return await fn();
+		} catch (e) {
+			const msg = `${what}: ${String(e.message ?? e).split("\n")[0]}`;
+			warn(`  FAILED ${msg}`);
+			bad.push(msg);
+		}
+	};
 	const [maj, min] = process.versions.node.split(".").map(Number);
 	const checks = [
-		["node >= 22.18", maj > 22 || (maj === 22 && min >= 18)],
+		["node 22.18 or newer", maj > 22 || (maj === 22 && min >= 18)],
 		["git", have("git")],
-		["gh (GitHub CLI) signed in", have("gh", ["auth", "status"])],
+		["GitHub sign-in (gh auth login)", have("gh", ["auth", "token"])],
 		["ffmpeg", have("ffmpeg", ["-version"])],
-		["yt-dlp (style refinement)", have("yt-dlp")],
+		["yt-dlp", have("yt-dlp")],
 		["python3", have("python3")],
 	];
-	for (const [n, ok] of checks) say(`${ok ? "ok  " : "MISSING"}  ${n}`);
-	if (!checks[2][1]) throw new Error("sign in first: gh auth login");
-	say("\nsyncing files (skills + style kits)...");
-	const rep = await pull(state);
-	say(`  ${rep.git}; ${rep.downloaded} file(s) downloaded (${fmtB(rep.bytes)})${rep.errors.length ? `, ${rep.errors.length} error(s)` : ""}`);
-	say("\ninstalling dependencies...");
-	for (const d of ["renderer", "control-plane"]) if (!existsSync(join(REPO, d, "node_modules"))) npmCi(join(REPO, d));
-	try {
-		execFileSync("npx", ["playwright", "install", "chromium-headless-shell"], { cwd: join(REPO, "renderer"), stdio: QUIET ? "ignore" : "inherit" });
-	} catch {
-		warn("  playwright browser install failed; run `cd renderer && npx playwright install chromium-headless-shell`");
+	for (const [n, ok] of checks) {
+		say(`${ok ? "ok     " : "MISSING"}  ${n}`);
+		if (!ok) bad.push(`missing: ${n}`);
 	}
+	if (!checks[2][1]) return finishSetup(bad);
+
+	say("\nsyncing files (skills + style kits)...");
+	const rep = await step("sync", () => pull(state));
+	if (rep) {
+		say(`  ${rep.git}; ${rep.downloaded} file(s) downloaded (${fmtB(rep.bytes)})`);
+		for (const e of rep.errors) bad.push(`sync: ${e}`);
+		for (const c of rep.conflicts ?? []) bad.push(`sync conflict: ${c} (scripts/vf resolve)`);
+	}
+
+	say("\ninstalling dependencies...");
+	for (const d of ["renderer", "control-plane"]) if (!depsCurrent(join(REPO, d))) await step(`npm ci ${d}`, () => npmCi(join(REPO, d)));
+	// Playwright's unzip can stall on some machines: cap each try at 5 min, retry once.
+	await step("render browser (playwright)", async () => {
+		for (let i = 1; ; i++)
+			try {
+				return run("npx", ["--no-install", "playwright", "install", "chromium-headless-shell"], { cwd: join(REPO, "renderer"), timeout: 300_000 });
+			} catch (e) {
+				if (i >= 2) throw e;
+			}
+	});
 	for (const root of state.roots) {
 		const base = resolveTarget(root.target);
 		if (!existsSync(base)) continue;
-		const ex = excluder(root);
-		for (const rel of walk(base, ex).files.keys())
-			if (rel.endsWith("package-lock.json") && !existsSync(join(base, dirname(rel), "node_modules"))) {
-				try {
-					npmCi(join(base, dirname(rel)));
-				} catch {
-					warn(`  npm ci failed in ${root.name}/${dirname(rel)}`);
-				}
-			}
+		for (const rel of walk(base, excluder(root)).files.keys())
+			if (rel.endsWith("package-lock.json") && !depsCurrent(join(base, dirname(rel)))) await step(`npm ci ${root.name}/${dirname(rel)}`, () => npmCi(join(base, dirname(rel))));
 	}
+
 	const skills = state.roots.filter((r) => r.target.startsWith("~/.claude/skills/")).map((r) => resolveTarget(r.target));
-	say(`\nskills synced: ${skills.map((s) => s.split(sep).at(-1)).join(", ") || "(none)"}`);
-	if (!flag("--no-models")) await setupModels(skills);
-	const bad = [];
+	const names = new Set(skills.map((s) => s.split(sep).at(-1)));
+	say(`\nskills synced: ${[...names].join(", ") || "(none)"}`);
+	if (!flag("--no-models")) {
+		if (["gta", "aviation", "paper-style"].some((n) => names.has(n)))
+			await step("whisper model", () => fetchTo("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin", process.env.WHISPER_MODEL ?? join(homedir(), ".whisper-models", "ggml-large-v3-turbo.bin"), 1_000_000_000));
+		const paper = skills.find((s) => s.endsWith(`${sep}paper-style`));
+		if (paper) {
+			const kok = process.env.KOKORO_DIR ?? join(homedir(), ".cache", "kokoro");
+			const rel = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0";
+			await step("voice model", () => fetchTo(`${rel}/kokoro-v1.0.onnx`, join(kok, "kokoro-v1.0.onnx"), 300_000_000));
+			await step("voice list", () => fetchTo(`${rel}/voices-v1.0.bin`, join(kok, "voices-v1.0.bin"), 20_000_000));
+			const venv = join(paper, "audio", ".venv");
+			if (!have(join(venv, "bin", "python"), ["-c", "import kokoro_onnx, soundfile"]))
+				await step("paper-style audio venv", () => {
+					say("  making paper-style audio venv...");
+					run("uv", ["venv", "--allow-existing", "--python", "3.12", venv], { timeout: 300_000 });
+					run("uv", ["pip", "install", "kokoro-onnx", "soundfile"], { env: { ...process.env, VIRTUAL_ENV: venv }, timeout: 900_000 });
+				});
+		}
+	}
+
+	say("\nchecking each skill...");
+	const seen = new Set();
 	for (const s of skills.filter((s) => existsSync(join(s, "scripts", "check_setup.py")))) {
+		const name = s.split(sep).at(-1);
 		let out;
 		try {
-			out = execFileSync("python3", [join(s, "scripts", "check_setup.py")], { encoding: "utf8", timeout: 120_000 });
+			out = execFileSync("python3", [join(s, "scripts", "check_setup.py")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000, killSignal: "SIGKILL" });
 		} catch (e) {
-			out = `${e.stdout ?? ""}${e.stderr ?? e.message}`;
+			out = `${e.stdout ?? ""}`;
 		}
-		const left = out.split("\n").filter((l) => l.startsWith("MISSING"));
-		say(`  ${s.split(sep).at(-1)}: ${left.length ? `${left.length} missing` : "all good"}`);
-		for (const l of left) bad.push(`${s.split(sep).at(-1)}: ${l.replace(/^MISSING\s+/, "")}`);
+		if (!/ALL GOOD|to fix:/.test(out)) {
+			bad.push(`${name}: its setup check did not run (python3 ${join(s, "scripts", "check_setup.py")})`);
+			continue;
+		}
+		const left = out.split("\n").filter((l) => l.startsWith("MISSING")).map((l) => l.replace(/^MISSING\s+/, ""));
+		say(`  ${name}: ${left.length ? `${left.length} missing` : "all good"}`);
+		for (const l of left) if (!seen.has(l)) seen.add(l), bad.push(`${name}: ${l}`);
 	}
-	say(`\nconnector for Claude Code: ${connectMcp()}`);
-	say(`\nlive owner preferences:\n${await prefsText()}`);
-	if (bad.length) say(`\nstill to fix:\n${bad.map((b) => `  - ${b}`).join("\n")}`);
-	else say("\nsetup complete: everything checks out");
-	writeJson(LAST_F, { at: Date.now(), kind: "setup", ...summary(state, rep) });
+
+	const mcp = await step("Claude Code connector", connectMcp);
+	if (mcp) say(`\nconnector for Claude Code: ${mcp}`);
+	say(`\nlive owner preferences:\n${await prefsText().catch((e) => `(could not load: ${e.message})`)}`);
+	writeJson(LAST_F, { at: Date.now(), kind: "setup", ...(rep ? summary(state, rep) : {}), bad });
+	return finishSetup(bad);
+}
+function finishSetup(bad) {
+	if (!bad.length) return console.log("\nsetup complete: everything checks out");
+	console.log(`\nstill to fix:\n${bad.map((b) => `  - ${b}`).join("\n")}\nFix these (or ask Claude to), then run setup again: it only redoes what is missing.`);
+	process.exitCode = 1;
 }
 
 // ---------------------------------------------------------------- hooks (Claude Code: .claude/settings.json)
@@ -865,7 +895,10 @@ async function main() {
 	if (cmd === "docs" && sub === "publish") return console.log(`published ${await publishDocs()} doc(s)`);
 
 	const release = lock(!flag("--auto"));
-	if (!release) return say("another vf sync is running; try again shortly");
+	if (!release) {
+		process.exitCode = 1;
+		return console.error("another vf sync is running; try again shortly");
+	}
 	const state = loadState();
 	try {
 		if (cmd === "setup") return await setup(state);
