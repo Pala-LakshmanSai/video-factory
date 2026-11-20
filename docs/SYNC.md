@@ -44,6 +44,14 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
 - **Hooks never block work.** SessionStart waits at most 40 s, then lets a big download finish in the background;
   Stop starts a background push at most every 90 s. Logs: `.vf/local/sync.log`.
 
+## Giving another GitHub account access
+1. GitHub → the repo → Settings → Collaborators → Add people (username or email) with the **Write** role. Write is
+   needed: synced file bytes live in draft releases, which only Write collaborators can see. They accept the invite.
+   That alone covers git, `scripts/vf` sync and the installer.
+2. The claude.ai / Claude Code connector: add their GitHub login or verified email to the Worker secret `MCP_USERS`
+   (comma-separated; `cd control-plane && npx wrangler secret put MCP_USERS`). Not in git on purpose.
+The owner (`ALLOWED_GITHUB_LOGIN`) always has access; the /admin page stays owner-only.
+
 ## Limits
 - One file up to 1.9 GB. Release assets: about 1000 per shard × 16 shards; run `vf gc --yes` now and then.
 - Skills edited from a Claude Code session started outside this repo are pushed on the next `vf push` or the next

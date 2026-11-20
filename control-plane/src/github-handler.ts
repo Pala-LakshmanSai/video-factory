@@ -111,7 +111,7 @@ async function redirectToGithub(
 		getUpstreamAuthorizeUrl({
 			client_id: env.GITHUB_CLIENT_ID,
 			redirect_uri: new URL("/callback", request.url).href,
-			scope: "read:user",
+			scope: "read:user user:email", // user:email: lets MCP_USERS name people by a verified email
 			state: stateToken,
 			upstream_url: "https://github.com/login/oauth/authorize",
 		}),
@@ -170,8 +170,8 @@ app.get("/callback", async (c) => {
 	// Fetch the user info from GitHub
 	const user = await new Octokit({ auth: accessToken }).rest.users.getAuthenticated();
 	const { login, name, email } = user.data;
-	// Auth lock (Prompt 3a): only the owner may use the connector.
-	if (login !== c.env.ALLOWED_GITHUB_LOGIN) {
+	// Auth lock: the owner, plus anyone in the MCP_USERS secret (comma-separated GitHub logins or verified emails).
+	if (!(await connectorAllowed(c.env, login, accessToken))) {
 		return c.text(`GitHub user ${login} is not allowed`, 403);
 	}
 
@@ -205,3 +205,15 @@ app.get("/callback", async (c) => {
 });
 
 export { app as GitHubHandler };
+
+/** Owner, or listed in MCP_USERS (wrangler secret, not in git): GitHub logins or verified emails, comma-separated. */
+export async function connectorAllowed(e: Env, login: string, accessToken: string) {
+	const norm = (x: string) => x.trim().toLowerCase();
+	if (norm(login) === norm(e.ALLOWED_GITHUB_LOGIN)) return true;
+	const users = new Set(((e as unknown as Record<string, string | undefined>).MCP_USERS ?? "").split(",").map(norm).filter(Boolean));
+	if (!users.size) return false;
+	if (users.has(norm(login))) return true;
+	const r = await fetch("https://api.github.com/user/emails", { headers: { Authorization: `Bearer ${accessToken}`, "User-Agent": "video-factory", Accept: "application/vnd.github+json" } });
+	if (!r.ok) return false;
+	return ((await r.json()) as { email: string; verified: boolean }[]).some((m) => m.verified && users.has(norm(m.email)));
+}

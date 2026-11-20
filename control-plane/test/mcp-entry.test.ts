@@ -22,6 +22,7 @@ beforeEach(() => {
 	mockFetch(
 		(u) => (u === "https://github.com/login/oauth/access_token" ? new Response("access_token=gho_x&token_type=bearer", { headers: { "Content-Type": "application/x-www-form-urlencoded" } }) : undefined),
 		(u) => (u === "https://api.github.com/user" ? json({ login: ghLogin, name: "Me", email: null }) : undefined),
+		(u) => (u === "https://api.github.com/user/emails" ? json([{ email: "Friend@Example.com", verified: true }, { email: "x@unverified.test", verified: false }]) : undefined),
 	);
 });
 
@@ -40,6 +41,19 @@ function memKv() {
 }
 
 const req = (path: string, init: RequestInit = {}) => worker.fetch(new Request(ORIGIN + path, init), e, ctx);
+
+describe("connector allow-list (MCP_USERS)", () => {
+	it("lets in listed logins and verified emails, nobody else", async () => {
+		ghLogin = "friend";
+		expect((await oauthDance()).cb.status).toBe(403);
+		for (const list of ["Friend", "someone, friend@example.com"]) {
+			(e as unknown as Record<string, string>).MCP_USERS = list;
+			expect((await oauthDance()).cb.status).toBe(302);
+		}
+		(e as unknown as Record<string, string>).MCP_USERS = "x@unverified.test";
+		expect((await oauthDance()).cb.status).toBe(403);
+	});
+});
 
 describe("routing", () => {
 	it("GET /install serves the published setup script without auth", async () => {
