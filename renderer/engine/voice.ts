@@ -59,9 +59,10 @@ export async function tts(text: string, out: string) {
 	const sentences = text.match(/[^.!?。！？]+[.!?。！？]*\s*/g)?.map((s) => s.trim()).filter(Boolean) ?? [text];
 	const parts: Float32Array[] = [];
 	let rate = 24000;
-	const gap = () => new Float32Array(Math.round(rate * 0.18));
+	const speed = Number(process.env.TTS_SPEED) || 1; // >1 talks faster (doomsday narrator ~1.35)
+	const gap = () => new Float32Array(Math.round((rate * 0.18) / speed));
 	for (const s of sentences) {
-		const a = await model.generate(s, { voice: KOKORO_VOICE as never });
+		const a = await model.generate(s, { voice: KOKORO_VOICE as never, speed });
 		rate = a.sampling_rate;
 		parts.push(a.audio as Float32Array, gap());
 	}
