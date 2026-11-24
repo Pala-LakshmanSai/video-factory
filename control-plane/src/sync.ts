@@ -1,6 +1,9 @@
 // Cross-account sync API (docs/SYNC.md): live file index for skills/style kits, owner preferences, published docs.
-// Auth: Bearer <GitHub token> that can read SYNC_REPO (must be private), the same login every machine already
-// uses for git. File bytes never pass through the Worker; clients move them to/from GitHub release assets.
+// Auth: Bearer <GitHub token> with Write (push) access to SYNC_REPO: the owner or a Write collaborator, the same login
+// every machine already uses for git. The repo may be public: read access alone is never enough. CI publishes docs with
+// the DOCS_PUBLISH_TOKEN secret, which only works for PUT /sync/docs. File bytes never pass through the Worker; clients move them to/from GitHub release assets.
+
+import { constantTimeEqual } from "./db";
 
 const SHA = /^[0-9a-f]{64}$/;
 const ROOT = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -13,7 +16,7 @@ export type Pref = { id: number; scope: string; text: string; source: string | n
 
 const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
 
-// ---- auth: a token is accepted if it can read the private sync repo (cached per isolate for 10 min)
+// ---- auth: a token is accepted if it can push to the sync repo (cached per isolate for 10 min)
 const authCache = new Map<string, number>();
 async function sha256hex(s: string) {
 	const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -29,8 +32,8 @@ export async function repoAuth(req: Request, e: E): Promise<boolean> {
 		headers: { Authorization: `Bearer ${tok}`, "User-Agent": "video-factory-sync", Accept: "application/vnd.github+json" },
 	});
 	if (r.status !== 200) return false;
-	const j = (await r.json()) as { private?: boolean };
-	if (j.private !== true) return false; // fail closed if the repo is ever made public
+	const j = (await r.json()) as { permissions?: { push?: boolean } };
+	if (j.permissions?.push !== true) return false; // read access is anyone's on a public repo: require Write
 	authCache.set(h, Date.now() + 600_000);
 	return true;
 }
@@ -146,9 +149,12 @@ async function files(db: D1Database, q: URLSearchParams) {
 }
 
 export async function syncRoute(req: Request, e: E): Promise<Response> {
-	if (!(await repoAuth(req, e))) return bad("unauthorized: send a GitHub token that can read the sync repo", 401);
 	const url = new URL(req.url);
 	const p = url.pathname;
+	const docsToken = (e as unknown as Record<string, string | undefined>).DOCS_PUBLISH_TOKEN;
+	const tok = req.headers.get("Authorization")?.replace(/^(Bearer|token) /i, "") ?? "";
+	const ciDocs = p === "/sync/docs" && req.method === "PUT" && !!docsToken && constantTimeEqual(tok, docsToken);
+	if (!ciDocs && !(await repoAuth(req, e))) return bad("unauthorized: send a GitHub token with Write access to the sync repo", 401);
 	const db = e.DB;
 	const by = (req.headers.get("X-VF-Client") ?? "unknown").slice(0, 120);
 	const body = async () => {

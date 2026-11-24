@@ -4,8 +4,7 @@ Works on any Mac (Apple Silicon or Intel) with any Claude account. Windows and L
 
 **Which GitHub account:** the owner's (Pala-LakshmanSai), or any GitHub account that has accepted a **Write**
 collaborator invite to `Pala-LakshmanSai/video-factory` and whose login or verified email is in the connector's
-allowed list (docs/SYNC.md, "Giving another GitHub account access"). The repo must stay **private**: sync refuses
-to work while it is public.
+allowed list (docs/SYNC.md, "Giving another GitHub account access").
 
 Two parts, a few minutes each. After setup nothing needs re-pasting: preferences, instructions, styles, skills
 and kits stay in sync on their own (docs/SYNC.md).

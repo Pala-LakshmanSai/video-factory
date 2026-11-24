@@ -39,8 +39,9 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
   written inside `~/.claude/skills/` or this repo (enforced by both the server and the client).
 - **Incremental.** The index is versioned; a pull asks only for changes since the last one. Unchanged files are
   recognised by size + mtime without rehashing. Transfers run 8 at a time with retries.
-- **Auth.** `/sync/*` accepts any GitHub token that can read this private repo (fails closed if the repo is ever
-  made public). claude.ai uses the connector's GitHub sign-in.
+- **Auth.** `/sync/*` accepts a GitHub token with **Write** access to this repo (the owner or a Write collaborator);
+  read access is not enough, so the repo can be public. CI publishes docs with its own `VF_DOCS_TOKEN` secret
+  (Worker: `DOCS_PUBLISH_TOKEN`), which can publish docs and nothing else. claude.ai uses the connector's GitHub sign-in.
 - **Hooks never block work.** SessionStart waits at most 40 s, then lets a big download finish in the background;
   Stop starts a background push at most every 90 s. Logs: `.vf/local/sync.log`.
 

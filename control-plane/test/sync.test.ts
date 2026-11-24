@@ -4,7 +4,7 @@ import { syncRoute, validPath, validTarget } from "../src/sync";
 import { json, makeEnv, mockFetch } from "./helpers";
 
 let env: Env;
-let repoPrivate = true;
+let canPush = true;
 const req = (path: string, init: RequestInit & { json?: unknown } = {}, token = "good") =>
 	syncRoute(
 		new Request("https://cp.test" + path, {
@@ -18,22 +18,32 @@ const A = "a".repeat(64), B = "b".repeat(64), C = "c".repeat(64);
 
 beforeEach(() => {
 	env = { ...makeEnv(), SYNC_REPO: "me/repo" } as Env;
-	repoPrivate = true;
+	canPush = true;
 	mockFetch((u, i) => {
 		if (u !== "https://api.github.com/repos/me/repo") return undefined;
 		const tok = new Headers(i.headers).get("Authorization");
-		return tok === "Bearer good" || tok === "Bearer ci" ? json({ private: repoPrivate }) : json({ message: "Not Found" }, 404);
+		if (tok === "Bearer good" || tok === "Bearer ci") return json({ private: false, permissions: { pull: true, push: canPush } });
+		return tok === "Bearer reader" ? json({ private: false, permissions: { pull: true, push: false } }) : json({ message: "Not Found" }, 404);
 	});
 });
 
 describe("auth", () => {
-	it("rejects missing, wrong and public-repo tokens", async () => {
+	it("needs Write access: rejects missing, unknown and read-only tokens", async () => {
 		expect((await req("/sync/roots", {}, "")).status).toBe(401);
 		expect((await req("/sync/roots", {}, "bad")).status).toBe(401);
-		repoPrivate = false;
+		expect((await req("/sync/roots", {}, "reader")).status).toBe(401);
+		canPush = false;
 		expect((await req("/sync/roots", {}, "ci")).status).toBe(401);
-		repoPrivate = true;
+		canPush = true;
 		expect((await req("/sync/roots", {}, "ci")).status).toBe(200);
+	});
+
+	it("the CI docs token publishes docs and nothing else", async () => {
+		(env as unknown as Record<string, string>).DOCS_PUBLISH_TOKEN = "docs-secret";
+		expect((await req("/sync/docs", { method: "PUT", json: { docs: [{ name: "a.md", body: "A" }] } }, "docs-secret")).status).toBe(200);
+		expect((await req("/sync/prefs", {}, "docs-secret")).status).toBe(401);
+		expect((await req("/sync/roots", { method: "PUT", json: { name: "x", target: "@repo/x" } }, "docs-secret")).status).toBe(401);
+		expect((await req("/sync/docs", { method: "PUT", json: { docs: [] } }, "docs-secreT")).status).toBe(401);
 	});
 });
 

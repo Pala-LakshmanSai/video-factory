@@ -1,6 +1,6 @@
 # Publishes docs from main to the control plane so every claude.ai Project gets them live through
-# the connector's project_brief / style_guide tools (docs/SYNC.md). Auth: this run's GITHUB_TOKEN,
-# which the Worker accepts because it can read this private repo. Free, no secrets to manage.
+# the connector's project_brief / style_guide tools (docs/SYNC.md). Auth: the VF_DOCS_TOKEN repo secret, equal to the
+# Worker secret DOCS_PUBLISH_TOKEN; it can only publish docs (the repo is public, so read access proves nothing).
 name: docs-sync
 on:
   push:
@@ -18,4 +18,4 @@ jobs:
         with: { node-version: "22.20.0" }
       - run: node scripts/vf.mjs docs publish
         env:
-          GH_TOKEN: ${{ github.token }}
+          VF_GITHUB_TOKEN: ${{ secrets.VF_DOCS_TOKEN }}
