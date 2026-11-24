@@ -1,5 +1,12 @@
 # Set up Video Factory in a new Claude account
 
+Works on any Mac (Apple Silicon or Intel) with any Claude account. Windows and Linux are not supported.
+
+**Which GitHub account:** the owner's (Pala-LakshmanSai), or any GitHub account that has accepted a **Write**
+collaborator invite to `Pala-LakshmanSai/video-factory` and whose login or verified email is in the connector's
+allowed list (docs/SYNC.md, "Giving another GitHub account access"). The repo must stay **private**: sync refuses
+to work while it is public.
+
 Two parts, a few minutes each. After setup nothing needs re-pasting: preferences, instructions, styles, skills
 and kits stay in sync on their own (docs/SYNC.md).
 
@@ -17,7 +24,7 @@ It installs every tool (Homebrew, git, gh, node, ffmpeg, yt-dlp, Python 3.12, uv
 command), signs in to GitHub, downloads the project to `~/video-factory`, syncs every skill, style kit and preference,
 installs dependencies and the voice and transcription models, adds the Video Factory connector to Claude Code, and
 checks every skill. It asks you for three things only: your Mac password (first Homebrew install only), a GitHub
-sign-in in the browser (sign in as Pala-LakshmanSai) and a Claude sign-in in the browser. It ends with "Done", or a
+sign-in in the browser (the owner's GitHub, or one with access: see below) and a Claude sign-in in the browser. It ends with "Done", or a
 short "still to fix" list. Never hangs, and safe to run again at any time: a re-run takes about 10 seconds and only
 fills gaps.
 
@@ -33,7 +40,7 @@ in my Terminal, then fix anything it lists under "still to fix".`
 ## B. claude.ai (videos ordered by chat)
 
 1. claude.ai → Settings → Connectors → **Add custom connector**: name `Video Factory`, URL
-   `https://video-factory.lakshmansai121.workers.dev/mcp`. Connect and sign in with GitHub (Pala-LakshmanSai).
+   `https://video-factory.lakshmansai121.workers.dev/mcp`. Connect and sign in with the same GitHub account.
    Optional: set its tools to **Always allow** so chats don't stop to ask.
 2. Create a Project named **Video Factory**, turn the connector on, and paste this one line as its instructions
    (no knowledge files; everything else arrives live):
