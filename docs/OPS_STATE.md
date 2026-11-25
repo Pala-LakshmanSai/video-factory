@@ -32,7 +32,10 @@ get a personal key and install line via `vf access add "<name>"`. Verified: fres
 files sha256-match the index; Windows key-only full sync ran clean in runs 45574633579 and 45574882496 (they
 failed only on the Claude sign-in check, now skipped under VF_CI). Test key "CI Test" revoked and secret
 VF_TEST_KEY deleted, so the windows-setup key-install job is skipped until both are recreated.
-**Open (needs owner):** B2 downloads blocked since run 45576024839: 403 AccessDenied "download bandwidth or
-transaction (Class B) cap exceeded". Account has no card; free egress is 3x stored per month (~3 GB for ~1 GB
-stored). Worker-proxied download is blocked the same way (tested). New installs and new-file pulls fail until the
-cap is raised in Backblaze > Caps & Alerts or the allowance renews. Do not run full sync tests until then.
+**Storage moved to Cloudflare R2 (2026-11-25):** Backblaze's free plan caps downloads at 1 GB/day (run 45576024839
+hit it: 403 "download bandwidth or transaction (Class B) cap exceeded"). Files now live in R2 bucket
+`video-factory-files` on the owner's other Cloudflare account (has the card; APAC). Worker 2e8fdb88 reads Worker
+secrets R2_ENDPOINT / R2_KEY_ID / R2_SECRET (token: Object Read & Write, that bucket only) and prefers R2 over B2.
+All 27 stored items (863 MB) copied from the GitHub release copies; each re-downloaded through the Worker's signed
+R2 link and sha256-matched (27/27). Index entries unchanged (asset "b2:<sha>" = content-addressed object). Backblaze
+bucket and B2 secrets are unused now; keep or delete. Full key-only install on R2 not re-run yet.

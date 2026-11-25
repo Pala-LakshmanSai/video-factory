@@ -10,7 +10,7 @@ preferences and instructions, kept current automatically. One credential: the ow
 |---|---|---|
 | Code, registry styles (`renderer/styles/`), engines, docs, `CLAUDE.md`, prompts | git (`main` on GitHub) | Claude Code: SessionStart hook fast-forwards `main`. claude.ai: CI publishes `docs/**` live (below). |
 | Owner preferences ("flatglow: captions never cover characters") | D1 table `prefs` in the control plane | Claude Code: printed into every session by the SessionStart hook. claude.ai: `project_brief` / `style_guide` MCP tools. Changes are instant. |
-| Skills (`~/.claude/skills/aviation`, `gta`, `paper-style`, `align-images`, `cut-silences`, `youtube-video-style-analyze`) and `style-kits/` | file index in D1 (`sync_files`), bytes in Backblaze B2 (bucket `video-factory-files`; older versions in GitHub release assets) | `scripts/vf` pulls on session start, pushes on every Stop (background). |
+| Skills (`~/.claude/skills/aviation`, `gta`, `paper-style`, `align-images`, `cut-silences`, `youtube-video-style-analyze`) and `style-kits/` | file index in D1 (`sync_files`), bytes in Cloudflare R2 (bucket `video-factory-files`, on a separate Cloudflare account; older versions in GitHub release assets) | `scripts/vf` pulls on session start, pushes on every Stop (background). |
 | Live instructions for claude.ai Projects (`docs/PROJECT_INSTRUCTIONS.md`), style docs (`docs/styles/*.md`), prompts | git, published to D1 table `docs` by `.github/workflows/docs-sync.yml` | `project_brief`, `style_guide` |
 | Ops facts about the live factory | `docs/OPS_STATE.md` (git) | git |
 
@@ -31,7 +31,7 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
 | `docs publish` | Publish docs to claude.ai now (CI does this on every push to `main`). |
 | `gc [--days 30] [--yes]` | Delete stored file versions nothing uses any more (keeps storage small). |
 | `access add "<name>"` / `access list` / `access remove "<name>"` | Owner: give a team member a personal access key (prints their Windows/Mac install line and connector steps), list keys, revoke one. |
-| `migrate-storage` | Owner, once: move stored files from GitHub release assets to Backblaze B2. Safe to re-run. |
+| `migrate-storage` | Owner, once: move stored files from GitHub release assets to the server's object storage (R2). Safe to re-run. |
 
 ## How it stays reliable
 - **Compare-and-set commits.** Each change says which version it replaces; if another machine changed that file
@@ -47,8 +47,10 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
   is not enough, so the repo can be public). Managing keys is owner-only. CI publishes docs with its own
   `VF_DOCS_TOKEN` secret (Worker: `DOCS_PUBLISH_TOKEN`), which can publish docs and nothing else. The connector
   accepts a GitHub sign-in or the access key (pasted on its sign-in page, or `Authorization: Bearer vfk_...`).
-- **File bytes never pass through the server.** It hands out signed Backblaze links valid for 1 hour; clients
-  upload and download directly. Backblaze keys are Worker secrets (`B2_KEY_ID`, `B2_APP_KEY`), never on a PC.
+- **File bytes never pass through the server.** It hands out signed R2 links valid for 1 hour; clients
+  upload and download directly. R2 keys are Worker secrets (`R2_ENDPOINT`, `R2_KEY_ID`, `R2_SECRET`; the token
+  needs Object Read & Write on the bucket), never on a PC. Without them the Worker falls back to Backblaze B2
+  (`B2_KEY_ID`, `B2_APP_KEY`), which the files left on 2026-11-25.
 - **Hooks never block work.** SessionStart waits at most 40 s, then lets a big download finish in the background;
   Stop starts a background push at most every 90 s. Logs: `.vf/local/sync.log`.
 
@@ -67,12 +69,11 @@ working for that key at once). One key per name; `access add` again replaces it.
 The owner (`ALLOWED_GITHUB_LOGIN`) always has access; the /admin page stays owner-only.
 
 ## Limits
-- One file up to 1.9 GB (Backblaze allows 5 GB per upload). Backblaze: first 10 GB stored free, downloads free up to 3x the stored amount per month; run `vf gc --yes` now and then.
-- Backblaze caps: free egress is 3x the average stored amount per month (Backblaze pricing page), and the
-  account has no card, so past that downloads stop with 403 `AccessDenied` "download bandwidth or transaction
-  (Class B) cap exceeded". With ~1 GB stored, 3 full syncs (~1 GB each) hit it on 2026-11-25. Streaming through the
-  Worker does not avoid it (tested). Fix needs the owner: raise the cap in Backblaze > Caps & Alerts (needs a card;
-  beyond the free allowance $0.01/GB). The reset time is not documented on the pages we could read.
+- One file up to 1.9 GB (R2 allows 5 GB per signed upload). R2 free tier: 10 GB stored, downloads always free (no
+  egress fee, no daily cap); run `vf gc --yes` now and then.
+- Why not Backblaze: its free plan caps downloads at 1 GB/day (Caps & Alerts page, cap $0), and a fresh install
+  pulls ~0.9 GB, so on 2026-11-25 downloads stopped with 403 `AccessDenied` "download bandwidth or transaction
+  (Class B) cap exceeded". Moved to R2 the same day.
 - Skills edited from a Claude Code session started outside this repo are pushed on the next `vf push` or the next
   session in this repo.
 - An existing claude.ai Project created before 2026-11-18 should replace its instructions with the one-line bootstrap in

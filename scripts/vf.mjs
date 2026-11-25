@@ -242,7 +242,7 @@ async function allAssets() {
 	return (await Promise.all(rels.map(async (r) => (await ghAll(`/repos/${CFG.repo}/releases/${r.id}/assets`)).map((a) => ({ ...a, release: r.id }))))).flat();
 }
 
-// Where file bytes go: Backblaze B2 through signed links when the server has it ("b2:<sha>" assets), else the
+// Where file bytes go: the server's object storage (Cloudflare R2; "b2:<sha>" assets, a name kept from Backblaze) through signed links, else the
 // original GitHub release assets (numeric ids). Downloads follow whatever each index entry says.
 let INFO;
 const storageInfo = async () => (INFO ??= (await api("GET", "/sync/info")).json ?? {});
@@ -285,8 +285,6 @@ async function fetchAsset(asset, dest) {
 			if (r.status === 401) throw Object.assign(new Error("the factory refused your access: ask the owner for a new install line"), { noRetry: true });
 			if (r.status !== 302) throw new Error(`download link for ${asset}: ${r.status}`);
 			const body = await fetch(r.headers.get("location"), { signal: AbortSignal.timeout(30 * 60_000) }); // signed link: no token
-			if (body.status === 403 && /cap exceeded/i.test(await body.text().catch(() => "")))
-				throw Object.assign(new Error("Backblaze's download limit is used up (cap exceeded): run setup again later, or the owner raises the cap in Backblaze > Caps & Alerts"), { noRetry: true });
 			if (body.status !== 200) throw new Error(`download ${asset}: ${body.status}`);
 			await pipeline(Readable.fromWeb(body.body), createWriteStream(dest));
 		}, "download");
@@ -1061,15 +1059,15 @@ async function main() {
 			return say(`tracking ${name} -> ${target}; uploaded ${p.uploaded} (${fmtB(p.bytes)}), committed ${p.committed}`);
 		}
 		if (cmd === "migrate-storage") {
-			// Owner, once: copy every stored file/pack from GitHub release assets to Backblaze B2 and point the index at it,
+			// Owner, once: copy every stored file/pack from GitHub release assets to the server's object storage (R2) and point the index at it,
 			// so team members with only an access key can download everything. Packs move whole (offsets stay valid).
-			if ((await storageInfo()).storage !== "b2") throw new Error("Backblaze storage is not configured on the server yet");
+			if ((await storageInfo()).storage !== "b2") throw new Error("object storage is not configured on the server yet");
 			await pull(state);
 			const byAsset = new Map();
 			for (const [k, f] of Object.entries(state.files))
 				if (f.sha && typeof f.asset === "number" && f.asset !== 0 && !state.conflicts[k]) (byAsset.get(f.asset) ?? byAsset.set(f.asset, []).get(f.asset)).push(k);
-			if (!byAsset.size) return say("nothing left on GitHub storage: every file is in Backblaze");
-			say(`moving ${byAsset.size} stored item(s) from GitHub to Backblaze...`);
+			if (!byAsset.size) return say("nothing left on GitHub storage: every file is in object storage");
+			say(`moving ${byAsset.size} stored item(s) from GitHub to object storage...`);
 			const dir = join(LOCAL, "migrate");
 			mkdirSync(dir, { recursive: true });
 			const moved = new Map();
@@ -1102,7 +1100,7 @@ async function main() {
 			}
 			saveState(state);
 			for (const [a, e] of errs) report.errors.push(`asset ${a}: ${e.message}`);
-			say(`moved ${moved.size}/${byAsset.size} item(s); ${report.committed} file(s) now point at Backblaze`);
+			say(`moved ${moved.size}/${byAsset.size} item(s); ${report.committed} file(s) now point at object storage`);
 			if (report.errors.length) (warn(`errors (run migrate-storage again to retry):\n  ${report.errors.slice(0, 20).join("\n  ")}`), (process.exitCode = 1));
 			return;
 		}
@@ -1138,7 +1136,7 @@ async function main() {
 			if ((await storageInfo()).storage === "b2") {
 				const r = await api("POST", "/sync/blobs/gc", { days, dry: !flag("--yes") });
 				if (r.status !== 200) throw new Error(r.json.error ?? `gc: ${r.status}`);
-				say(`Backblaze: ${r.json.deleted} unused file(s) older than ${days} days ${r.json.dry ? "found (rerun with --yes to delete)" : "deleted"}; ${r.json.kept} kept`);
+				say(`storage: ${r.json.deleted} unused file(s) older than ${days} days ${r.json.dry ? "found (rerun with --yes to delete)" : "deleted"}; ${r.json.kept} kept`);
 			}
 			const used = new Set();
 			for (let after = ""; ; ) {

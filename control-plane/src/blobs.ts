@@ -1,7 +1,11 @@
-// Synced file bytes in Backblaze B2 (S3-compatible API), so a team member needs only an access key, never GitHub.
+// Synced file bytes in S3-compatible object storage, so a team member needs only an access key, never GitHub.
 // The Worker never carries the bytes: it hands out short-lived signed links and clients move files directly to/from
-// B2. Object key "blobs/<sha256>"; the index stores asset "b2:<sha256>". Clients verify every download's sha256.
-// Config: vars B2_BUCKET, B2_ENDPOINT (e.g. s3.us-west-004.backblazeb2.com); secrets B2_KEY_ID, B2_APP_KEY.
+// storage. Object key "blobs/<sha256>"; the index stores asset "b2:<sha256>" (the prefix dates from Backblaze; it just
+// means "content-addressed object"). Clients verify every download's sha256.
+// Config, first match wins:
+//   Cloudflare R2 (another Cloudflare account; free egress, no daily cap): secrets R2_ENDPOINT (the bucket's S3 API
+//     link, https://<account>.r2.cloudflarestorage.com/<bucket>), R2_KEY_ID, R2_SECRET.
+//   Backblaze B2 (old; free plan caps downloads at 1 GB/day): vars B2_BUCKET, B2_ENDPOINT; secrets B2_KEY_ID, B2_APP_KEY.
 import { AwsClient } from "aws4fetch";
 
 export const B2_ASSET = /^b2:([0-9a-f]{64})$/;
@@ -9,11 +13,15 @@ const SHA = /^[0-9a-f]{64}$/;
 const LINK_S = 3600; // signed links last an hour: enough for a 1.9 GB upload on a slow line
 const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
 
-type B2Env = { B2_KEY_ID?: string; B2_APP_KEY?: string; B2_BUCKET?: string; B2_ENDPOINT?: string };
+type B2Env = { B2_KEY_ID?: string; B2_APP_KEY?: string; B2_BUCKET?: string; B2_ENDPOINT?: string; R2_ENDPOINT?: string; R2_KEY_ID?: string; R2_SECRET?: string };
 export type Store = { client: AwsClient; base: string };
 
 export function b2(e: unknown): Store | null {
 	const v = e as B2Env;
+	if (v.R2_ENDPOINT && v.R2_KEY_ID && v.R2_SECRET) {
+		const base = (/^https?:\/\//.test(v.R2_ENDPOINT.trim()) ? v.R2_ENDPOINT.trim() : `https://${v.R2_ENDPOINT.trim()}`).replace(/\/+$/, "");
+		return { client: new AwsClient({ accessKeyId: v.R2_KEY_ID.trim(), secretAccessKey: v.R2_SECRET.trim(), service: "s3", region: "auto" }), base };
+	}
 	if (!v.B2_KEY_ID || !v.B2_APP_KEY || !v.B2_BUCKET || !v.B2_ENDPOINT) return null;
 	const region = /^s3\.([a-z0-9-]+)\.backblazeb2\.com$/.exec(v.B2_ENDPOINT)?.[1] ?? "us-west-004";
 	return { client: new AwsClient({ accessKeyId: v.B2_KEY_ID, secretAccessKey: v.B2_APP_KEY, service: "s3", region }), base: `https://${v.B2_ENDPOINT}/${v.B2_BUCKET}` };
@@ -26,7 +34,7 @@ async function link(s: Store, method: "GET" | "PUT", sha: string) {
 
 /** GET /sync/blob/<sha> → 302 to a signed download link; POST /sync/blob/<sha>/upload → {exists} or {url} to PUT. */
 export async function blobRoute(req: Request, s: Store | null, parts: string[]): Promise<Response> {
-	if (!s) return bad("file storage (Backblaze B2) is not configured on this server", 503);
+	if (!s) return bad("file storage is not configured on this server", 503);
 	const [sha, action] = parts;
 	if (!SHA.test(sha ?? "")) return bad("bad sha");
 	if (!action && req.method === "GET") return new Response(null, { status: 302, headers: { Location: await link(s, "GET", sha), "Cache-Control": "no-store" } });

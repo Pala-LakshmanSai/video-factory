@@ -117,7 +117,7 @@ to them privately. The plain step-by-step guide for the team (public, no keys in
 https://video-factory.lakshmansai121.workers.dev/team. To take access away: **"remove Priya's access"** (`node scripts/vf.mjs access remove "Priya"`);
 it stops working at once. `node scripts/vf.mjs access list` shows who has a key.
 
-Files (skills and kits) are stored in Backblaze; RunPod, Google Drive and alert keys stay on the server. Nobody's
+Files (skills and kits) are stored in Cloudflare R2; RunPod, Google Drive and alert keys stay on the server. Nobody's
 computer gets any of those keys.
 
 ## If something goes wrong

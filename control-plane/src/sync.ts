@@ -2,7 +2,7 @@
 // Auth: Bearer <GitHub token> with Write (push) access to SYNC_REPO: the owner or a Write collaborator, the same login
 // every machine already uses for git. The repo may be public: read access alone is never enough. CI publishes docs with
 // the DOCS_PUBLISH_TOKEN secret, which only works for PUT /sync/docs. Team members without GitHub use an access key
-// ("vfk_...", src/access.ts) instead of a GitHub token; managing keys and storage cleanup is owner-only. File bytes never pass through the Worker: clients move them to/from Backblaze B2 with signed links (src/blobs.ts), or GitHub release assets for older entries.
+// ("vfk_...", src/access.ts) instead of a GitHub token; managing keys and storage cleanup is owner-only. File bytes never pass through the Worker: clients move them to/from object storage (Cloudflare R2, or Backblaze B2) with signed links (src/blobs.ts), or GitHub release assets for older entries.
 
 import { checkAccessKey, createKey, listKeys, revokeKey } from "./access";
 import { B2_ASSET, b2, blobGc, blobRoute } from "./blobs";
@@ -189,7 +189,7 @@ export async function syncRoute(req: Request, e: E): Promise<Response> {
 		if (p === "/sync/blobs/gc" && req.method === "POST") {
 			if (!(await ownerOnly())) return bad("owner only", 403);
 			const s = b2(e);
-			if (!s) return bad("file storage (Backblaze B2) is not configured", 503);
+			if (!s) return bad("file storage is not configured", 503);
 			const b = await body();
 			return Response.json(await blobGc(db, s, Number(b.days ?? 30), b.dry !== false));
 		}

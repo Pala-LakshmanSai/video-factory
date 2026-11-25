@@ -153,6 +153,12 @@ describe("access keys + Backblaze storage", () => {
 		expect(up.url).toContain("X-Amz-Signature=");
 		expect(((await (await req("/sync/blob/" + "a".repeat(64) + "/upload", { method: "POST" })).json()) as { exists: boolean }).exists).toBe(true);
 		expect((await req("/sync/blob/nope")).status).toBe(400);
+		// R2 secrets set: R2 wins over B2 (region "auto"; endpoint pasted with or without https://)
+		const r2 = { R2_ENDPOINT: "acct123.r2.cloudflarestorage.com/vf-files/ ", R2_KEY_ID: "rk", R2_SECRET: "rs" };
+		Object.assign(env as unknown as Record<string, string>, r2);
+		const r2get = await req("/sync/blob/" + "b".repeat(64));
+		expect(r2get.headers.get("Location")).toMatch(/^https:\/\/acct123\.r2\.cloudflarestorage\.com\/vf-files\/blobs\/b{64}\?.*X-Amz-Credential=rk%2F\d{8}%2Fauto%2Fs3/);
+		for (const k of Object.keys(r2)) delete (env as unknown as Record<string, string>)[k];
 		await req("/sync/roots", { method: "PUT", json: { name: "kits", target: "@repo/style-kits" } });
 		const ok = await req("/sync/commit", { json: { changes: [{ root: "kits", path: "a.md", sha: A, size: 5, asset: "b2:" + A, prev: null }] } });
 		expect(ok.status).toBe(200);
