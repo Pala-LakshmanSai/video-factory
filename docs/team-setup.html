@@ -75,6 +75,7 @@ th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-botto
 th { font: 600 0.78rem var(--body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 td:first-child { font-weight: 600; width: 40%; }
 footer { color: var(--muted); font-size: 0.9rem; }
+[hidden] { display: none !important; } /* .step-body sets display: flex, which would beat the hidden attribute */
 @media (max-width: 480px) { .step { grid-template-columns: 1fr; } .card { padding: 18px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
