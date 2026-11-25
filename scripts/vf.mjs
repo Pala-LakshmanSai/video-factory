@@ -667,7 +667,8 @@ async function publishDocs() {
 	const list = ["PROJECT_INSTRUCTIONS.md", "CONTRACT.md", "KIT_WORKFLOW.md", "ENGINE_FLAT2D.md", "SYNC.md"]
 		.filter((f) => existsSync(join(REPO, "docs", f)))
 		.map((f) => ({ name: f, body: readFileSync(join(REPO, "docs", f), "utf8") }));
-	list.push({ name: "install.sh", body: readFileSync(join(REPO, "scripts", "install.sh"), "utf8") }); // served at GET /install
+	for (const f of ["install.sh", "install.ps1"]) // served at GET /install and /install.ps1
+		if (existsSync(join(REPO, "scripts", f))) list.push({ name: f, body: readFileSync(join(REPO, "scripts", f), "utf8") });
 	for (const sub of ["styles", "prompts"]) {
 		const d = join(REPO, "docs", sub);
 		if (existsSync(d)) for (const f of readdirSync(d).filter((x) => x.endsWith(".md"))) list.push({ name: `${sub}/${f}`, body: readFileSync(join(d, f), "utf8") });

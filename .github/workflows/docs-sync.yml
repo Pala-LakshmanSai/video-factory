@@ -5,7 +5,7 @@ name: docs-sync
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "scripts/vf.mjs", "scripts/install.sh", ".github/workflows/docs-sync.yml"]
+    paths: ["docs/**", "scripts/vf.mjs", "scripts/install.sh", "scripts/install.ps1", ".github/workflows/docs-sync.yml"]
   workflow_dispatch:
 permissions:
   contents: read

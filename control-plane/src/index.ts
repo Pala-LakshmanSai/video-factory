@@ -52,11 +52,11 @@ async function uploadRoute(req: Request, e: Env) {
 	return Response.json({ drive_file_id: id });
 }
 
-// GET /install: the new-Mac setup script (scripts/install.sh, published with the docs). Public: it holds no secrets,
+// GET /install (Mac: scripts/install.sh) and /install.ps1 (Windows: scripts/install.ps1), published with the docs. Public: it holds no secrets,
 // and everything it fetches from the factory needs the owner's GitHub sign-in.
-async function installScript(e: Env) {
-	const doc = await getDoc(e.DB, "install.sh");
-	if (!doc) return new Response("echo 'install script not published yet' >&2; exit 1\n", { status: 503, headers: { "Content-Type": "text/plain" } });
+async function installScript(e: Env, name: string) {
+	const doc = await getDoc(e.DB, name);
+	if (!doc) return new Response("echo 'install script not published yet'; exit 1\n", { status: 503, headers: { "Content-Type": "text/plain" } });
 	return new Response(doc.body, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
@@ -66,7 +66,7 @@ export default {
 		if (path.startsWith("/agent/")) return agentApp.fetch(req, e, ctx);
 		if (path.startsWith("/admin") || path === "/callback/admin") return adminApp.fetch(req, e, ctx);
 		if (path.startsWith("/sync/")) return syncRoute(req, e);
-		if (path === "/install" && req.method === "GET") return installScript(e);
+		if ((path === "/install" || path === "/install.ps1") && req.method === "GET") return installScript(e, path === "/install.ps1" ? "install.ps1" : "install.sh");
 		if ((path === "/upload/input" || path === "/upload/plan" || path === "/upload/package") && req.method === "POST") return uploadRoute(req, e);
 		return oauth.fetch(req, e, ctx);
 	},
