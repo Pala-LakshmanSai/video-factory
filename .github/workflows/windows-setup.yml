@@ -41,3 +41,34 @@ jobs:
             ${{ runner.temp }}/vf-check/final.mp4
             ${{ runner.temp }}/vf-check/sheet.jpg
           if-no-files-found: ignore
+
+  # A team member's PC: access key only (no GitHub sign-in, no gh), full sync of skills and kits from Backblaze,
+  # models and skill checks included. Skipped when the VF_TEST_KEY secret is not set (owner: vf access add "CI Test").
+  key-install:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      VF_KEY: ${{ secrets.VF_TEST_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.VF_KEY != ''
+      - name: Installer with an access key
+        if: env.VF_KEY != ''
+        shell: pwsh
+        env:
+          VF_CI: "1"
+          VF_DIR: ${{ runner.temp }}\video-factory
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: |
+          Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1
+      - name: Every synced root arrived
+        if: env.VF_KEY != ''
+        shell: pwsh
+        working-directory: ${{ runner.temp }}\video-factory
+        run: |
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path
+          if (-not (Test-Path "$HOME\.video-factory\key")) { throw 'key file missing' }
+          foreach ($s in 'gta', 'aviation', 'paper-style', 'doomsday') { if (-not (Test-Path "$HOME\.claude\skills\$s\SKILL.md")) { throw "skill $s missing" } }
+          if (-not (Get-ChildItem style-kits -Recurse -File | Select-Object -First 1)) { throw 'style-kits empty' }
+          node scripts/vf.mjs status

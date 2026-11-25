@@ -3,9 +3,9 @@
 Works on Windows 10/11 and any Mac (Apple Silicon or Intel), with any Claude account. The plain-language overview is
 the project README.
 
-**Which GitHub account:** the owner's (Pala-LakshmanSai), or any GitHub account that has accepted a **Write**
-collaborator invite to `Pala-LakshmanSai/video-factory` and whose login or verified email is in the connector's
-allowed list (docs/SYNC.md, "Giving another GitHub account access").
+**Who signs in how:** a team member uses the **personal install line** the owner sends (it carries their access
+key; no GitHub account needed; owner creates it with `node scripts/vf.mjs access add "<name>"`). The owner signs in
+with GitHub (Pala-LakshmanSai). A GitHub account with **Write** access also works (docs/SYNC.md).
 
 Two parts, a few minutes each. After setup nothing needs re-pasting: preferences, instructions, styles, skills
 and kits stay in sync on their own (docs/SYNC.md).
@@ -14,29 +14,30 @@ and kits stay in sync on their own (docs/SYNC.md).
 
 ## A. Computer (Claude Code, where videos, styles and skills are built): one command
 
-**Windows:** Start → type `PowerShell` → open it, paste and press Enter:
+**Windows:** Start → type `PowerShell` → open it, paste your personal line and press Enter:
 
 ```powershell
-irm https://video-factory.lakshmansai121.workers.dev/install.ps1 | iex
+irm "https://video-factory.lakshmansai121.workers.dev/install.ps1?key=vfk_..." | iex
 ```
 
-**Mac:** open **Terminal** and paste:
+**Mac:** open **Terminal** and paste your personal line:
 
 ```bash
-curl -fsSL https://video-factory.lakshmansai121.workers.dev/install | bash
+curl -fsSL "https://video-factory.lakshmansai121.workers.dev/install?key=vfk_..." | bash
 ```
 
-It installs every tool (Homebrew on Mac / winget on Windows, git, gh, node, ffmpeg, yt-dlp, Python 3.12, uv, whisper, Chrome, the `claude`
-command), signs in to GitHub, downloads the project to `~/video-factory`, syncs every skill, style kit and preference,
-installs dependencies and the voice and transcription models, adds the Video Factory connector to Claude Code, and
-checks every skill. It asks you for three things only: your computer password (first tool install only), a GitHub
-sign-in in the browser (the owner's GitHub, or one with access: see below) and a Claude sign-in in the browser. It ends with "Done", or a
-short "still to fix" list. Never hangs, and safe to run again at any time: a re-run takes about 10 seconds and only
-fills gaps.
+(Owner: the same lines without `?key=...` sign in with GitHub instead.)
+
+It installs every tool (Homebrew on Mac / winget on Windows, git, node, ffmpeg, yt-dlp, Python 3.12, uv, whisper,
+Chrome, the `claude` command), saves the access key to `~/.video-factory/key`, downloads the project to
+`~/video-factory`, syncs every skill, style kit and preference, installs dependencies and the voice and
+transcription models, adds the Video Factory connector to Claude Code (signed in with the key), and checks every
+skill. It asks for your computer password (Mac, first tool install only) and a Claude sign-in in the browser. It
+ends with "Done", or a short "still to fix" list. Never hangs, and safe to run again at any time: a re-run takes
+about 10 seconds and only fills gaps.
 
 Then open Claude Code in `~/video-factory` (desktop app: Code tab, choose that folder) and say yes when it asks to
-trust the folder; that turns on the automatic sync. The first time Claude uses the connector it asks you to sign
-in with GitHub.
+trust the folder; that turns on the automatic sync.
 
 Prefer Claude to do it? Paste into Claude Code: `Run the Video Factory one-line installer for this computer (see
 the project README), then fix anything it lists under "still to fix".`
@@ -46,7 +47,8 @@ the project README), then fix anything it lists under "still to fix".`
 ## B. claude.ai (videos ordered by chat)
 
 1. claude.ai → Settings → Connectors → **Add custom connector**: name `Video Factory`, URL
-   `https://video-factory.lakshmansai121.workers.dev/mcp`. Connect and sign in with the same GitHub account.
+   `https://video-factory.lakshmansai121.workers.dev/mcp`. Connect; on the sign-in page paste your access key (the `vfk_...` part of your
+   install line) under "Or paste your access key" (owner: sign in with GitHub).
    Optional: set its tools to **Always allow** so chats don't stop to ask.
 2. Create a Project named **Video Factory**, turn the connector on, and paste this one line as its instructions
    (no knowledge files; everything else arrives live):

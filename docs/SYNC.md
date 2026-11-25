@@ -1,7 +1,8 @@
 # Sync: the same project in every Claude account
 
 Every Claude account (Claude Code on any Mac, and claude.ai Projects) sees the same styles, skills, kits,
-preferences and instructions, kept current automatically. One credential: the owner's GitHub login.
+preferences and instructions, kept current automatically. One credential: the owner's GitHub login, or a personal access key per team member
+(no GitHub account needed).
 
 ## What lives where
 
@@ -9,7 +10,7 @@ preferences and instructions, kept current automatically. One credential: the ow
 |---|---|---|
 | Code, registry styles (`renderer/styles/`), engines, docs, `CLAUDE.md`, prompts | git (`main` on GitHub) | Claude Code: SessionStart hook fast-forwards `main`. claude.ai: CI publishes `docs/**` live (below). |
 | Owner preferences ("flatglow: captions never cover characters") | D1 table `prefs` in the control plane | Claude Code: printed into every session by the SessionStart hook. claude.ai: `project_brief` / `style_guide` MCP tools. Changes are instant. |
-| Skills (`~/.claude/skills/aviation`, `gta`, `paper-style`, `align-images`, `cut-silences`, `youtube-video-style-analyze`) and `style-kits/` | file index in D1 (`sync_files`), bytes in GitHub release assets | `scripts/vf` pulls on session start, pushes on every Stop (background). |
+| Skills (`~/.claude/skills/aviation`, `gta`, `paper-style`, `align-images`, `cut-silences`, `youtube-video-style-analyze`) and `style-kits/` | file index in D1 (`sync_files`), bytes in Backblaze B2 (bucket `video-factory-files`; older versions in GitHub release assets) | `scripts/vf` pulls on session start, pushes on every Stop (background). |
 | Live instructions for claude.ai Projects (`docs/PROJECT_INSTRUCTIONS.md`), style docs (`docs/styles/*.md`), prompts | git, published to D1 table `docs` by `.github/workflows/docs-sync.yml` | `project_brief`, `style_guide` |
 | Ops facts about the live factory | `docs/OPS_STATE.md` (git) | git |
 
@@ -29,6 +30,8 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
 | `resolve <root:path> --keep local\|remote` (or `--all`) | Settle a conflict (both machines changed the same file). The remote copy waits in `.vf/local/conflicts/`. |
 | `docs publish` | Publish docs to claude.ai now (CI does this on every push to `main`). |
 | `gc [--days 30] [--yes]` | Delete stored file versions nothing uses any more (keeps storage small). |
+| `access add "<name>"` / `access list` / `access remove "<name>"` | Owner: give a team member a personal access key (prints their Windows/Mac install line and connector steps), list keys, revoke one. |
+| `migrate-storage` | Owner, once: move stored files from GitHub release assets to Backblaze B2. Safe to re-run. |
 
 ## How it stays reliable
 - **Compare-and-set commits.** Each change says which version it replaces; if another machine changed that file
@@ -39,13 +42,23 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
   written inside `~/.claude/skills/` or this repo (enforced by both the server and the client).
 - **Incremental.** The index is versioned; a pull asks only for changes since the last one. Unchanged files are
   recognised by size + mtime without rehashing. Transfers run 8 at a time with retries.
-- **Auth.** `/sync/*` accepts a GitHub token with **Write** access to this repo (the owner or a Write collaborator);
-  read access is not enough, so the repo can be public. CI publishes docs with its own `VF_DOCS_TOKEN` secret
-  (Worker: `DOCS_PUBLISH_TOKEN`), which can publish docs and nothing else. claude.ai uses the connector's GitHub sign-in.
+- **Auth.** `/sync/*` accepts a personal access key (`vfk_...`, stored only as a SHA-256 hash in D1 `access_keys`,
+  revocable), or a GitHub token with **Write** access to this repo (the owner or a Write collaborator; read access
+  is not enough, so the repo can be public). Managing keys is owner-only. CI publishes docs with its own
+  `VF_DOCS_TOKEN` secret (Worker: `DOCS_PUBLISH_TOKEN`), which can publish docs and nothing else. The connector
+  accepts a GitHub sign-in or the access key (pasted on its sign-in page, or `Authorization: Bearer vfk_...`).
+- **File bytes never pass through the server.** It hands out signed Backblaze links valid for 1 hour; clients
+  upload and download directly. Backblaze keys are Worker secrets (`B2_KEY_ID`, `B2_APP_KEY`), never on a PC.
 - **Hooks never block work.** SessionStart waits at most 40 s, then lets a big download finish in the background;
   Stop starts a background push at most every 90 s. Logs: `.vf/local/sync.log`.
 
-## Giving another GitHub account access
+## Giving a team member access (no GitHub needed)
+Owner runs `node scripts/vf.mjs access add "Priya"` (or asks Claude to). It prints a ready-to-send message with
+their personal install line for Windows and Mac and the connector steps; the key is in the line. They paste it,
+sign in to Claude, done. Revoke any time: `node scripts/vf.mjs access remove "Priya"` (sync and connector stop
+working for that key at once). One key per name; `access add` again replaces it.
+
+## Giving another GitHub account access (alternative)
 1. GitHub → the repo → Settings → Collaborators → Add people (username or email) with the **Write** role. Write is
    needed: synced file bytes live in draft releases, which only Write collaborators can see. They accept the invite.
    That alone covers git, `scripts/vf` sync and the installer.
@@ -54,7 +67,7 @@ Not synced on purpose: rendered videos and job folders (they go to Drive), YouTu
 The owner (`ALLOWED_GITHUB_LOGIN`) always has access; the /admin page stays owner-only.
 
 ## Limits
-- One file up to 1.9 GB. Release assets: about 1000 per shard × 16 shards; run `vf gc --yes` now and then.
+- One file up to 1.9 GB (Backblaze allows 5 GB per upload). Backblaze: first 10 GB stored free, downloads free up to 3x the stored amount per month; run `vf gc --yes` now and then.
 - Skills edited from a Claude Code session started outside this repo are pushed on the next `vf push` or the next
   session in this repo.
 - An existing claude.ai Project created before 2026-11-18 should replace its instructions with the one-line bootstrap in
