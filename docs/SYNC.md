@@ -73,4 +73,4 @@ The owner (`ALLOWED_GITHUB_LOGIN`) always has access; the /admin page stays owne
 - An existing claude.ai Project created before 2026-11-18 should replace its instructions with the one-line bootstrap in
   `docs/prompts/NEW_ACCOUNT_SETUP.md` (part B) once. Even without it, the connector's server instructions tell
   Claude to call `project_brief` first, and `acquire_gpu` / `list_styles` point at the live `style_guide`.
-- `GET /install` serves `scripts/install.sh` as published by `docs publish` (CI, on every push to main touching it).
+- `GET /team` serves the team guide `docs/team-setup.html`; `GET /install` serves `scripts/install.sh` as published by `docs publish` (CI, on every push to main touching it).

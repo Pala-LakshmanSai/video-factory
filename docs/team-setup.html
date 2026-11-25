@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Factory Team Setup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: one readable column of numbered steps, like a call sheet; commands sit in dark "slate" boxes with copy buttons. */
+:root {
+  --bg: #f6f8f8; --surface: #ffffff; --fg: #15201f; --muted: #556563; --line: #d9e2e1;
+  --accent: #0e7c74; --accent-soft: #e3f2f0; --slate: #13201f; --slate-fg: #e9f5f3;
+  --warn: #9a5b00; --warn-soft: #fff4e0;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1615; --surface: #16201f; --fg: #e6efee; --muted: #9db0ad; --line: #2a3836;
+  --accent: #4fd1c1; --accent-soft: #173331; --slate: #070c0c; --slate-fg: #dff3f0;
+  --warn: #f2b65c; --warn-soft: #2c2412; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1615; --surface: #16201f; --fg: #e6efee; --muted: #9db0ad; --line: #2a3836;
+  --accent: #4fd1c1; --accent-soft: #173331; --slate: #070c0c; --slate-fg: #dff3f0;
+  --warn: #f2b65c; --warn-soft: #2c2412; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 760px; margin: 0 auto; padding-block: 40px 72px; display: flex; flex-direction: column; gap: 28px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 2.6rem); letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; }
+h3 { font-size: 1.05rem; }
+p, ul, ol { margin: 0; }
+ul, ol { padding-left: 1.3em; display: flex; flex-direction: column; gap: 6px; }
+a { color: var(--accent); }
+.eyebrow { font: 600 0.75rem/1 var(--body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.lede { color: var(--muted); font-size: 1.08rem; max-width: 62ch; }
+header { display: flex; flex-direction: column; gap: 12px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.step { display: grid; grid-template-columns: 44px 1fr; gap: 16px; align-items: start; }
+.num { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: var(--bg);
+  font: 700 1.1rem/40px var(--display); text-align: center; }
+.step-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.time { color: var(--muted); font-size: 0.9rem; }
+
+.check { list-style: none; padding: 0; }
+.check li { padding-left: 28px; position: relative; }
+.check li::before { content: ""; position: absolute; left: 2px; top: 0.35em; width: 14px; height: 14px; border: 2px solid var(--accent); border-radius: 4px; }
+
+.os { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--bg); align-self: flex-start; }
+.os button { font: 600 0.95rem var(--body); border: 0; background: transparent; color: var(--muted); padding: 8px 18px; border-radius: 999px; cursor: pointer; }
+.os button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
+.os button:focus-visible, .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.cmd { background: var(--slate); color: var(--slate-fg); border-radius: 10px; display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; min-width: 0; }
+.cmd code { font: 500 0.88rem/1.5 var(--mono); flex: 1; min-width: 0; overflow-x: auto; white-space: pre; }
+.copy { font: 600 0.85rem var(--body); background: var(--accent); color: var(--slate); border: 0; border-radius: 7px; padding: 8px 14px; cursor: pointer; flex: none; }
+
+.note { background: var(--accent-soft); border-radius: 10px; padding: 14px 16px; }
+.warn { background: var(--warn-soft); border-radius: 10px; padding: 14px 16px; }
+.warn strong { color: var(--warn); }
+kbd { font: 500 0.85em var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: var(--bg); }
+.path { font-family: var(--mono); font-size: 0.9em; }
+
+.asks { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.asks li { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.asks .where { display: block; color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 0.95rem; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { font: 600 0.78rem var(--body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+td:first-child { font-weight: 600; width: 40%; }
+footer { color: var(--muted); font-size: 0.9rem; }
+@media (max-width: 480px) { .step { grid-template-columns: 1fr; } .card { padding: 18px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">For the production team</span>
+    <h1>Set up Video Factory on your computer</h1>
+    <p class="lede">About 40 minutes, mostly waiting for downloads. No coding needed: you copy one line, paste it,
+      and sign in a couple of times. At the end, you can make videos by talking to Claude, using every style, kit and
+      tool the team has.</p>
+  </header>
+
+  <section class="card" aria-labelledby="before">
+    <h2 id="before">Before you start</h2>
+    <ul class="check">
+      <li>A <strong>Windows 10/11</strong> PC or a <strong>Mac</strong>, with at least <strong>10 GB free</strong> disk space and good internet.</li>
+      <li>A <strong>Claude account</strong> on a paid plan (Pro or Max), and the <a href="https://claude.ai/download">Claude app</a> installed.</li>
+      <li>That's it. No GitHub account and no passwords to remember.</li>
+    </ul>
+  </section>
+
+  <section class="card step" aria-labelledby="s1">
+    <div class="num" aria-hidden="true">1</div>
+    <div class="step-body">
+      <h2 id="s1">Get your personal line from the owner</h2>
+      <p>Ask the project owner for access. You'll get a message with <strong>two lines made just for you</strong>, one
+        for Windows and one for Mac. They contain your own access key (the part starting with <span class="path">vfk_</span>).</p>
+      <div class="warn"><strong>Keep your line private.</strong> Anyone with it can use your access. Don't post it in a group chat or share your screen while it's visible.</div>
+      <p class="time">However long the owner takes to reply</p>
+    </div>
+  </section>
+
+  <section class="card step" aria-labelledby="s2">
+    <div class="num" aria-hidden="true">2</div>
+    <div class="step-body">
+      <h2 id="s2">Paste your line to install everything</h2>
+      <div class="os" role="group" aria-label="Your computer">
+        <button type="button" id="os-win" aria-pressed="true">Windows</button>
+        <button type="button" id="os-mac" aria-pressed="false">Mac</button>
+      </div>
+
+      <div id="win" class="step-body">
+        <ol>
+          <li>Click <strong>Start</strong>, type <strong>PowerShell</strong>, and open <strong>Windows PowerShell</strong>.</li>
+          <li>Copy <strong>your Windows line</strong> from the owner's message, right-click inside the blue window to paste it, and press <kbd>Enter</kbd>. It looks like this:</li>
+        </ol>
+        <div class="cmd"><code>irm "https://video-factory.lakshmansai121.workers.dev/install.ps1?key=vfk_…" | iex</code></div>
+      </div>
+
+      <div id="mac" class="step-body" hidden>
+        <ol>
+          <li>Press <kbd>Cmd</kbd> + <kbd>Space</kbd>, type <strong>Terminal</strong>, and press <kbd>Enter</kbd>.</li>
+          <li>Copy <strong>your Mac line</strong> from the owner's message, paste it into Terminal with <kbd>Cmd</kbd> + <kbd>V</kbd>, and press <kbd>Enter</kbd>. It looks like this:</li>
+        </ol>
+        <div class="cmd"><code>curl -fsSL "https://video-factory.lakshmansai121.workers.dev/install?key=vfk_…" | bash</code></div>
+      </div>
+
+      <h3>While it runs, it will ask you for two things</h3>
+      <ol>
+        <li><strong>Your computer password</strong>, to install tools. On Windows this may be a few <em>"Do you want to allow changes?"</em> pop-ups: click <strong>Yes</strong>. On a Mac, type your password (nothing shows while you type, that's normal) and press <kbd>Enter</kbd>. If a Mac asks to install <em>"command line developer tools"</em>, click <strong>Install</strong>.</li>
+        <li><strong>Claude sign-in.</strong> A browser page opens: sign in with your Claude account. If the window then asks for a code, copy it from the browser and paste it back.</li>
+      </ol>
+      <p>Then leave it running. You'll see lines like <em>"downloading…"</em> and <em>"npm ci…"</em>; that's normal.</p>
+      <div class="note"><strong>Finished when you see "Done."</strong> If it shows <strong>"still to fix"</strong> instead,
+        do what each line says (or send the owner a screenshot), then paste the <strong>same line</strong> again. Running it
+        again is always safe: it only fills in what's missing.</div>
+      <p class="time">20–40 minutes the first time</p>
+    </div>
+  </section>
+
+  <section class="card step" aria-labelledby="s3">
+    <div class="num" aria-hidden="true">3</div>
+    <div class="step-body">
+      <h2 id="s3">Open the project in Claude</h2>
+      <ol>
+        <li>In the Claude app, go to the <strong>Code</strong> tab.</li>
+        <li>Choose the <strong>video-factory</strong> folder: <span class="path">C:\Users\<em>you</em>\video-factory</span> on Windows,
+          or <span class="path">/Users/<em>you</em>/video-factory</span> on a Mac.</li>
+        <li>When it asks whether to <strong>trust this folder</strong>, click <strong>Yes</strong>. This turns on automatic updates.</li>
+        <li>Type: <strong>which styles can you make?</strong> It should list the styles.</li>
+      </ol>
+      <p>The cloud factory and its GPUs are already connected; there's nothing else to sign in to.</p>
+      <p class="time">2 minutes</p>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="use">
+    <h2 id="use">You're set up. Now just ask</h2>
+    <p>Always open the Claude app's <strong>Code</strong> tab in the <strong>video-factory</strong> folder. Talk to Claude normally:</p>
+    <ul class="asks">
+      <li>"Make a gta video from this voiceover."<span class="where">Made on your computer</span></li>
+      <li>"Make an aviation video about this crash."<span class="where">Made on your computer</span></li>
+      <li>"Make a 2-minute flatglow video about volcanoes."<span class="where">Cloud GPU; Claude asks before it costs money</span></li>
+      <li>"From now on, paper-style titles are always in capitals."<span class="where">Saved for the whole team</span></li>
+    </ul>
+    <ul>
+      <li><strong>Cloud videos</strong> arrive as a Google Drive link in the chat. <strong>Videos made on your computer</strong> are saved on your computer.</li>
+      <li><strong>Updates are automatic.</strong> New styles, fixed tools and team rules reach you the next time you open Claude.</li>
+      <li><strong>Your changes are shared too.</strong> If you change a style or a kit, everyone on the team gets it.</li>
+    </ul>
+  </section>
+
+  <section class="card" aria-labelledby="phone">
+    <h2 id="phone">Optional: order videos from a browser or phone</h2>
+    <ol>
+      <li>At claude.ai, open <strong>Settings → Connectors → Add custom connector</strong>. Name: <strong>Video Factory</strong>. URL:</li>
+    </ol>
+    <div class="cmd"><code id="cmd-mcp">https://video-factory.lakshmansai121.workers.dev/mcp</code><button class="copy" type="button" data-copy="cmd-mcp">Copy</button></div>
+    <ol start="2">
+      <li>Click <strong>Add</strong>, then <strong>Connect</strong>. On the page that opens, paste your access key (only the part of your line from <span class="path">vfk_</span> up to the closing quote) into <strong>"Or paste your access key"</strong> and continue.</li>
+      <li>Go to <strong>Projects → New project</strong>, name it <strong>Video Factory</strong>, turn on the connector, and paste this as the project instructions:</li>
+    </ol>
+    <div class="cmd"><code id="cmd-proj">At the start of every chat, call the Video Factory tool project_brief and follow what it returns.</code><button class="copy" type="button" data-copy="cmd-proj">Copy</button></div>
+    <p>Chats in that project can order cloud videos from any device, with nothing installed.</p>
+  </section>
+
+  <section class="card" aria-labelledby="help">
+    <h2 id="help">If something goes wrong</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">What you see</th><th scope="col">What to do</th></tr></thead>
+        <tbody>
+          <tr><td>The window closed, or the computer restarted</td><td>Open it again and paste the same line. It continues where it stopped.</td></tr>
+          <tr><td>"still to fix" with a list</td><td>Do what each line says, then paste the same line again. Stuck? Send the owner a screenshot.</td></tr>
+          <tr><td>"refused your access key" or "does not look right"</td><td>Your key was replaced or removed, or the line got cut off when copying. Ask the owner for a fresh line and paste that one.</td></tr>
+          <tr><td>"Could not download the project"</td><td>Check the internet connection, then paste the same line again.</td></tr>
+          <tr><td>Windows: "winget is not recognized"</td><td>Install <a href="https://apps.microsoft.com/detail/9nblggh4nns1">App Installer</a> from the Microsoft Store, then paste the line again.</td></tr>
+          <tr><td>Anything else</td><td>In the Claude app's Code tab, in the video-factory folder, type: <em>"Setup isn't working. Run node scripts/vf.mjs setup and fix what it lists."</em></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Keep your line to yourself: anyone using your key gets your access, and cloud videos cost the team money. Lost it or think someone saw it? Tell the owner; they can switch it off and send you a new one.</footer>
+</div>
+
+<script>
+(function () {
+  var win = document.getElementById("win"), mac = document.getElementById("mac");
+  var bWin = document.getElementById("os-win"), bMac = document.getElementById("os-mac");
+  function pick(os) {
+    win.hidden = os !== "win"; mac.hidden = os !== "mac";
+    bWin.setAttribute("aria-pressed", String(os === "win")); bMac.setAttribute("aria-pressed", String(os === "mac"));
+    try { localStorage.setItem("vf-os", os); } catch (e) {}
+  }
+  var start = /Mac/i.test(navigator.platform || navigator.userAgent) ? "mac" : "win";
+  try { start = localStorage.getItem("vf-os") || start; } catch (e) {}
+  pick(start);
+  bWin.addEventListener("click", function () { pick("win"); });
+  bMac.addEventListener("click", function () { pick("mac"); });
+
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var el = document.getElementById(btn.getAttribute("data-copy"));
+      var done = function (msg) { btn.textContent = msg; setTimeout(function () { btn.textContent = "Copy"; }, 1600); };
+      var select = function () { var r = document.createRange(); r.selectNodeContents(el); var s = getSelection(); s.removeAllRanges(); s.addRange(r); done("Press Ctrl+C"); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(el.textContent).then(function () { done("Copied"); }, select);
+      else select();
+    });
+  });
+})();
+</script>

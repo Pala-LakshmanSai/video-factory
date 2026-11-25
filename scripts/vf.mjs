@@ -733,6 +733,7 @@ async function publishDocs() {
 	const list = ["PROJECT_INSTRUCTIONS.md", "CONTRACT.md", "KIT_WORKFLOW.md", "ENGINE_FLAT2D.md", "SYNC.md"]
 		.filter((f) => existsSync(join(REPO, "docs", f)))
 		.map((f) => ({ name: f, body: readFileSync(join(REPO, "docs", f), "utf8") }));
+	if (existsSync(join(REPO, "docs", "team-setup.html"))) list.push({ name: "team-setup.html", body: readFileSync(join(REPO, "docs", "team-setup.html"), "utf8") }); // GET /team
 	for (const f of ["install.sh", "install.ps1"]) // served at GET /install and /install.ps1
 		if (existsSync(join(REPO, "scripts", f))) list.push({ name: f, body: readFileSync(join(REPO, "scripts", f), "utf8") });
 	for (const sub of ["styles", "prompts"]) {

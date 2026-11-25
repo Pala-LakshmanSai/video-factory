@@ -112,8 +112,9 @@ Style kits (references and design bibles for building styles) are in `style-kits
 ## Give someone access
 
 Owner: in the Claude app in this folder, say **"give Priya access"** (or run `node scripts/vf.mjs access add "Priya"`).
-It prints a ready-to-send message with Priya's personal Windows and Mac lines and the connector steps. Send it to
-them privately. To take access away: **"remove Priya's access"** (`node scripts/vf.mjs access remove "Priya"`);
+It prints a ready-to-send message with Priya's personal Windows and Mac lines and the connector steps; send it
+to them privately. The plain step-by-step guide for the team (public, no keys in it) is at
+https://video-factory.lakshmansai121.workers.dev/team. To take access away: **"remove Priya's access"** (`node scripts/vf.mjs access remove "Priya"`);
 it stops working at once. `node scripts/vf.mjs access list` shows who has a key.
 
 Files (skills and kits) are stored in Backblaze; RunPod, Google Drive and alert keys stay on the server. Nobody's

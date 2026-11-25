@@ -82,6 +82,14 @@ describe("routing", () => {
 		expect(r.status).toBe(200);
 		expect(await r.text()).toBe("#!/bin/bash\necho hi");
 	});
+	it("GET /team serves the published team guide as HTML without auth", async () => {
+		expect((await req("/team")).status).toBe(503);
+		await e.DB.prepare("INSERT INTO docs (name, body, sha, updated_at) VALUES ('team-setup.html', '<h1>Guide</h1>', 'x', 1)").run();
+		const r = await req("/team");
+		expect(r.status).toBe(200);
+		expect(r.headers.get("Content-Type")).toContain("text/html");
+		expect(await r.text()).toBe("<h1>Guide</h1>");
+	});
 	it("/agent/* goes to the agent API (job token, not OAuth)", async () => {
 		const r = await req("/agent/j1/spec");
 		expect(r.status).toBe(401);

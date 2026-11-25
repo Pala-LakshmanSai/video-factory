@@ -73,6 +73,13 @@ async function installScript(e: Env, name: string, key: string | null) {
 	return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
+// GET /team: the production team's setup guide (docs/team-setup.html, published with the docs). Public, no secrets.
+async function teamGuide(e: Env) {
+	const doc = await getDoc(e.DB, "team-setup.html");
+	if (!doc) return new Response("team guide not published yet", { status: 503 });
+	return new Response(doc.body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; img-src data:" } });
+}
+
 // Claude Code on a team member's computer connects with its access key as a header (scripts/vf.mjs setup adds it),
 // so it needs no browser sign-in. Same identity as a key sign-in through the OAuth page.
 async function mcpWithKey(req: Request, e: Env, ctx: ExecutionContext, key: string) {
@@ -89,6 +96,7 @@ export default {
 		if (path.startsWith("/admin") || path === "/callback/admin") return adminApp.fetch(req, e, ctx);
 		if (path.startsWith("/sync/")) return syncRoute(req, e);
 		if ((path === "/install" || path === "/install.ps1") && req.method === "GET") return installScript(e, path === "/install.ps1" ? "install.ps1" : "install.sh", new URL(req.url).searchParams.get("key"));
+		if (path === "/team" && req.method === "GET") return teamGuide(e);
 		const bearer = req.headers.get("Authorization")?.replace(/^Bearer /i, "") ?? "";
 		if (path === "/mcp" && bearer.startsWith("vfk_")) return mcpWithKey(req, e, ctx, bearer);
 		if ((path === "/upload/input" || path === "/upload/plan" || path === "/upload/package") && req.method === "POST") return uploadRoute(req, e);
