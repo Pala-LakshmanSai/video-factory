@@ -68,9 +68,11 @@ The owner (`ALLOWED_GITHUB_LOGIN`) always has access; the /admin page stays owne
 
 ## Limits
 - One file up to 1.9 GB (Backblaze allows 5 GB per upload). Backblaze: first 10 GB stored free, downloads free up to 3x the stored amount per month; run `vf gc --yes` now and then.
-- Backblaze caps: an account with no card on file stops downloads after about 1 GB a day (`cap exceeded`, resets
-  00:00 UTC), which is about one new computer per day (a full sync is ~1 GB). With a card, set a daily cap in
-  Backblaze > Caps & Alerts; past the free allowance downloads cost about $0.01/GB.
+- Backblaze caps: free egress is 3x the average stored amount per month (Backblaze pricing page), and the
+  account has no card, so past that downloads stop with 403 `AccessDenied` "download bandwidth or transaction
+  (Class B) cap exceeded". With ~1 GB stored, 3 full syncs (~1 GB each) hit it on 2026-11-25. Streaming through the
+  Worker does not avoid it (tested). Fix needs the owner: raise the cap in Backblaze > Caps & Alerts (needs a card;
+  beyond the free allowance $0.01/GB). The reset time is not documented on the pages we could read.
 - Skills edited from a Claude Code session started outside this repo are pushed on the next `vf push` or the next
   session in this repo.
 - An existing claude.ai Project created before 2026-11-18 should replace its instructions with the one-line bootstrap in

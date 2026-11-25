@@ -24,8 +24,15 @@ project_brief, style_guide, add_preference, retire_preference. 7 roots synced (s
 removes them (GitHub rate limits deletes, so let it run in the background). Renderer CI skips the onnxruntime CUDA
 download (upstream 404); the Dockerfile already did.
 
-**Team access without GitHub (2026-11-25):** Worker 5c87f807 (D1 migration 0006 `access_keys`). Synced file bytes
-live in Backblaze B2 bucket `video-factory-files` (s3.us-east-005, separate Backblaze account; Worker secrets
-B2_KEY_ID / B2_APP_KEY); `migrate-storage` moved all 3311 files (27 stored items) off GitHub release assets, which
-are now unused (`vf gc --yes` deletes them). Team members get a personal key and install line via
-`vf access add "<name>"`; key "CI Test" is the GitHub secret VF_TEST_KEY used by the windows-setup key-install job.
+**Team access without GitHub (2026-11-25):** Worker 35b1751e (D1 migration 0006 `access_keys`; /team serves
+docs/team-setup.html). Synced file bytes live in Backblaze B2 bucket `video-factory-files` (s3.us-east-005, separate
+Backblaze account; Worker secrets B2_KEY_ID / B2_APP_KEY); `migrate-storage` moved all 3311 files (27 stored items)
+off GitHub release assets, which are now unused but kept as a fallback (`vf gc --yes` deletes them). Team members
+get a personal key and install line via `vf access add "<name>"`. Verified: fresh-Mac key-only setup, 3311/3311
+files sha256-match the index; Windows key-only full sync ran clean in runs 45574633579 and 45574882496 (they
+failed only on the Claude sign-in check, now skipped under VF_CI). Test key "CI Test" revoked and secret
+VF_TEST_KEY deleted, so the windows-setup key-install job is skipped until both are recreated.
+**Open (needs owner):** B2 downloads blocked since run 45576024839: 403 AccessDenied "download bandwidth or
+transaction (Class B) cap exceeded". Account has no card; free egress is 3x stored per month (~3 GB for ~1 GB
+stored). Worker-proxied download is blocked the same way (tested). New installs and new-file pulls fail until the
+cap is raised in Backblaze > Caps & Alerts or the allowance renews. Do not run full sync tests until then.

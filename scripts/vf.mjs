@@ -286,7 +286,7 @@ async function fetchAsset(asset, dest) {
 			if (r.status !== 302) throw new Error(`download link for ${asset}: ${r.status}`);
 			const body = await fetch(r.headers.get("location"), { signal: AbortSignal.timeout(30 * 60_000) }); // signed link: no token
 			if (body.status === 403 && /cap exceeded/i.test(await body.text().catch(() => "")))
-				throw Object.assign(new Error("Backblaze's daily download limit is used up: run setup again tomorrow (it resets at 00:00 UTC), or the owner raises it in Backblaze > Caps & Alerts"), { noRetry: true });
+				throw Object.assign(new Error("Backblaze's download limit is used up (cap exceeded): run setup again later, or the owner raises the cap in Backblaze > Caps & Alerts"), { noRetry: true });
 			if (body.status !== 200) throw new Error(`download ${asset}: ${body.status}`);
 			await pipeline(Readable.fromWeb(body.body), createWriteStream(dest));
 		}, "download");
