@@ -445,6 +445,10 @@ export interface ApprovalDialogOptions {
 	 * Set-Cookie header for the CSRF token
 	 */
 	setCookie: string;
+	/**
+	 * Shown above the access-key field (e.g. after a wrong key)
+	 */
+	error?: string;
 }
 
 /**
@@ -457,7 +461,7 @@ export interface ApprovalDialogOptions {
  * @returns A Response containing the HTML approval dialog
  */
 export function renderApprovalDialog(request: Request, options: ApprovalDialogOptions): Response {
-	const { client, server, state, csrfToken, setCookie } = options;
+	const { client, server, state, csrfToken, setCookie, error } = options;
 
 	const encodedState = btoa(JSON.stringify(state));
 
@@ -636,6 +640,34 @@ export function renderApprovalDialog(request: Request, options: ApprovalDialogOp
             color: var(--text-color);
           }
 
+          .or {
+            margin-top: 1.5rem;
+            border-top: 1px solid var(--border-color);
+            padding-top: 1.5rem;
+          }
+
+          .key-label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+          }
+
+          .key-input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 0.75rem;
+            font-size: 1rem;
+            border: 1px solid #888;
+            border-radius: 6px;
+            font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          }
+
+          .key-error {
+            color: #b00020;
+            font-weight: 600;
+            margin: 0 0 0.5rem;
+          }
+
           @media (max-width: 640px) {
             .container {
               margin: 1rem auto;
@@ -758,7 +790,7 @@ export function renderApprovalDialog(request: Request, options: ApprovalDialogOp
 				}
             </div>
 
-            <p>This MCP Client is requesting to be authorized on ${serverName}. If you approve, you will be redirected to complete authentication.</p>
+            <p>This MCP Client is requesting to be authorized on ${serverName}. Sign in with GitHub, or paste the access key the owner gave you.</p>
 
             <form method="post" action="${new URL(request.url).pathname}">
               <input type="hidden" name="state" value="${encodedState}">
@@ -766,7 +798,18 @@ export function renderApprovalDialog(request: Request, options: ApprovalDialogOp
 
               <div class="actions">
                 <button type="button" class="button button-secondary" onclick="window.history.back()">Cancel</button>
-                <button type="submit" class="button button-primary">Approve</button>
+                <button type="submit" class="button button-primary">Sign in with GitHub</button>
+              </div>
+            </form>
+
+            <form method="post" action="${new URL(request.url).pathname}" class="or">
+              <input type="hidden" name="state" value="${encodedState}">
+              <input type="hidden" name="csrf_token" value="${csrfToken}">
+              <label class="key-label" for="access_key">Or paste your access key</label>
+              ${error ? `<p class="key-error" role="alert">${sanitizeText(error)}</p>` : ""}
+              <input class="key-input" id="access_key" name="access_key" type="text" placeholder="vfk_..." required autocomplete="off" autocapitalize="off" spellcheck="false">
+              <div class="actions">
+                <button type="submit" class="button button-primary">Sign in with key</button>
               </div>
             </form>
           </div>

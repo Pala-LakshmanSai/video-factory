@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
 import { Octokit } from "octokit";
+import { checkAccessKey } from "./access";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
 import {
 	addApprovedClient,
@@ -32,12 +33,16 @@ app.get("/authorize", async (c) => {
 		return redirectToGithub(c.req.raw, stateToken, { "Set-Cookie": sessionBindingCookie });
 	}
 
-	// Generate CSRF protection for the approval form
-	const { token: csrfToken, setCookie } = generateCSRFProtection();
+	return consentPage(c.req.raw, c.env.OAUTH_PROVIDER, oauthReqInfo);
+});
 
-	return renderApprovalDialog(c.req.raw, {
-		client: await c.env.OAUTH_PROVIDER.lookupClient(clientId),
+/** The consent dialog with a fresh one-time CSRF token (a new cookie replaces any earlier one). */
+async function consentPage(request: Request, provider: OAuthHelpers, oauthReqInfo: AuthRequest, error?: string, status = 200) {
+	const { token: csrfToken, setCookie } = generateCSRFProtection();
+	const page = renderApprovalDialog(request, {
+		client: await provider.lookupClient(oauthReqInfo.clientId),
 		csrfToken,
+		error,
 		server: {
 			description: "Video Factory render control plane.",
 			logo: "https://avatars.githubusercontent.com/u/314135?s=200&v=4",
@@ -46,7 +51,8 @@ app.get("/authorize", async (c) => {
 		setCookie,
 		state: { oauthReqInfo },
 	});
-});
+	return new Response(page.body, { headers: page.headers, status });
+}
 
 app.post("/authorize", async (c) => {
 	try {
@@ -54,7 +60,7 @@ app.post("/authorize", async (c) => {
 		const formData = await c.req.raw.formData();
 
 		// Validate CSRF token
-		validateCSRFToken(formData, c.req.raw);
+		const { clearCookie: clearCsrf } = validateCSRFToken(formData, c.req.raw);
 
 		// Extract state from form data
 		const encodedState = formData.get("state");
@@ -71,6 +77,22 @@ app.post("/authorize", async (c) => {
 
 		if (!state.oauthReqInfo || !state.oauthReqInfo.clientId) {
 			return c.text("Invalid request", 400);
+		}
+
+		// Access-key form (team members without GitHub): same CSRF + state checks as above, then authorize here.
+		// completeAuthorization re-checks the redirect URI against the registered client and PKCE.
+		const key = formData.get("access_key");
+		if (key !== null) {
+			const who = typeof key === "string" ? await checkAccessKey(c.env.DB, key.trim()) : null;
+			if (!who) return consentPage(c.req.raw, c.env.OAUTH_PROVIDER, state.oauthReqInfo, "That key isn't valid. Ask the owner for a new one.", 401);
+			const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
+				metadata: { label: who.name },
+				props: { accessToken: "", email: null, login: `key:${who.name}`, name: who.name } satisfies Props,
+				request: state.oauthReqInfo,
+				scope: state.oauthReqInfo.scope,
+				userId: `key_${encodeURIComponent(who.name)}`, // no ":" allowed; "_" never appears in a GitHub login
+			});
+			return new Response(null, { status: 302, headers: { Location: redirectTo, "Set-Cookie": clearCsrf } });
 		}
 
 		// Add client to approved list

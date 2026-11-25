@@ -18,6 +18,9 @@
     "ALLOWED_GITHUB_LOGIN": "Pala-LakshmanSai",
     // /sync/* accepts any GitHub token that can read this (private) repo; release assets there hold synced file bytes
     "SYNC_REPO": "Pala-LakshmanSai/video-factory",
+    // synced skill/kit bytes (src/blobs.ts); secrets B2_KEY_ID + B2_APP_KEY via `wrangler secret put`
+    "B2_BUCKET": "video-factory-files",
+    "B2_ENDPOINT": "s3.us-east-005.backblazeb2.com",
     // "1" only while running the Phase 9 drills
     "FAULTS_ENABLED": "0",
     // "1" only in .dev.vars (local): enables POST /dev/acquire

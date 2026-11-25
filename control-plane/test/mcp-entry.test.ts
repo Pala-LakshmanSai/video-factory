@@ -2,6 +2,7 @@
 // GitHub OAuth dance (register -> authorize -> consent -> GitHub callback -> token) ending in an MCP call.
 import { env as stubEnv } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createKey, revokeKey } from "../src/access";
 import { json, makeEnv, mockFetch } from "./helpers";
 
 const ORIGIN = "https://cp.test";
@@ -56,6 +57,24 @@ describe("connector allow-list (MCP_USERS)", () => {
 });
 
 describe("routing", () => {
+	it("a personal install link fills the key placeholder; a bad key is ignored", async () => {
+		await e.DB.prepare("INSERT INTO docs (name, body, sha, updated_at) VALUES ('install.sh', 'VF_KEY_FROM_LINK=\"\"\nmain', 'x', 1)").run();
+		await e.DB.prepare("INSERT INTO docs (name, body, sha, updated_at) VALUES ('install.ps1', '$VfKeyFromLink = \"\"', 'y', 1)").run();
+		const k = "vfk_" + "A1".repeat(16);
+		expect(await (await req(`/install?key=${k}`)).text()).toBe(`VF_KEY_FROM_LINK="${k}"\nmain`);
+		expect(await (await req(`/install.ps1?key=${k}`)).text()).toBe(`$VfKeyFromLink = "${k}"`);
+		expect(await (await req(`/install?key=$(rm%20-rf)`)).text()).toBe('VF_KEY_FROM_LINK=""\nmain');
+	});
+
+	it("/mcp accepts an access key as a Bearer header (Claude Code on a team PC)", async () => {
+		const made = await createKey(e.DB, "Sam");
+		const key = (made as { key: string }).key;
+		const init = { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } }) };
+		expect((await req("/mcp", init)).status).toBe(200);
+		await revokeKey(e.DB, "Sam");
+		expect((await req("/mcp", init)).status).toBe(401);
+	});
+
 	it("GET /install serves the published setup script without auth", async () => {
 		expect((await req("/install")).status).toBe(503);
 		await e.DB.prepare("INSERT INTO docs (name, body, sha, updated_at) VALUES ('install.sh', '#!/bin/bash\necho hi', 'x', 1)").run();
@@ -124,7 +143,8 @@ const keep = (r: Response) => {
 };
 const cookie = () => [...jar].filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join("; ");
 
-async function oauthDance() {
+/** Register a client and open the consent dialog; field(n) reads a hidden form value from it. */
+async function startAuth() {
 	jar.clear();
 	const redirect_uri = "https://claude.ai/api/mcp/auth_callback";
 	const reg = await req("/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: [redirect_uri], token_endpoint_auth_method: "none", client_name: "Claude" }) });
@@ -138,7 +158,11 @@ async function oauthDance() {
 	expect(dialog.status).toBe(200);
 	const html = await dialog.text();
 	const field = (n: string) => new RegExp(`name="${n}" value="([^"]+)"`).exec(html)![1];
+	return { html, field, client_id, redirect_uri, verifier };
+}
 
+async function oauthDance() {
+	const { field, client_id, redirect_uri, verifier } = await startAuth();
 	const consent = keep(await req("/authorize", { method: "POST", headers: { Cookie: cookie() }, body: new URLSearchParams({ state: field("state"), csrf_token: field("csrf_token") }) }));
 	expect(consent.status).toBe(302);
 	const gh = new URL(consent.headers.get("location")!);
@@ -185,5 +209,85 @@ describe("GitHub OAuth flow", () => {
 		const { cb } = await oauthDance();
 		expect(cb.status).toBe(403);
 		expect(await cb.text()).toBe("GitHub user mallory is not allowed");
+	});
+});
+
+/** Code from the client's redirect -> token -> MCP initialize; returns the /mcp status. */
+async function tokenAndMcp(location: string, client_id: string, redirect_uri: string, verifier: string) {
+	const back = new URL(location);
+	expect(back.origin + back.pathname).toBe(redirect_uri);
+	expect(back.searchParams.get("state")).toBe("claude-state");
+	const tok = await req("/token", {
+		method: "POST",
+		body: new URLSearchParams({ grant_type: "authorization_code", code: back.searchParams.get("code")!, redirect_uri, client_id, code_verifier: verifier, resource: `${ORIGIN}/mcp` }),
+	});
+	expect(tok.status).toBe(200);
+	const { access_token } = (await tok.json()) as { access_token: string };
+	const mcp = () =>
+		req("/mcp", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+			body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "c", version: "1" } } }),
+		});
+	return mcp;
+}
+
+describe("access-key sign-in", () => {
+	const BAD = "That key isn&#039;t valid. Ask the owner for a new one.";
+	const postKey = (field: (n: string) => string, access_key: string, csrf = field("csrf_token")) =>
+		req("/authorize", { method: "POST", headers: { Cookie: cookie() }, body: new URLSearchParams({ state: field("state"), csrf_token: csrf, access_key }) });
+
+	it("the consent page offers the key field next to GitHub", async () => {
+		const { html } = await startAuth();
+		expect(html).toContain("Sign in with GitHub");
+		expect(html).toContain("Or paste your access key");
+		expect(html).toContain('name="access_key"');
+		expect(html).not.toContain(`role="alert"`);
+	});
+
+	it("a valid key completes authorization without GitHub; the token opens /mcp until the key is revoked", async () => {
+		const { key } = (await createKey(e.DB, "Asha")) as { key: string };
+		const { field, client_id, redirect_uri, verifier } = await startAuth();
+		const r = keep(await postKey(field, `  ${key}\n`)); // pasted with stray whitespace
+		expect(r.status).toBe(302);
+		expect(r.headers.get("location")).not.toMatch(/github\.com/);
+		expect(r.headers.getSetCookie().map((c) => c.split(";")[0])).toEqual(["__Host-CSRF_TOKEN="]); // one-time CSRF token cleared, no approved-client cookie
+		const mcp = await tokenAndMcp(r.headers.get("location")!, client_id, redirect_uri, verifier);
+		const ok = await mcp();
+		expect(ok.status).toBe(200);
+		expect(await ok.text()).toContain('"serverInfo":{"name":"Video Factory"');
+		const grants = (await e.OAUTH_KV.list({ prefix: "grant:key_Asha:" })).keys;
+		expect(grants).toHaveLength(1);
+
+		await revokeKey(e.DB, "Asha");
+		expect((await mcp()).status).toBe(401);
+	});
+
+	it("a revoked key and a garbage key are refused with the same message", async () => {
+		const { key } = (await createKey(e.DB, "Ravi")) as { key: string };
+		await revokeKey(e.DB, "Ravi");
+		for (const bad of [key, "vfk_" + "A".repeat(32), "hello", ""]) {
+			const { field } = await startAuth();
+			const r = keep(await postKey(field, bad));
+			expect(r.status).toBe(401);
+			const html = await r.text();
+			expect(html).toContain(BAD);
+			expect(html).toContain('name="access_key"'); // page shown again, with a fresh CSRF token
+			expect(new RegExp(`name="csrf_token" value="([^"]+)"`).exec(html)![1]).not.toBe(field("csrf_token"));
+		}
+		expect((await e.OAUTH_KV.list({ prefix: "grant:" })).keys).toHaveLength(0);
+	});
+
+	it("the key form still needs the CSRF cookie and a matching token, and the token is one-time", async () => {
+		const { key } = (await createKey(e.DB, "Asha")) as { key: string };
+		const { field } = await startAuth();
+		expect((await postKey(field, key, "forged")).status).toBe(400);
+		const noCookie = await req("/authorize", { method: "POST", body: new URLSearchParams({ state: field("state"), csrf_token: field("csrf_token"), access_key: key }) });
+		expect(noCookie.status).toBe(400);
+		expect((await req("/authorize", { method: "POST", headers: { Cookie: cookie() }, body: new URLSearchParams({ csrf_token: field("csrf_token"), access_key: key }) })).status).toBe(400); // no state
+		// A wrong key re-renders with a new token; the old token no longer matches the cookie.
+		keep(await postKey(field, "nope"));
+		expect((await postKey(field, key)).status).toBe(400);
+		expect((await e.OAUTH_KV.list({ prefix: "grant:" })).keys).toHaveLength(0);
 	});
 });

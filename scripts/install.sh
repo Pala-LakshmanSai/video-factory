@@ -1,13 +1,18 @@
 #!/bin/bash
 # Video Factory: one-command setup for a new Mac (docs/prompts/NEW_ACCOUNT_SETUP.md).
 #   curl -fsSL https://video-factory.lakshmansai121.workers.dev/install | bash
+# Team members get a personal line (".../install?key=vfk_..."): the server fills in VF_KEY_FROM_LINK below, and
+# the key replaces GitHub entirely (no GitHub account needed). Without a key it signs in with GitHub (the owner).
 # Safe to run again: it skips whatever is already installed and only fills gaps.
-# You will be asked for: your Mac password (Homebrew, first time only) and a GitHub sign-in in the browser.
+# You will be asked for: your Mac password (Homebrew, first time only), a GitHub sign-in in the browser (no key
+# only) and a Claude sign-in.
 # Everything is inside main(), called on the last line: a cut-off download runs nothing.
 set -euo pipefail
 DIR="${VF_DIR:-$HOME/video-factory}"
 REPO="Pala-LakshmanSai/video-factory"
 export GIT_TERMINAL_PROMPT=0 # git fails with a message instead of waiting for a password nobody sees
+VF_KEY_FROM_LINK=""
+KEY_FILE="$HOME/.video-factory/key" # scripts/vf.mjs reads it
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[1;31m%s\033[0m\n' "$*" >&2; exit 1; }
@@ -17,9 +22,23 @@ brew_env() { for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do if [ -x "$b
 # Real Command Line Tools, not the /usr/bin/git stub that only pops an "install" dialog (also broken by macOS upgrades).
 clt_ok() { [ -x "$(xcode-select -p 2>/dev/null)/usr/bin/git" ]; }
 add_line() { grep -qsF "$2" "$HOME/.zprofile" || printf '%s\n' "$1" >>"$HOME/.zprofile"; } # line, marker
+# Sets KEY: env VF_KEY, else the key from the personal install line, else the one saved last time; saves it.
+resolve_key() {
+	KEY="${VF_KEY:-$VF_KEY_FROM_LINK}"
+	if [ -z "$KEY" ] && [ -f "$KEY_FILE" ]; then KEY="$(tr -d '[:space:]' <"$KEY_FILE")"; fi
+	if [ -z "$KEY" ]; then return 0; fi
+	[[ "$KEY" =~ ^vfk_[A-Za-z0-9]{32}$ ]] ||
+		die "That access key does not look right (it starts with vfk_ and is 36 characters). Ask the owner for your install line again."
+	mkdir -p "$(dirname "$KEY_FILE")"
+	(umask 077 && printf '%s' "$KEY" >"$KEY_FILE")
+	chmod 600 "$KEY_FILE"
+}
 
 main() {
 	trap 'rc=$?; [ $rc -eq 0 ] || printf "\n\033[1;31mSetup stopped before the end. Fix what is shown above if you can, then run the same command again:\033[0m\n  curl -fsSL https://video-factory.lakshmansai121.workers.dev/install | bash\n" >&2' EXIT
+
+	resolve_key
+	if [ -n "$KEY" ]; then echo "Using your Video Factory access key (no GitHub account needed)."; else echo "Signing in with GitHub."; fi
 
 	step "Homebrew"
 	brew_env
@@ -34,7 +53,8 @@ main() {
 	brew --version | head -1
 
 	step "Tools"
-	want="git:git gh:gh node:node ffmpeg:ffmpeg yt-dlp:yt-dlp python3.12:python@3.12 uv:uv whisper-cli:whisper-cpp" # command:formula
+	want="git:git node:node ffmpeg:ffmpeg yt-dlp:yt-dlp python3.12:python@3.12 uv:uv whisper-cli:whisper-cpp" # command:formula
+	[ -n "$KEY" ] || want="$want gh:gh" # the GitHub CLI only without a key
 	missing=""
 	for w in $want; do command -v "${w%%:*}" >/dev/null || missing="$missing ${w#*:}"; done
 	# shellcheck disable=SC2086 # unquoted on purpose: one word per formula
@@ -44,13 +64,15 @@ main() {
 	[ -d "/Applications/Google Chrome.app" ] || brew install --cask google-chrome ||
 		echo "(Chrome did not install; get it later from google.com/chrome. Continuing.)"
 
-	step "GitHub sign-in"
-	if ! gh auth token >/dev/null 2>&1; then
-		echo "A browser page opens: sign in as the Video Factory owner and paste the code shown here."
-		tty gh auth login --hostname github.com --git-protocol https --web || die "GitHub sign-in did not finish."
+	if [ -z "$KEY" ]; then
+		step "GitHub sign-in"
+		if ! gh auth token >/dev/null 2>&1; then
+			echo "A browser page opens: sign in as the Video Factory owner and paste the code shown here."
+			tty gh auth login --hostname github.com --git-protocol https --web || die "GitHub sign-in did not finish."
+		fi
+		gh auth setup-git
+		gh auth status 2>&1 | grep -m1 "Logged in" || true
 	fi
-	gh auth setup-git
-	gh auth status 2>&1 | grep -m1 "Logged in" || true
 
 	step "Project code -> $DIR"
 	if [ -d "$DIR/.git" ]; then
@@ -60,8 +82,12 @@ main() {
 			old="$DIR.old-$(date +%Y%m%d-%H%M%S)"
 			mv "$DIR" "$old" && echo "An older folder was in the way; moved it to $old"
 		fi
-		gh repo clone "$REPO" "$DIR" ||
-			die "Could not download the project. Check the internet, and that GitHub is signed in as the owner (to switch: gh auth logout)."
+		if [ -n "$KEY" ]; then # public repo: no GitHub account, and GIT_TERMINAL_PROMPT=0 means no password prompt
+			git clone -q "https://github.com/$REPO.git" "$DIR" || die "Could not download the project. Check the internet connection."
+		else
+			gh repo clone "$REPO" "$DIR" ||
+				die "Could not download the project. Check the internet, and that GitHub is signed in as the owner (to switch: gh auth logout)."
+		fi
 	fi
 
 	step "Claude Code command"

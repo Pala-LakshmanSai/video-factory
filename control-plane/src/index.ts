@@ -19,11 +19,21 @@ import { uploadInput } from "./drive";
 import { putPackageBytes } from "./packages";
 import { submitJob } from "./mcp";
 import { getDoc, syncRoute } from "./sync";
+import { KEY_RE, checkAccessKey } from "./access";
+import type { Props } from "./utils";
 
 const mcpHandler = createMcpHandler(createServer);
 
 const oauth = new OAuthProvider<Env>({
-	apiHandler: { fetch: (req: Request, e: Env, ctx: ExecutionContext) => mcpHandler(req, e, ctx) } satisfies ExportedHandler<Env>,
+	apiHandler: {
+		async fetch(req: Request, e: Env, ctx: ExecutionContext) {
+			// Access-key sign-ins (login "key:<name>") end when the owner revokes the key, not when the token expires.
+			const login = (ctx as unknown as { props?: Props }).props?.login ?? "";
+			if (login.startsWith("key:") && !(await e.DB.prepare("SELECT 1 FROM access_keys WHERE name = ? AND revoked_at IS NULL").bind(login.slice(4)).first()))
+				return new Response("access key revoked", { status: 401 });
+			return mcpHandler(req, e, ctx);
+		},
+	} satisfies ExportedHandler<Env>,
 	apiRoute: "/mcp",
 	authorizeEndpoint: "/authorize",
 	clientRegistrationEndpoint: "/register",
@@ -54,10 +64,22 @@ async function uploadRoute(req: Request, e: Env) {
 
 // GET /install (Mac: scripts/install.sh) and /install.ps1 (Windows: scripts/install.ps1), published with the docs. Public: it holds no secrets,
 // and everything it fetches from the factory needs the owner's GitHub sign-in.
-async function installScript(e: Env, name: string) {
+// ?key=vfk_... (a team member's personal line) fills the script's one placeholder line with that key.
+async function installScript(e: Env, name: string, key: string | null) {
 	const doc = await getDoc(e.DB, name);
 	if (!doc) return new Response("echo 'install script not published yet'; exit 1\n", { status: 503, headers: { "Content-Type": "text/plain" } });
-	return new Response(doc.body, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+	let body = doc.body;
+	if (key && KEY_RE.test(key)) body = name.endsWith(".ps1") ? body.replace('$VfKeyFromLink = ""', `$VfKeyFromLink = "${key}"`) : body.replace('VF_KEY_FROM_LINK=""', `VF_KEY_FROM_LINK="${key}"`);
+	return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+// Claude Code on a team member's computer connects with its access key as a header (scripts/vf.mjs setup adds it),
+// so it needs no browser sign-in. Same identity as a key sign-in through the OAuth page.
+async function mcpWithKey(req: Request, e: Env, ctx: ExecutionContext, key: string) {
+	const who = await checkAccessKey(e.DB, key);
+	if (!who) return new Response("access key not valid", { status: 401 });
+	const props = { login: `key:${who.name}`, name: who.name, accessToken: "", email: null };
+	return mcpHandler(req, e, { waitUntil: ctx.waitUntil.bind(ctx), passThroughOnException: ctx.passThroughOnException.bind(ctx), props } as unknown as ExecutionContext);
 }
 
 export default {
@@ -66,7 +88,9 @@ export default {
 		if (path.startsWith("/agent/")) return agentApp.fetch(req, e, ctx);
 		if (path.startsWith("/admin") || path === "/callback/admin") return adminApp.fetch(req, e, ctx);
 		if (path.startsWith("/sync/")) return syncRoute(req, e);
-		if ((path === "/install" || path === "/install.ps1") && req.method === "GET") return installScript(e, path === "/install.ps1" ? "install.ps1" : "install.sh");
+		if ((path === "/install" || path === "/install.ps1") && req.method === "GET") return installScript(e, path === "/install.ps1" ? "install.ps1" : "install.sh", new URL(req.url).searchParams.get("key"));
+		const bearer = req.headers.get("Authorization")?.replace(/^Bearer /i, "") ?? "";
+		if (path === "/mcp" && bearer.startsWith("vfk_")) return mcpWithKey(req, e, ctx, bearer);
 		if ((path === "/upload/input" || path === "/upload/plan" || path === "/upload/package") && req.method === "POST") return uploadRoute(req, e);
 		return oauth.fetch(req, e, ctx);
 	},

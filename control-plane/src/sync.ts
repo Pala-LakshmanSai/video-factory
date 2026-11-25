@@ -1,8 +1,11 @@
 // Cross-account sync API (docs/SYNC.md): live file index for skills/style kits, owner preferences, published docs.
 // Auth: Bearer <GitHub token> with Write (push) access to SYNC_REPO: the owner or a Write collaborator, the same login
 // every machine already uses for git. The repo may be public: read access alone is never enough. CI publishes docs with
-// the DOCS_PUBLISH_TOKEN secret, which only works for PUT /sync/docs. File bytes never pass through the Worker; clients move them to/from GitHub release assets.
+// the DOCS_PUBLISH_TOKEN secret, which only works for PUT /sync/docs. Team members without GitHub use an access key
+// ("vfk_...", src/access.ts) instead of a GitHub token; managing keys and storage cleanup is owner-only. File bytes never pass through the Worker: clients move them to/from Backblaze B2 with signed links (src/blobs.ts), or GitHub release assets for older entries.
 
+import { checkAccessKey, createKey, listKeys, revokeKey } from "./access";
+import { B2_ASSET, b2, blobGc, blobRoute } from "./blobs";
 import { constantTimeEqual } from "./db";
 
 const SHA = /^[0-9a-f]{64}$/;
@@ -89,7 +92,7 @@ export async function docNames(db: D1Database) {
 }
 
 // ---- files
-type Change = { root: string; path: string; sha: string | null; size?: number; mode?: number; asset?: number | null; off?: number | null; prev: string | null };
+type Change = { root: string; path: string; sha: string | null; size?: number; mode?: number; asset?: number | string | null; off?: number | null; prev: string | null };
 
 async function commit(db: D1Database, changes: Change[], by: string) {
 	if (!Array.isArray(changes) || !changes.length || changes.length > MAX_CHANGES) return { error: `changes must be 1-${MAX_CHANGES} items` };
@@ -102,13 +105,13 @@ async function commit(db: D1Database, changes: Change[], by: string) {
 		seen.add(c.root + "\0" + c.path);
 		if (c.sha !== null && !(typeof c.sha === "string" && SHA.test(c.sha))) return { error: `bad sha for ${c.path}` };
 		if (c.prev !== null && !(typeof c.prev === "string" && SHA.test(c.prev))) return { error: `bad prev for ${c.path}` };
-		if (c.sha !== null && !(Number.isInteger(c.asset) && (c.asset as number) >= 0)) return { error: `missing asset for ${c.path}` };
+		if (c.sha !== null && !((Number.isInteger(c.asset) && (c.asset as number) >= 0) || (typeof c.asset === "string" && B2_ASSET.test(c.asset)))) return { error: `missing asset for ${c.path}` };
 		if (c.sha !== null && !(Number.isInteger(c.size) && (c.size as number) >= 0)) return { error: `bad size for ${c.path}` };
 		if (c.off != null && !(Number.isInteger(c.off) && c.off >= 0)) return { error: `bad off for ${c.path}` };
 	}
 	const cur = await db.batch(changes.map((c) => db.prepare("SELECT sha, size, asset FROM sync_files WHERE root = ? AND path = ?").bind(c.root, c.path)));
 	const conflicts = changes.flatMap((c, i) => {
-		const row = (cur[i].results[0] ?? null) as { sha: string | null; size: number; asset: number | null } | null;
+		const row = (cur[i].results[0] ?? null) as { sha: string | null; size: number; asset: number | string | null } | null;
 		const now = row?.sha ?? null;
 		return now === c.prev ? [] : [{ root: c.root, path: c.path, current: now }];
 	});
@@ -148,13 +151,29 @@ async function files(db: D1Database, q: URLSearchParams) {
 	return { head, rows: rows.results, more: rows.results.length === limit };
 }
 
+// Owner-only actions (access keys, storage cleanup): a GitHub token whose user is ALLOWED_GITHUB_LOGIN.
+const ownerCache = new Map<string, number>();
+async function ownerAuth(tok: string, e: E): Promise<boolean> {
+	if (!tok || tok.startsWith("vfk_")) return false;
+	const h = await sha256hex(tok);
+	if ((ownerCache.get(h) ?? 0) > Date.now()) return true;
+	const r = await fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${tok}`, "User-Agent": "video-factory-sync", Accept: "application/vnd.github+json" } });
+	if (r.status !== 200) return false;
+	const login = ((await r.json()) as { login?: string }).login ?? "";
+	if (login.toLowerCase() !== String(e.ALLOWED_GITHUB_LOGIN ?? "").toLowerCase()) return false;
+	ownerCache.set(h, Date.now() + 600_000);
+	return true;
+}
+
 export async function syncRoute(req: Request, e: E): Promise<Response> {
 	const url = new URL(req.url);
 	const p = url.pathname;
 	const docsToken = (e as unknown as Record<string, string | undefined>).DOCS_PUBLISH_TOKEN;
 	const tok = req.headers.get("Authorization")?.replace(/^(Bearer|token) /i, "") ?? "";
 	const ciDocs = p === "/sync/docs" && req.method === "PUT" && !!docsToken && constantTimeEqual(tok, docsToken);
-	if (!ciDocs && !(await repoAuth(req, e))) return bad("unauthorized: send a GitHub token with Write access to the sync repo", 401);
+	const keyUser = tok.startsWith("vfk_") ? await checkAccessKey(e.DB, tok) : null;
+	if (!ciDocs && !keyUser && !(await repoAuth(req, e))) return bad("unauthorized: send your access key, or a GitHub token with Write access to the sync repo", 401);
+	const ownerOnly = async () => !keyUser && !ciDocs && (await ownerAuth(tok, e));
 	const db = e.DB;
 	const by = (req.headers.get("X-VF-Client") ?? "unknown").slice(0, 120);
 	const body = async () => {
@@ -165,6 +184,22 @@ export async function syncRoute(req: Request, e: E): Promise<Response> {
 		}
 	};
 	try {
+		if (p === "/sync/info" && req.method === "GET") return Response.json({ storage: b2(e) ? "b2" : "github", user: keyUser ? `key:${keyUser.name}` : "github" });
+		if (p.startsWith("/sync/blob/")) return blobRoute(req, b2(e), p.slice("/sync/blob/".length).split("/"));
+		if (p === "/sync/blobs/gc" && req.method === "POST") {
+			if (!(await ownerOnly())) return bad("owner only", 403);
+			const s = b2(e);
+			if (!s) return bad("file storage (Backblaze B2) is not configured", 503);
+			const b = await body();
+			return Response.json(await blobGc(db, s, Number(b.days ?? 30), b.dry !== false));
+		}
+		if (p === "/sync/access" || p === "/sync/access/revoke") {
+			if (!(await ownerOnly())) return bad("owner only", 403);
+			if (req.method === "GET") return Response.json({ keys: await listKeys(db) });
+			const b = await body();
+			const r = p === "/sync/access" ? await createKey(db, String(b.name ?? "").trim()) : await revokeKey(db, String(b.name ?? ""));
+			return "error" in r ? bad(r.error!) : Response.json(r);
+		}
 		if (p === "/sync/roots" && req.method === "GET") {
 			const r = await db.prepare("SELECT name, target, exclude_json FROM sync_roots ORDER BY name").all<{ name: string; target: string; exclude_json: string }>();
 			return Response.json({ roots: r.results.map((x) => ({ name: x.name, target: x.target, exclude: JSON.parse(x.exclude_json) })) });

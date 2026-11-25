@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { syncRoute, validPath, validTarget } from "../src/sync";
 import { json, makeEnv, mockFetch } from "./helpers";
+import { createKey, revokeKey } from "../src/access";
 
 let env: Env;
 let canPush = true;
@@ -20,6 +21,8 @@ beforeEach(() => {
 	env = { ...makeEnv(), SYNC_REPO: "me/repo" } as Env;
 	canPush = true;
 	mockFetch((u, i) => {
+		if (u === "https://api.github.com/user") return json({ login: new Headers(i.headers).get("Authorization") === "Bearer good" ? "me" : "someone" });
+		if (u.startsWith("https://s3.us-west-004.backblazeb2.com/bkt/blobs/")) return new Response(null, { status: u.endsWith("a".repeat(64)) ? 200 : 404, headers: { "Content-Length": "5" } });
 		if (u !== "https://api.github.com/repos/me/repo") return undefined;
 		const tok = new Headers(i.headers).get("Authorization");
 		if (tok === "Bearer good" || tok === "Bearer ci") return json({ private: false, permissions: { pull: true, push: canPush } });
@@ -117,5 +120,52 @@ describe("prefs + docs", () => {
 		const rows = (await env.DB.prepare("SELECT name, body FROM docs ORDER BY name").all()).results;
 		expect(rows).toEqual([{ name: "styles/a.md", body: "A2" }]);
 		expect((await req("/sync/docs", { method: "PUT", json: { docs: [{ name: "../x", body: "" }] } })).status).toBe(400);
+	});
+});
+
+describe("access keys + Backblaze storage", () => {
+	const b2env = () => Object.assign(env as unknown as Record<string, string>, { B2_KEY_ID: "kid", B2_APP_KEY: "secret", B2_BUCKET: "bkt", B2_ENDPOINT: "s3.us-west-004.backblazeb2.com" });
+
+	it("only the owner manages keys; a key then works for sync until revoked", async () => {
+		expect((await req("/sync/access", { method: "POST", json: { name: "Sam" } }, "ci")).status).toBe(403); // Write access, not the owner
+		const made = await req("/sync/access", { method: "POST", json: { name: "Sam" } });
+		expect(made.status).toBe(200);
+		const { key } = (await made.json()) as { key: string };
+		expect(key).toMatch(/^vfk_[A-Za-z0-9]{32}$/);
+		expect((await req("/sync/roots", {}, key)).status).toBe(200);
+		expect(((await (await req("/sync/info", {}, key)).json()) as { user: string }).user).toBe("key:Sam");
+		expect((await req("/sync/access", {}, key)).status).toBe(403); // a key can't manage keys
+		expect((await req("/sync/access/revoke", { method: "POST", json: { name: "Sam" } })).status).toBe(200);
+		expect((await req("/sync/roots", {}, key)).status).toBe(401);
+		expect((await req("/sync/roots", {}, "vfk_" + "x".repeat(32))).status).toBe(401);
+	});
+
+	it("hands out signed Backblaze links and accepts b2 assets in commits", async () => {
+		expect((await req("/sync/blob/" + "b".repeat(64))).status).toBe(503); // storage not configured yet
+		b2env();
+		expect(((await (await req("/sync/info")).json()) as { storage: string }).storage).toBe("b2");
+		const get = await req("/sync/blob/" + "b".repeat(64));
+		expect(get.status).toBe(302);
+		expect(get.headers.get("Location")).toMatch(/^https:\/\/s3\.us-west-004\.backblazeb2\.com\/bkt\/blobs\/b{64}\?.*X-Amz-Signature=/);
+		const up = (await (await req("/sync/blob/" + "b".repeat(64) + "/upload", { method: "POST" })).json()) as { exists: boolean; url: string; asset: string };
+		expect(up.exists).toBe(false);
+		expect(up.asset).toBe("b2:" + "b".repeat(64));
+		expect(up.url).toContain("X-Amz-Signature=");
+		expect(((await (await req("/sync/blob/" + "a".repeat(64) + "/upload", { method: "POST" })).json()) as { exists: boolean }).exists).toBe(true);
+		expect((await req("/sync/blob/nope")).status).toBe(400);
+		await req("/sync/roots", { method: "PUT", json: { name: "kits", target: "@repo/style-kits" } });
+		const ok = await req("/sync/commit", { json: { changes: [{ root: "kits", path: "a.md", sha: A, size: 5, asset: "b2:" + A, prev: null }] } });
+		expect(ok.status).toBe(200);
+		const badAsset = await req("/sync/commit", { json: { changes: [{ root: "kits", path: "b.md", sha: B, size: 5, asset: "s3:" + B, prev: null }] } });
+		expect(badAsset.status).toBe(400);
+	});
+
+	it("revokeKey and createKey keep one active key per name", async () => {
+		const a = await createKey(env.DB, "Ana");
+		const b = await createKey(env.DB, "Ana");
+		expect("key" in a && "key" in b && a.key !== b.key).toBe(true);
+		expect((await req("/sync/roots", {}, (a as { key: string }).key)).status).toBe(401); // replaced
+		expect((await req("/sync/roots", {}, (b as { key: string }).key)).status).toBe(200);
+		expect(await revokeKey(env.DB, "nobody")).toEqual({ error: "no active key named nobody" });
 	});
 });

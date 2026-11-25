@@ -7,7 +7,7 @@
 //   GitHub release assets   file bytes of skills + style kits (content-addressed)      -> this tool
 // One credential everywhere: your GitHub login (gh auth login). No other secrets.
 //
-// Commands: setup [--no-models] [--no-sync] | pull | push | status | track | untrack | resolve | repack | gc | prefs | pref add|retire | docs publish | hook session-start|stop
+// Commands: setup [--no-models] [--no-sync] | pull | push | status | access add|list|remove | migrate-storage | track | untrack | resolve | repack | gc | prefs | pref add|retire | docs publish | hook session-start|stop
 import { execFileSync, execSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -101,16 +101,38 @@ async function pool(items, n, fn) {
 }
 
 // ---------------------------------------------------------------- auth + HTTP
+// Team members sign in with a personal access key (the installer saves it to ~/.video-factory/key); the owner and
+// CI use a GitHub token. GitHub API calls (old release-asset storage, gc of it) always need the GitHub token.
+const KEY_FILE = join(homedir(), ".video-factory", "key");
+const KEY_RE = /^vfk_[A-Za-z0-9]{32}$/;
+function accessKey() {
+	let k = process.env.VF_KEY ?? "";
+	if (!k && existsSync(KEY_FILE)) k = readFileSync(KEY_FILE, "utf8");
+	return KEY_RE.test(k.trim()) ? k.trim() : null;
+}
+let GH_TOK;
+function ghToken() {
+	if (GH_TOK) return GH_TOK;
+	GH_TOK = process.env.VF_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+	if (!GH_TOK) {
+		try {
+			GH_TOK = execFileSync("gh", ["auth", "token"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 }).trim();
+		} catch {}
+	}
+	if (!GH_TOK) throw new Error("no GitHub token: run `gh auth login` (or set GH_TOKEN)");
+	return GH_TOK;
+}
 let TOKEN;
 function token() {
 	if (TOKEN) return TOKEN;
-	TOKEN = process.env.VF_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+	TOKEN = process.env.VF_GITHUB_TOKEN || accessKey();
 	if (!TOKEN) {
 		try {
-			TOKEN = execFileSync("gh", ["auth", "token"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-		} catch {}
+			TOKEN = ghToken();
+		} catch {
+			throw new Error("not signed in: paste your personal install line from the owner again (or, for the owner, run `gh auth login`)");
+		}
 	}
-	if (!TOKEN) throw new Error("no GitHub token: run `gh auth login` (or set GH_TOKEN)");
 	return TOKEN;
 }
 
@@ -151,7 +173,8 @@ async function api(method, path, body) {
 		});
 		const j = await r.json().catch(() => ({}));
 		if (r.status >= 500) throw new Error(`${method} ${path}: ${r.status}`);
-		if (r.status === 401) throw Object.assign(new Error("sync API refused the GitHub token (needs read access to " + CFG.repo + ")"), { noRetry: true });
+		if (r.status === 401)
+			throw Object.assign(new Error(token().startsWith("vfk_") ? "the factory refused your access key (it was removed or replaced): ask the owner for a new install line" : `the factory refused the GitHub token (needs Write access to ${CFG.repo})`), { noRetry: true });
 		return { status: r.status, json: j };
 	}, path);
 }
@@ -160,7 +183,7 @@ async function gh(method, url, { body, headers = {}, raw = false } = {}) {
 	return retry(async () => {
 		const r = await fetch(url.startsWith("http") ? url : `https://api.github.com${url}`, {
 			method,
-			headers: { Authorization: `Bearer ${token()}`, Accept: "application/vnd.github+json", "User-Agent": "vf-sync", "X-GitHub-Api-Version": "2022-11-28", ...headers },
+			headers: { Authorization: `Bearer ${ghToken()}`, Accept: "application/vnd.github+json", "User-Agent": "vf-sync", "X-GitHub-Api-Version": "2022-11-28", ...headers },
 			body,
 			duplex: body instanceof ReadableStream ? "half" : undefined,
 			redirect: "manual",
@@ -219,8 +242,23 @@ async function allAssets() {
 	return (await Promise.all(rels.map(async (r) => (await ghAll(`/repos/${CFG.repo}/releases/${r.id}/assets`)).map((a) => ({ ...a, release: r.id }))))).flat();
 }
 
+// Where file bytes go: Backblaze B2 through signed links when the server has it ("b2:<sha>" assets), else the
+// original GitHub release assets (numeric ids). Downloads follow whatever each index entry says.
+let INFO;
+const storageInfo = async () => (INFO ??= (await api("GET", "/sync/info")).json ?? {});
+async function uploadB2(abs, sha) {
+	return retry(async () => {
+		const r = await api("POST", `/sync/blob/${sha}/upload`);
+		if (r.status !== 200) throw new Error(`upload link for ${sha}: ${r.status} ${r.json.error ?? ""}`);
+		if (r.json.exists) return r.json.asset;
+		const put = await fetch(r.json.url, { method: "PUT", body: await openAsBlob(abs), signal: AbortSignal.timeout(60 * 60_000) });
+		if (put.status !== 200) throw new Error(`upload ${abs}: ${put.status} ${(await put.text()).slice(0, 200)}`);
+		return r.json.asset;
+	}, "upload");
+}
 async function uploadBlob(abs, sha, size) {
 	if (size === 0) return 0;
+	if ((await storageInfo()).storage === "b2") return uploadB2(abs, sha);
 	const rel = await releaseFor(sha);
 	const r = await gh("POST", `https://uploads.github.com/repos/${CFG.repo}/releases/${rel}/assets?name=${sha}`, {
 		body: await openAsBlob(abs),
@@ -241,6 +279,15 @@ async function uploadBlob(abs, sha, size) {
 }
 
 async function fetchAsset(asset, dest) {
+	if (typeof asset === "string" && asset.startsWith("b2:"))
+		return retry(async () => {
+			const r = await fetch(`${CFG.api}/sync/blob/${asset.slice(3)}`, { headers: { Authorization: `Bearer ${token()}`, "X-VF-Client": CLIENT }, redirect: "manual", signal: AbortSignal.timeout(60_000) });
+			if (r.status === 401) throw Object.assign(new Error("the factory refused your access: ask the owner for a new install line"), { noRetry: true });
+			if (r.status !== 302) throw new Error(`download link for ${asset}: ${r.status}`);
+			const body = await fetch(r.headers.get("location"), { signal: AbortSignal.timeout(30 * 60_000) }); // signed link: no token
+			if (body.status !== 200) throw new Error(`download ${asset}: ${body.status}`);
+			await pipeline(Readable.fromWeb(body.body), createWriteStream(dest));
+		}, "download");
 	await retry(async () => {
 		const r = await gh("GET", `/repos/${CFG.repo}/releases/assets/${asset}`, { headers: { Accept: "application/octet-stream" }, raw: true });
 		let body = r;
@@ -261,7 +308,7 @@ function packFile(asset) {
 	if (!PACKS.has(asset))
 		PACKS.set(asset, (async () => {
 			mkdirSync(PACK_DIR, { recursive: true });
-			const f = join(PACK_DIR, String(asset));
+			const f = join(PACK_DIR, String(asset).replace(/[^0-9A-Za-z_-]/g, "_")); // "b2:<sha>" has a ':' Windows forbids
 			if (!existsSync(f)) {
 				const part = `${f}.part-${process.pid}`;
 				await fetchAsset(asset, part);
@@ -697,6 +744,37 @@ async function publishDocs() {
 	return list.length;
 }
 
+// ---------------------------------------------------------------- access keys (owner only: needs the owner's GitHub sign-in)
+async function accessCmd(sub, name) {
+	if (sub === "list") {
+		const r = await api("GET", "/sync/access");
+		if (r.status !== 200) throw new Error(r.json.error ?? `access list: ${r.status}`);
+		const d = (t) => (t ? new Date(t).toISOString().slice(0, 10) : "-");
+		if (!r.json.keys.length) return console.log("no access keys yet: node scripts/vf.mjs access add \"Name\"");
+		for (const k of r.json.keys) console.log(`${k.revoked_at ? "removed" : "active "}  ${k.name.padEnd(24)} made ${d(k.created_at)}  last used ${d(k.last_used_at)}`);
+		return;
+	}
+	if (!name || (sub !== "add" && sub !== "remove")) throw new Error('usage: vf access add "Name" | vf access remove "Name" | vf access list');
+	const r = await api("POST", sub === "add" ? "/sync/access" : "/sync/access/revoke", { name });
+	if (r.status !== 200) throw new Error(r.json.error ?? `access ${sub}: ${r.status}`);
+	if (sub === "remove") return console.log(`removed ${name}'s access: their key stops working everywhere now`);
+	const k = r.json.key;
+	console.log(`Access for ${name} is ready. Keep this private: anyone with it gets in (until you run: node scripts/vf.mjs access remove "${name}").
+
+Send ${name} this message:
+----------------------------------------------------------------
+Video Factory setup (about 30 minutes, mostly downloads):
+1. Install the Claude app from claude.ai/download and sign in.
+2. Windows: open PowerShell and paste this line, then press Enter:
+   irm "${CFG.api}/install.ps1?key=${k}" | iex
+   Mac: open Terminal and paste this line, then press Enter:
+   curl -fsSL "${CFG.api}/install?key=${k}" | bash
+3. When it says Done: Claude app > Code tab > choose the video-factory folder > Yes to trust it.
+Optional, for claude.ai on any device: Settings > Connectors > Add custom connector,
+URL ${CFG.api}/mcp , then paste this key on its sign-in page: ${k}
+----------------------------------------------------------------`);
+}
+
 // ---------------------------------------------------------------- setup (new machine / new account)
 // Never hangs (every step has a timeout), never stops halfway (each step's failure is collected), safe to re-run
 // (finished work is skipped), and ends with "setup complete" or a "still to fix" list (exit code 1).
@@ -747,8 +825,9 @@ function connectMcp() {
 	const claude = [join(homedir(), ".local", "bin", WIN ? "claude.exe" : "claude"), "claude"].find((c) => have(c));
 	if (!claude) throw new Error(`claude command not found (install: ${WIN ? "irm https://claude.ai/install.ps1 | iex" : "curl -fsSL https://claude.ai/install.sh | bash"})`);
 	if (have(claude, ["mcp", "get", "video-factory"])) return "already added";
-	run(claude, ["mcp", "add", "--transport", "http", "--scope", "user", "video-factory", `${CFG.api}/mcp`], { stdio: "ignore", timeout: 60_000 });
-	return "added (Claude asks you to sign in with GitHub the first time it uses it; type /mcp if needed)";
+	const key = accessKey(); // team member: the key goes in as a header, so Claude needs no separate sign-in
+	run(claude, ["mcp", "add", "--transport", "http", "--scope", "user", "video-factory", `${CFG.api}/mcp`, ...(key ? ["--header", `Authorization: Bearer ${key}`] : [])], { stdio: "ignore", timeout: 60_000 });
+	return key ? "added (signed in with your access key)" : "added (Claude asks you to sign in with GitHub the first time it uses it; type /mcp if needed)";
 }
 async function setup(state) {
 	const bad = [];
@@ -763,12 +842,12 @@ async function setup(state) {
 	};
 	const [maj, min] = process.versions.node.split(".").map(Number);
 	const noSync = flag("--no-sync"); // CI: no Write token, so no pull; everything else still runs
-	const signedIn = noSync || have("gh", ["auth", "token"]);
+	const signedIn = noSync || !!accessKey() || have("gh", ["auth", "token"]);
 	const [py, ...pyArgs] = python();
 	const checks = [
 		["node 22.18 or newer", maj > 22 || (maj === 22 && min >= 18)],
 		["git", have("git")],
-		["GitHub sign-in (gh auth login)", signedIn],
+		[accessKey() ? "access key" : "GitHub sign-in (gh auth login)", signedIn],
 		["ffmpeg", have("ffmpeg", ["-version"])],
 		["yt-dlp", have("yt-dlp")],
 		[WIN ? "python (py -3)" : "python3", have(py, [...pyArgs, "--version"])],
@@ -914,6 +993,7 @@ async function main() {
 	if (cmd === "hook" && sub === "session-start") return hookSessionStart();
 	if (cmd === "hook" && sub === "stop") return hookStop();
 	if (cmd === "prefs") return console.log(await prefsText());
+	if (cmd === "access") return accessCmd(sub, argv.slice(2).filter((a) => !a.startsWith("--")).join(" ").trim());
 	if (cmd === "pref" && sub === "add") {
 		const [scope, ...words] = argv.slice(2).filter((a) => !a.startsWith("--"));
 		const r = await api("POST", "/sync/prefs", { scope, text: words.join(" ") });
@@ -973,6 +1053,52 @@ async function main() {
 			const p = await push(state, { only: name });
 			return say(`tracking ${name} -> ${target}; uploaded ${p.uploaded} (${fmtB(p.bytes)}), committed ${p.committed}`);
 		}
+		if (cmd === "migrate-storage") {
+			// Owner, once: copy every stored file/pack from GitHub release assets to Backblaze B2 and point the index at it,
+			// so team members with only an access key can download everything. Packs move whole (offsets stay valid).
+			if ((await storageInfo()).storage !== "b2") throw new Error("Backblaze storage is not configured on the server yet");
+			await pull(state);
+			const byAsset = new Map();
+			for (const [k, f] of Object.entries(state.files))
+				if (f.sha && typeof f.asset === "number" && f.asset !== 0 && !state.conflicts[k]) (byAsset.get(f.asset) ?? byAsset.set(f.asset, []).get(f.asset)).push(k);
+			if (!byAsset.size) return say("nothing left on GitHub storage: every file is in Backblaze");
+			say(`moving ${byAsset.size} stored item(s) from GitHub to Backblaze...`);
+			const dir = join(LOCAL, "migrate");
+			mkdirSync(dir, { recursive: true });
+			const moved = new Map();
+			const errs = await pool([...byAsset.keys()], 4, async (a) => {
+				const tmp = join(dir, String(a));
+				await fetchAsset(a, tmp);
+				const sha = await hashFile(tmp);
+				moved.set(a, await uploadB2(tmp, sha));
+				rmSync(tmp, { force: true });
+			});
+			const changes = [];
+			for (const [a, keys] of byAsset)
+				if (moved.has(a))
+					for (const k of keys) {
+						const f = state.files[k];
+						const [root, path] = splitKey(k);
+						changes.push({ root, path, sha: f.sha, size: f.size, mode: f.mode, asset: moved.get(a), off: f.off ?? null, prev: f.sha });
+					}
+			const report = { uploaded: 0, bytes: 0, committed: 0, conflicts: [], errors: [] };
+			for (let i = 0; i < changes.length; i += CHUNK) {
+				const chunk = changes.slice(i, i + CHUNK);
+				const r = await api("POST", "/sync/commit", { changes: chunk });
+				if (r.status !== 200) {
+					report.errors.push(`commit: ${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+					continue;
+				}
+				for (const c of chunk) state.files[keyOf(c.root, c.path)] = { sha: c.sha, size: c.size, mode: c.mode, asset: c.asset, off: c.off };
+				state.ver = Math.max(state.ver, r.json.ver ?? state.ver);
+				report.committed += chunk.length;
+			}
+			saveState(state);
+			for (const [a, e] of errs) report.errors.push(`asset ${a}: ${e.message}`);
+			say(`moved ${moved.size}/${byAsset.size} item(s); ${report.committed} file(s) now point at Backblaze`);
+			if (report.errors.length) (warn(`errors (run migrate-storage again to retry):\n  ${report.errors.slice(0, 20).join("\n  ")}`), (process.exitCode = 1));
+			return;
+		}
 		if (cmd === "repack") {
 			// Re-store small files that were uploaded one asset each into packs, so a new machine downloads
 			// a few dozen assets instead of thousands (GitHub allows 5000 API calls per hour).
@@ -1002,6 +1128,11 @@ async function main() {
 			// Deletes blob assets no current file uses (old versions, failed pushes) once older than --days (default 30).
 			// Keeps release storage far below GitHub's 1000-assets-per-release cap. Old versions are gone after this.
 			const days = Number(opt("--days", "30"));
+			if ((await storageInfo()).storage === "b2") {
+				const r = await api("POST", "/sync/blobs/gc", { days, dry: !flag("--yes") });
+				if (r.status !== 200) throw new Error(r.json.error ?? `gc: ${r.status}`);
+				say(`Backblaze: ${r.json.deleted} unused file(s) older than ${days} days ${r.json.dry ? "found (rerun with --yes to delete)" : "deleted"}; ${r.json.kept} kept`);
+			}
 			const used = new Set();
 			for (let after = ""; ; ) {
 				const r = (await api("GET", `/sync/files?since=0&limit=1000${after ? `&after=${after}` : ""}`)).json;

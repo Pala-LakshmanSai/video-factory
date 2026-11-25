@@ -1,11 +1,15 @@
 # Video Factory: one-command setup for a Windows 10/11 PC (docs/prompts/NEW_ACCOUNT_SETUP.md). Twin of install.sh.
 #   irm https://video-factory.lakshmansai121.workers.dev/install.ps1 | iex
+# Team members get a personal line (".../install.ps1?key=vfk_..."): the server fills in $VfKeyFromLink below, and
+# the key replaces GitHub entirely (no GitHub account needed). Without a key it signs in with GitHub (the owner).
 # Safe to run again: it skips whatever is already installed and only fills gaps.
-# You will be asked for: "Yes" on Windows permission pop-ups (first installs only), a GitHub sign-in and a Claude
-# sign-in in the browser.
+# You will be asked for: "Yes" on Windows permission pop-ups (first installs only), a GitHub sign-in (no key only)
+# and a Claude sign-in in the browser.
 # Everything is inside Install-VideoFactory, called on the last lines: a cut-off download runs nothing.
 # Works on Windows PowerShell 5.1 (what irm | iex runs on a fresh PC) and PowerShell 7. Never calls exit (under
 # irm | iex that would close the window), except in CI. VF_CI=1 (CI) skips the two browser sign-ins, nothing else.
+
+$VfKeyFromLink = ""
 
 function Install-VideoFactory {
 	$ErrorActionPreference = 'Continue' # native tools report by exit code; 'Stop' turns their stderr into errors on PS 5.1
@@ -40,6 +44,17 @@ function Install-VideoFactory {
 		$c | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 	}
 
+	# Key: env VF_KEY, else the key from the personal install line, else the one saved last time. Saved for vf.mjs.
+	$keyFile = Join-Path $HOME '.video-factory\key'
+	$key = if ($env:VF_KEY) { $env:VF_KEY } elseif ($VfKeyFromLink) { $VfKeyFromLink } elseif (Test-Path $keyFile) { Get-Content -Raw $keyFile } else { '' }
+	$key = "$key".Trim()
+	if ($key) {
+		if ($key -cnotmatch '^vfk_[A-Za-z0-9]{32}$') { throw 'That access key does not look right (it starts with vfk_ and is 36 characters). Ask the owner for your install line again.' }
+		New-Item -ItemType Directory -Force (Split-Path $keyFile) | Out-Null
+		[IO.File]::WriteAllText($keyFile, $key) # no BOM, unlike Set-Content -Encoding UTF8 on PS 5.1
+		Write-Host 'Using your Video Factory access key (no GitHub account needed).'
+	} else { Write-Host 'Signing in with GitHub.' }
+
 	Step 'Tools'
 	if (-not (Has winget)) { # first login on a new PC: winget registers late; ask for it now
 		try { Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction Stop } catch {}
@@ -48,6 +63,7 @@ function Install-VideoFactory {
 	if (-not (Has winget)) { throw 'winget (the Windows package manager) is missing. Install "App Installer" from the Microsoft Store: https://apps.microsoft.com/detail/9nblggh4nns1' }
 	# Git also gives Claude Code its Git Bash.
 	$want = [ordered]@{ git = 'Git.Git'; gh = 'GitHub.cli'; node = 'OpenJS.NodeJS.LTS'; ffmpeg = 'Gyan.FFmpeg'; 'yt-dlp' = 'yt-dlp.yt-dlp'; uv = 'astral-sh.uv' }
+	if ($key) { $want.Remove('gh') } # the GitHub CLI only without a key
 	$missing = @(foreach ($c in $want.Keys) { if (-not (Has $c)) { $want[$c] } })
 	if ((Has node) -and [version]((node --version) -replace '^v') -lt [version]'22.18') { $missing += 'OpenJS.NodeJS.LTS' } # needs 22.18+
 	if (-not (Find-Python312)) { $missing += 'Python.Python.3.12' }
@@ -70,21 +86,25 @@ function Install-VideoFactory {
 		if ($LASTEXITCODE -ne 0) { Write-Host '(Chrome did not install; get it later from google.com/chrome. Continuing.)' }
 	}
 
-	Step 'GitHub sign-in'
-	gh auth token *> $null
-	if ($LASTEXITCODE -ne 0) {
-		if ($env:VF_CI) { throw 'GitHub is not signed in (CI: set GH_TOKEN).' }
-		Write-Host 'A browser page opens: sign in as the Video Factory owner and paste the code shown here.'
-		gh auth login --hostname github.com --git-protocol https --web
-		if ($LASTEXITCODE -ne 0) { throw 'GitHub sign-in did not finish.' }
+	if (-not $key) {
+		Step 'GitHub sign-in'
+		gh auth token *> $null
+		if ($LASTEXITCODE -ne 0) {
+			if ($env:VF_CI) { throw 'GitHub is not signed in (CI: set GH_TOKEN).' }
+			Write-Host 'A browser page opens: sign in as the Video Factory owner and paste the code shown here.'
+			gh auth login --hostname github.com --git-protocol https --web
+			if ($LASTEXITCODE -ne 0) { throw 'GitHub sign-in did not finish.' }
+		}
+		gh auth setup-git
+		gh auth status 2>&1 | Select-String 'Logged in' | Select-Object -First 1 | Out-Host
 	}
-	gh auth setup-git
-	gh auth status 2>&1 | Select-String 'Logged in' | Select-Object -First 1 | Out-Host
 
 	Step 'Transcription tool (whisper-cli)'
 	if (Has whisper-cli) { Write-Host 'present' } else {
 		# No winget package: the official CPU x64 build. The newest releases (v1.x) carry no files; the b-builds do.
-		$rels = (gh api 'repos/ggml-org/whisper.cpp/releases?per_page=20' | Out-String) | ConvertFrom-Json
+		$api = 'repos/ggml-org/whisper.cpp/releases?per_page=20'
+		# With a key there is no gh: GitHub's public API without sign-in (60 requests an hour, plenty for one install).
+		$rels = if ($key) { Invoke-RestMethod -UseBasicParsing "https://api.github.com/$api" } else { (gh api $api | Out-String) | ConvertFrom-Json }
 		$url = @(foreach ($r in $rels) { foreach ($a in $r.assets) { if ($a.name -eq 'whisper-bin-x64.zip') { $a.browser_download_url } } })[0]
 		if (-not $url) { throw 'Could not find the whisper.cpp download on GitHub.' }
 		$dest = Join-Path $env:LOCALAPPDATA 'whisper-cpp'
@@ -108,8 +128,13 @@ function Install-VideoFactory {
 			Move-Item $dir $old -ErrorAction Stop
 			Write-Host "An older folder was in the way; moved it to $old"
 		}
-		gh repo clone $repo $dir
-		if ($LASTEXITCODE -ne 0) { throw 'Could not download the project. Check the internet, and that GitHub is signed in as the owner (to switch: gh auth logout).' }
+		if ($key) { # public repo: no GitHub account; GIT_TERMINAL_PROMPT and GCM_INTERACTIVE above mean no password prompt
+			git clone -q "https://github.com/$repo.git" $dir
+			if ($LASTEXITCODE -ne 0) { throw 'Could not download the project. Check the internet connection.' }
+		} else {
+			gh repo clone $repo $dir
+			if ($LASTEXITCODE -ne 0) { throw 'Could not download the project. Check the internet, and that GitHub is signed in as the owner (to switch: gh auth logout).' }
+		}
 	}
 
 	Step 'Claude Code command'

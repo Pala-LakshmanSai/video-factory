@@ -71,7 +71,8 @@ export type Route = (url: string, init: RequestInit & { body?: string }) => Resp
 export function mockFetch(...routes: Route[]) {
 	const calls: { url: string; method: string; body: unknown }[] = [];
 	const fn = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
-		const url = String(input);
+		if (input instanceof Request) init = { method: input.method, headers: input.headers, ...init }; // aws4fetch passes a Request
+		const url = input instanceof Request ? input.url : String(input);
 		const body = typeof init.body === "string" ? init.body : undefined;
 		calls.push({ url, method: init.method ?? "GET", body: body && body.startsWith("{") ? JSON.parse(body) : body });
 		for (const r of routes) {

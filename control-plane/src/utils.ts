@@ -84,6 +84,6 @@ export async function fetchUpstreamAuthToken({
 export type Props = {
 	login: string;
 	name: string;
-	email: string;
-	accessToken: string;
+	email: string | null;
+	accessToken: string; // "" for access-key sign-ins (login "key:<name>")
 };
