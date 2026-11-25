@@ -1,0 +1,43 @@
+# Windows twin of the one-command installer: a fresh Windows runner runs scripts/install.ps1 (this checkout's copy,
+# on Windows PowerShell 5.1 like `irm | iex`), then a real local sample render in the folder it set up.
+# The browser sign-ins are skipped (VF_CI=1); GitHub signs in with the workflow token.
+name: windows-setup
+on:
+  push:
+    branches: [main]
+    paths: ["scripts/install.ps1", "scripts/vf.mjs", "renderer/**", ".github/workflows/windows-setup.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-render:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VF_CI: "1"
+          VF_DIR: ${{ runner.temp }}\video-factory
+          VF_SETUP_ARGS: --no-sync --no-models
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip # TTS runs on CPU; upstream CUDA binary URL 404s
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1
+      - name: Sample render (flatglow example plan)
+        shell: pwsh
+        working-directory: ${{ runner.temp }}\video-factory
+        run: |
+          # Tools winget added are in the registry PATH, not in this step's environment.
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path
+          node renderer/tools/lab.ts sample renderer/styles/flatglow/example-plan.json --out "$env:RUNNER_TEMP\vf-check"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-sample
+          path: |
+            ${{ runner.temp }}/vf-check/final.mp4
+            ${{ runner.temp }}/vf-check/sheet.jpg
+          if-no-files-found: ignore

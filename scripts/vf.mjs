@@ -7,26 +7,29 @@
 //   GitHub release assets   file bytes of skills + style kits (content-addressed)      -> this tool
 // One credential everywhere: your GitHub login (gh auth login). No other secrets.
 //
-// Commands: setup | pull | push | status | track | untrack | resolve | repack | gc | prefs | pref add|retire | docs publish | hook session-start|stop
-import { execFileSync, spawn } from "node:child_process";
+// Commands: setup [--no-models] [--no-sync] | pull | push | status | track | untrack | resolve | repack | gc | prefs | pref add|retire | docs publish | hook session-start|stop
+import { execFileSync, execSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	chmodSync, closeSync, createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, openAsBlob, openSync,
 	readFileSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import path, { basename, dirname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
+const WIN = process.platform === "win32";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CFG = JSON.parse(readFileSync(join(REPO, ".vf/config.json"), "utf8")); // { api, repo }
 // Git worktrees (parallel Claude sessions) share the main checkout's synced folders, state and lock.
 const MAIN = (() => {
 	try {
-		const common = execFileSync("git", ["-C", REPO, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-		return common.endsWith(`${sep}.git`) ? dirname(common) : REPO;
+		// git prints C:/x/.git on Windows: resolve() makes it native; drive letter case can differ from REPO's
+		const common = resolve(execFileSync("git", ["-C", REPO, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim());
+		const main = basename(common) === ".git" ? dirname(common) : REPO;
+		return (WIN ? main.toLowerCase() === REPO.toLowerCase() : main === REPO) ? REPO : main;
 	} catch {
 		return REPO;
 	}
@@ -38,7 +41,7 @@ const LOCK_F = join(LOCAL, "lock");
 const LAST_F = join(LOCAL, "last.json");
 const LOG_F = join(LOCAL, "sync.log");
 const CLIENT = `${hostname()}/${userInfo().username}`;
-const DEFAULT_EXCLUDE = [".git", "node_modules", ".venv", "venv", "__pycache__", "*.pyc", ".DS_Store", "._*", ".vf-tmp-*", "Thumbs.db"];
+const DEFAULT_EXCLUDE = [".git", "node_modules", ".venv", "venv", "__pycache__", "*.pyc", ".DS_Store", "._*", ".vf-tmp-*", "Thumbs.db", "desktop.ini"];
 const MAX_FILE = 1_900_000_000; // GitHub release asset limit is 2 GiB
 const PAR = 8; // parallel transfers
 const CHUNK = 100; // changes per commit (each is one row write on the server)
@@ -66,6 +69,17 @@ const writeJson = (f, o) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmtB = (n) => (n > 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.ceil(n / 1e3)} KB`);
 const keyOf = (root, path) => `${root}\u0000${path}`;
+// Synced paths are "/"-separated on the server and in state on every OS (a Windows machine must produce the same
+// keys as a Mac). walk() builds them with "/"; these convert at the disk boundary. `p` is a parameter for tests.
+/** A user-typed relative path (may use "\\" on Windows) -> key. */
+export const toKey = (rel, p = path) => rel.split(p.sep).join("/");
+/** key -> file under base. Refuses escapes, and on Windows keys that cannot be a file name there. */
+export function diskPath(base, rel, p = path) {
+	if (p.sep === "\\" && /[\\:*?"<>|]/.test(rel)) throw new Error(`not a valid Windows file name: ${rel}`);
+	const abs = p.join(base, ...rel.split("/"));
+	if (!abs.startsWith(base + p.sep)) throw new Error(`path escapes root: ${rel}`);
+	return abs;
+}
 const splitKey = (k) => k.split("\u0000");
 
 async function pool(items, n, fn) {
@@ -382,7 +396,7 @@ function lock(wait = false) {
 			}
 			if (Date.now() > until) return null;
 		}
-		execFileSync("sleep", ["1"]);
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000); // sync 1 s sleep (no `sleep` binary on Windows)
 	}
 }
 const lockBusy = () => {
@@ -396,7 +410,7 @@ const lockBusy = () => {
 
 // ---------------------------------------------------------------- git fast-forward
 function git(...a) {
-	return execFileSync("git", ["-C", REPO, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }).trim();
+	return execFileSync("git", ["-C", REPO, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" } }).trim();
 }
 function gitFastForward() {
 	try {
@@ -445,7 +459,11 @@ async function pull(state) {
 			const m = /^@repo\/(.+)$/.exec(r.target);
 			if (m && !existsSync(join(REPO, m[1])) && !lstatSyncOrNull(join(REPO, m[1]))) {
 				mkdirSync(dirname(join(REPO, m[1])), { recursive: true });
-				symlinkSync(join(MAIN, m[1]), join(REPO, m[1]));
+				try {
+					symlinkSync(join(MAIN, m[1]), join(REPO, m[1]), "junction"); // type only used on Windows: a junction needs no admin/dev mode
+				} catch (e) {
+					warn(`worktree: could not link ${m[1]} to the main checkout (${e.code}); use it from ${MAIN}`);
+				}
 			}
 		}
 	const latest = new Map();
@@ -463,8 +481,7 @@ async function pull(state) {
 		const root = roots.get(r.root);
 		if (!root) return; // root removed: leave local files alone
 		const base = resolveTarget(root.target);
-		const abs = join(base, r.path);
-		if (!abs.startsWith(base + sep)) throw new Error(`path escapes root: ${r.path}`);
+		const abs = diskPath(base, r.path);
 		const old = state.files[k];
 		const local = await shaOf(abs);
 		const remote = r.sha ? { sha: r.sha, size: r.size, mode: r.mode, asset: r.asset, off: r.off ?? null } : null;
@@ -541,7 +558,9 @@ async function localChanges(state, roots, { allowMassDelete = false } = {}) {
 			if (st.size > MAX_FILE) return void notes.push(`${root.name}:${rel} is over 1.9 GB, not synced`);
 			const sha = await shaOf(abs, st);
 			const old = state.files[k];
-			if (old?.sha !== sha) rootChanges.push({ root: root.name, path: rel, sha, size: st.size, mode: st.mode & 0o111 ? 0o755 : 0o644, prev: old?.sha ?? null, abs });
+			// Windows has no exec bits: keep the mode the file already has in the index
+			const mode = WIN ? (old?.mode ?? 0o644) : st.mode & 0o111 ? 0o755 : 0o644;
+			if (old?.sha !== sha) rootChanges.push({ root: root.name, path: rel, sha, size: st.size, mode, prev: old?.sha ?? null, abs });
 		});
 		const deletes = known.filter(([k, f]) => f.sha && !files.has(splitKey(k)[1]) && !excluded(splitKey(k)[1]) && !state.conflicts[k]);
 		if (deletes.length > 20 && deletes.length > known.length / 2 && !allowMassDelete) {
@@ -681,15 +700,25 @@ async function publishDocs() {
 // ---------------------------------------------------------------- setup (new machine / new account)
 // Never hangs (every step has a timeout), never stops halfway (each step's failure is collected), safe to re-run
 // (finished work is skipped), and ends with "setup complete" or a "still to fix" list (exit code 1).
+// Windows: npm/npx are .cmd shims, which Node only starts through a shell (cmd.exe). Their args here are plain
+// words (paths go in cwd/env), so they need no quoting; refuse anything that would.
+function exec(cmd, args, o = {}) {
+	if (!WIN || (cmd !== "npm" && cmd !== "npx")) return execFileSync(cmd, args, { windowsHide: true, ...o });
+	if (args.some((a) => /[\s"&|<>^%]/.test(a))) throw new Error(`${cmd}: argument needs shell quoting: ${args.join(" ")}`);
+	return execSync([cmd, ...args].join(" "), { windowsHide: true, ...o });
+}
+// python3 on macOS; on Windows the py launcher (python3.exe there is usually the Microsoft Store stub)
+let PY;
+const python = () => (PY ??= WIN ? (have("py", ["-3", "--version"]) ? ["py", "-3"] : ["python"]) : ["python3"]);
 function have(cmd, args = ["--version"]) {
 	try {
-		execFileSync(cmd, args, { stdio: "ignore", timeout: 30_000, killSignal: "SIGKILL" });
+		exec(cmd, args, { stdio: "ignore", timeout: 30_000, killSignal: "SIGKILL" });
 		return true;
 	} catch {
 		return false;
 	}
 }
-const run = (cmd, args, o = {}) => execFileSync(cmd, args, { stdio: QUIET ? "ignore" : ["ignore", "inherit", "inherit"], killSignal: "SIGKILL", ...o });
+const run = (cmd, args, o = {}) => exec(cmd, args, { stdio: QUIET ? "ignore" : ["ignore", "inherit", "inherit"], killSignal: "SIGKILL", ...o });
 // node_modules is current when npm's own record of the install is newer than the lockfile (catches half-done installs).
 function depsCurrent(dir) {
 	const rec = join(dir, "node_modules", ".package-lock.json");
@@ -715,8 +744,8 @@ function fetchTo(url, dest, minBytes) {
 }
 // Registers the factory's MCP connector for every Claude Code session of this user (sign-in happens on first use).
 function connectMcp() {
-	const claude = [join(homedir(), ".local", "bin", "claude"), "claude"].find((c) => have(c));
-	if (!claude) throw new Error("claude command not found (install: curl -fsSL https://claude.ai/install.sh | bash)");
+	const claude = [join(homedir(), ".local", "bin", WIN ? "claude.exe" : "claude"), "claude"].find((c) => have(c));
+	if (!claude) throw new Error(`claude command not found (install: ${WIN ? "irm https://claude.ai/install.ps1 | iex" : "curl -fsSL https://claude.ai/install.sh | bash"})`);
 	if (have(claude, ["mcp", "get", "video-factory"])) return "already added";
 	run(claude, ["mcp", "add", "--transport", "http", "--scope", "user", "video-factory", `${CFG.api}/mcp`], { stdio: "ignore", timeout: 60_000 });
 	return "added (Claude asks you to sign in with GitHub the first time it uses it; type /mcp if needed)";
@@ -733,22 +762,25 @@ async function setup(state) {
 		}
 	};
 	const [maj, min] = process.versions.node.split(".").map(Number);
+	const noSync = flag("--no-sync"); // CI: no Write token, so no pull; everything else still runs
+	const signedIn = noSync || have("gh", ["auth", "token"]);
+	const [py, ...pyArgs] = python();
 	const checks = [
 		["node 22.18 or newer", maj > 22 || (maj === 22 && min >= 18)],
 		["git", have("git")],
-		["GitHub sign-in (gh auth login)", have("gh", ["auth", "token"])],
+		["GitHub sign-in (gh auth login)", signedIn],
 		["ffmpeg", have("ffmpeg", ["-version"])],
 		["yt-dlp", have("yt-dlp")],
-		["python3", have("python3")],
+		[WIN ? "python (py -3)" : "python3", have(py, [...pyArgs, "--version"])],
 	];
 	for (const [n, ok] of checks) {
 		say(`${ok ? "ok     " : "MISSING"}  ${n}`);
 		if (!ok) bad.push(`missing: ${n}`);
 	}
-	if (!checks[2][1]) return finishSetup(bad);
+	if (!signedIn) return finishSetup(bad);
 
-	say("\nsyncing files (skills + style kits)...");
-	const rep = await step("sync", () => pull(state));
+	say(noSync ? "\nsync skipped (--no-sync)" : "\nsyncing files (skills + style kits)...");
+	const rep = noSync ? null : await step("sync", () => pull(state));
 	if (rep) {
 		say(`  ${rep.git}; ${rep.downloaded} file(s) downloaded (${fmtB(rep.bytes)})`);
 		for (const e of rep.errors) bad.push(`sync: ${e}`);
@@ -786,7 +818,7 @@ async function setup(state) {
 			await step("voice model", () => fetchTo(`${rel}/kokoro-v1.0.onnx`, join(kok, "kokoro-v1.0.onnx"), 300_000_000));
 			await step("voice list", () => fetchTo(`${rel}/voices-v1.0.bin`, join(kok, "voices-v1.0.bin"), 20_000_000));
 			const venv = join(paper, "audio", ".venv");
-			if (!have(join(venv, "bin", "python"), ["-c", "import kokoro_onnx, soundfile"]))
+			if (!have(join(venv, WIN ? "Scripts/python.exe" : "bin/python"), ["-c", "import kokoro_onnx, soundfile"]))
 				await step("paper-style audio venv", () => {
 					say("  making paper-style audio venv...");
 					run("uv", ["venv", "--allow-existing", "--python", "3.12", venv], { timeout: 300_000 });
@@ -801,12 +833,12 @@ async function setup(state) {
 		const name = s.split(sep).at(-1);
 		let out;
 		try {
-			out = execFileSync("python3", [join(s, "scripts", "check_setup.py")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000, killSignal: "SIGKILL" });
+			out = exec(py, [...pyArgs, join(s, "scripts", "check_setup.py")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000, killSignal: "SIGKILL" });
 		} catch (e) {
 			out = `${e.stdout ?? ""}`;
 		}
 		if (!/ALL GOOD|to fix:/.test(out)) {
-			bad.push(`${name}: its setup check did not run (python3 ${join(s, "scripts", "check_setup.py")})`);
+			bad.push(`${name}: its setup check did not run (${[py, ...pyArgs].join(" ")} ${join(s, "scripts", "check_setup.py")})`);
 			continue;
 		}
 		const left = out.split("\n").filter((l) => l.startsWith("MISSING")).map((l) => l.replace(/^MISSING\s+/, ""));
@@ -829,7 +861,7 @@ function finishSetup(bad) {
 // ---------------------------------------------------------------- hooks (Claude Code: .claude/settings.json)
 function spawnSelf(args) {
 	const out = openSync(LOG_F, "a");
-	const p = spawn(process.execPath, [fileURLToPath(import.meta.url), ...args], { detached: true, stdio: ["ignore", out, out], cwd: REPO });
+	const p = spawn(process.execPath, [fileURLToPath(import.meta.url), ...args], { detached: true, stdio: ["ignore", out, out], cwd: REPO, windowsHide: true });
 	p.unref();
 	return p.pid;
 }
@@ -951,7 +983,7 @@ async function main() {
 				if (!f.sha || f.off != null || f.asset === 0 || f.size >= BIG || state.conflicts[k]) continue;
 				const [rn, path] = splitKey(k);
 				if (!roots.has(rn)) continue;
-				const abs = join(resolveTarget(roots.get(rn).target), path);
+				const abs = diskPath(resolveTarget(roots.get(rn).target), path);
 				if ((await shaOf(abs)) === f.sha) items.push({ root: rn, path, sha: f.sha, size: f.size, mode: f.mode, prev: f.sha, abs });
 			}
 			const need = [...new Map(items.map((c) => [c.sha, c])).values()];
@@ -992,7 +1024,7 @@ async function main() {
 		if (cmd === "resolve") {
 			const keep = opt("--keep");
 			if (keep !== "local" && keep !== "remote") throw new Error("usage: vf resolve <root:path|--all> --keep local|remote");
-			const want = flag("--all") ? Object.keys(state.conflicts) : [keyOf(...argv[1].split(/:(.*)/s).slice(0, 2))];
+			const want = flag("--all") ? Object.keys(state.conflicts) : [keyOf(...toKey(argv[1]).split(/:(.*)/s).slice(0, 2))];
 			const roots = await fetchRoots(state);
 			for (const k of want) {
 				if (!state.conflicts[k]) continue;
@@ -1004,7 +1036,7 @@ async function main() {
 					row = n.rows.find((x) => x.root === rn && x.path === path);
 					after = n.more ? `${n.rows.at(-1).ver}:${n.rows.at(-1).rid}` : "";
 				}
-				const abs = join(resolveTarget(roots.get(rn).target), path);
+				const abs = diskPath(resolveTarget(roots.get(rn).target), path);
 				if (keep === "remote") {
 					if (row?.sha) await downloadBlob(row.asset, row.sha, abs, row.mode, row.off ?? null, row.size);
 					else if (existsSync(abs)) unlinkSync(abs);
@@ -1025,7 +1057,8 @@ async function main() {
 	}
 }
 
-main().catch((e) => {
-	warn(`vf: ${e.message}`);
-	process.exitCode = 1;
-});
+if (!process.env.VF_NO_MAIN) // set only by tests that import the path helpers
+	main().catch((e) => {
+		warn(`vf: ${e.message}`);
+		process.exitCode = 1;
+	});

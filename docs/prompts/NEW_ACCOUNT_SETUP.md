@@ -1,6 +1,7 @@
 # Set up Video Factory in a new Claude account
 
-Works on any Mac (Apple Silicon or Intel) with any Claude account. Windows and Linux are not supported.
+Works on Windows 10/11 and any Mac (Apple Silicon or Intel), with any Claude account. The plain-language overview is
+the project README.
 
 **Which GitHub account:** the owner's (Pala-LakshmanSai), or any GitHub account that has accepted a **Write**
 collaborator invite to `Pala-LakshmanSai/video-factory` and whose login or verified email is in the connector's
@@ -11,18 +12,24 @@ and kits stay in sync on their own (docs/SYNC.md).
 
 ---
 
-## A. Mac (Claude Code, where videos, styles and skills are built): one command
+## A. Computer (Claude Code, where videos, styles and skills are built): one command
 
-Open **Terminal** and paste:
+**Windows:** Start → type `PowerShell` → open it, paste and press Enter:
+
+```powershell
+irm https://video-factory.lakshmansai121.workers.dev/install.ps1 | iex
+```
+
+**Mac:** open **Terminal** and paste:
 
 ```bash
 curl -fsSL https://video-factory.lakshmansai121.workers.dev/install | bash
 ```
 
-It installs every tool (Homebrew, git, gh, node, ffmpeg, yt-dlp, Python 3.12, uv, whisper, Chrome, the `claude`
+It installs every tool (Homebrew on Mac / winget on Windows, git, gh, node, ffmpeg, yt-dlp, Python 3.12, uv, whisper, Chrome, the `claude`
 command), signs in to GitHub, downloads the project to `~/video-factory`, syncs every skill, style kit and preference,
 installs dependencies and the voice and transcription models, adds the Video Factory connector to Claude Code, and
-checks every skill. It asks you for three things only: your Mac password (first Homebrew install only), a GitHub
+checks every skill. It asks you for three things only: your computer password (first tool install only), a GitHub
 sign-in in the browser (the owner's GitHub, or one with access: see below) and a Claude sign-in in the browser. It ends with "Done", or a
 short "still to fix" list. Never hangs, and safe to run again at any time: a re-run takes about 10 seconds and only
 fills gaps.
@@ -31,8 +38,8 @@ Then open Claude Code in `~/video-factory` (desktop app: Code tab, choose that f
 trust the folder; that turns on the automatic sync. The first time Claude uses the connector it asks you to sign
 in with GitHub.
 
-Prefer Claude to do it? Paste into Claude Code: `Run curl -fsSL https://video-factory.lakshmansai121.workers.dev/install | bash
-in my Terminal, then fix anything it lists under "still to fix".`
+Prefer Claude to do it? Paste into Claude Code: `Run the Video Factory one-line installer for this computer (see
+the project README), then fix anything it lists under "still to fix".`
 
 ---
 

@@ -114,7 +114,7 @@ async function sample() {
 			const pad = join(out, `vp_${s.n}.wav`);
 			await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", join(out, `vo_${s.n}.wav`), "-af", "apad=pad_dur=0.35", pad]);
 			s.duration_s = Math.max(2.2, await durationOf(pad));
-			list.push(`file '${pad}'`);
+			list.push(`file 'vp_${s.n}.wav'`); // relative to vo.txt: a Windows path (C:\..., or a ' in a user name) breaks concat quoting
 		}
 		writeFileSync(join(out, "vo.txt"), list.join("\n") + "\n");
 		voice = join(out, "voice.wav");

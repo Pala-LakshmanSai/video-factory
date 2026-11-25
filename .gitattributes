@@ -1,0 +1,3 @@
+# Same bytes on every OS: store LF, check out LF even with Windows core.autocrlf=true (scripts, JSON, golden
+# test files and docs are hashed or byte-compared; a .sh with CRLF breaks bash). Binary detection is automatic.
+* text=auto eol=lf

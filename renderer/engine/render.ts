@@ -237,7 +237,7 @@ async function shrink(jpeg: Buffer): Promise<Buffer> {
 function runBuffer(args: string[], input: NodeJS.ReadableStream): Promise<Buffer> {
 	return new Promise(async (resolve, reject) => {
 		const { spawn } = await import("node:child_process");
-		const p = spawn("ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });
+		const p = spawn("ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 		const chunks: Buffer[] = [];
 		let err = "";
 		p.stdout.on("data", (d: Buffer) => chunks.push(d));

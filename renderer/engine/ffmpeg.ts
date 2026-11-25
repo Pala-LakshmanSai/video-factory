@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 
 export function run(cmd: string, args: string[], input?: NodeJS.ReadableStream): Promise<{ code: number; stdout: string; stderr: string }> {
 	return new Promise((resolve, reject) => {
-		const p = spawn(cmd, args, { stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
+		const p = spawn(cmd, args, { stdio: [input ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true });
 		let stdout = "";
 		let stderr = "";
 		p.stdout!.on("data", (d) => (stdout += d));
