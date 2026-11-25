@@ -923,7 +923,11 @@ async function setup(state) {
 		}
 		const left = out.split("\n").filter((l) => l.startsWith("MISSING")).map((l) => l.replace(/^MISSING\s+/, ""));
 		say(`  ${name}: ${left.length ? `${left.length} missing` : "all good"}`);
-		for (const l of left) if (!seen.has(l)) seen.add(l), bad.push(`${name}: ${l}`);
+		for (const l of left) {
+			// CI (VF_CI=1, set only by our workflows) has no browser, so the installer skips the Claude sign-in there.
+			if (process.env.VF_CI && /^claude sign-in/i.test(l)) { say(`  ${name}: ${l.split("  ")[0]} skipped in CI`); continue; }
+			if (!seen.has(l)) seen.add(l), bad.push(`${name}: ${l}`);
+		}
 	}
 
 	const mcp = await step("Claude Code connector", connectMcp);

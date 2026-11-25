@@ -47,14 +47,8 @@ export async function tts(text: string, out: string) {
 	// onnxruntime defaults to one intra-op thread per host core, which thrashes in a CPU-quota'd container.
 	const threads = ttsThreads();
 	console.error(`tts: onnx intraOpNumThreads=${threads} interOpNumThreads=1`);
-	const [m, tok] = await Promise.all([
-		tf.StyleTextToSpeech2Model.from_pretrained(KOKORO_MODEL, {
-			dtype: "q8",
-			device: "cpu",
-			session_options: { intraOpNumThreads: threads, interOpNumThreads: 1 },
-		}),
-		tf.AutoTokenizer.from_pretrained(KOKORO_MODEL),
-	]);
+	const load = () => tf.StyleTextToSpeech2Model.from_pretrained(KOKORO_MODEL, { dtype: "q8", device: "cpu", session_options: { intraOpNumThreads: threads, interOpNumThreads: 1 } });
+	const [m, tok] = await Promise.all([retryLocked(load), tf.AutoTokenizer.from_pretrained(KOKORO_MODEL)]);
 	const model = new KokoroTTS(m as never, tok as never);
 	const sentences = text.match(/[^.!?。！？]+[.!?。！？]*\s*/g)?.map((s) => s.trim()).filter(Boolean) ?? [text];
 	const parts: Float32Array[] = [];
@@ -72,6 +66,19 @@ export async function tts(text: string, out: string) {
 	const raw = out.replace(/\.wav$/, ".24k.wav");
 	await writeFile(raw, wav(pcm, rate));
 	await must("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", raw, "-ac", "1", "-ar", "48000", out]);
+}
+
+/** Windows: a just-downloaded model can be locked for a moment (antivirus scan), and onnxruntime then fails with
+ * "system error number 13" (access denied). Retry those, 1+2+4+8 s; anything else throws at once. */
+export async function retryLocked<T>(fn: () => Promise<T>, waits = [1000, 2000, 4000, 8000]): Promise<T> {
+	for (let i = 0; ; i++)
+		try {
+			return await fn();
+		} catch (e) {
+			if (i >= waits.length || !/system error number 13|EACCES|EBUSY|EPERM/.test(String((e as Error)?.message ?? e))) throw e;
+			console.error(`tts: model file busy (${(e as Error).message.slice(-60)}), retrying in ${waits[i] / 1000} s`);
+			await new Promise((r) => setTimeout(r, waits[i]));
+		}
 }
 
 /** TTS_THREADS, else min(4, cgroup v2 CPU quota or available cores). */
