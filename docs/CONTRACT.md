@@ -339,6 +339,8 @@ export const ttlMinFor = (videoSeconds: number): number =>
 8. **Replacement after approve** — if a pod dies after `approve`, the new pod re-renders previews and the job moves straight on to `final_render` without asking Claude again (`jobs.approved`).
 11. **Fault hold and arming** (`FAULTS_ENABLED="1"` only) — under `slow_boot`, `/hello` returns 503 with header `X-VF-Hold`; the agent treats it as reachable and retries until the watchdog's boot_timeout replacement consumes the fault. Arming a fault returns 409 while `pending_cmd` is busy.
 
+12. **Style `footage`** (skill styles on RunPod, docs/KIT_WORKFLOW.md) — `acquire_gpu` takes `voiceover {none: true}`; the plan has one scene, template `bundle`, `props {bundle: <sha256 of the manifest>, skill}`, `duration_s` = video length (TTL and budget scale with it). `GET /agent/{job}/input/bundle` → `BundleOut {manifest: FootageManifest, links: {sha256: signed URL}}` (R2 `footage/<sha>`, 1 h links). The pod materializes the files (sha-verified), runs `manifest.cmd` (argv, cwd `manifest.cwd`, env `VF_THREADS` = vCPUs), posts 12 frames `scene-1-<0..11>`, and on `render_final` uploads `manifest.out`. Uploads from a machine: `POST /sync/footage/<sha>/upload` (same auth and shape as `/sync/blob`).
+
 ## Contradictions and gaps in SPEC.md
 
 Resolved 2026-11-15: the user accepted every proposal below; the types above already reflect them.

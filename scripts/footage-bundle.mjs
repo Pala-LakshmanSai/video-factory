@@ -69,7 +69,7 @@ export function doomsdayBundle(editPath, skillDir = join(homedir(), ".claude/ski
 		f.add(String(e.file), true, `skill/assets/sfx/${name}`);
 		return { ...e, file: name };
 	});
-	for (const p of [...walk(join(skill, "scripts")), ...walk(join(skill, "assets/overlays")), ...walk(join(skill, "assets/sfx"))]) f.add(p);
+	for (const p of [...walk(join(skill, "scripts")), ...walk(join(skill, "assets/overlays")), ...walk(join(skill, "assets/sfx")), ...walk(join(skill, "assets/fonts"))]) f.add(p);
 	const seconds = probeSeconds(P(E.voice)) + (E.inserts ?? []).reduce((a, s) => a + Number(s.dur), 0) + 0.6;
 	return {
 		manifest: { v: 1, skill: "doomsday", cwd: ".", cmd: ["python3", "skill/scripts/render_edit.py", "job/edit.json"], out: `job/${inside(base, outAbs)}` },
