@@ -2,9 +2,9 @@
 // (sha256-verified, kept across rerenders) -> run the skill's own render command with every vCPU -> the mp4.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
-import { cpus } from "node:os";
+import { availableParallelism, cpus } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -76,14 +76,39 @@ export async function fetchBundle(dir: string, get: () => Promise<BundleOut>, ha
 	}
 }
 
-/** Run the manifest's command (argv, no shell) in the bundle. VF_THREADS = every vCPU. Returns the output mp4. */
+const readOr = (f: string) => { try { return readFileSync(f, "utf8").trim(); } catch { return ""; } };
+
+/**
+ * vCPUs this container may use. A RunPod pod sees every host core (os.cpus(): 192 on a 32-vCPU CPU pod) but is
+ * limited by its cgroup CPU quota; sizing parallelism from the host count made ffmpeg run 192 workers x 192 threads
+ * and die (found live 2026-11-27). Quota (cgroup v2 cpu.max, v1 cfs) -> affinity -> cpus().
+ */
+export function podVcpus(): number {
+	const [q, per] = readOr("/sys/fs/cgroup/cpu.max").split(/\s+/);
+	let n = q && q !== "max" ? Number(q) / Number(per) : NaN;
+	if (!(n > 0)) {
+		const q1 = Number(readOr("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")), p1 = Number(readOr("/sys/fs/cgroup/cpu/cpu.cfs_period_us"));
+		n = q1 > 0 && p1 > 0 ? q1 / p1 : NaN;
+	}
+	return Math.max(1, Math.min(availableParallelism(), Number.isFinite(n) ? Math.ceil(n) : cpus().length));
+}
+
+/**
+ * Run the manifest's command (argv, no shell) in the bundle with every vCPU the pod has: VF_THREADS = that count,
+ * and (Linux) pinned to that many cores with taskset, so ffmpeg/x264/filters size their own threads from it too.
+ */
 export async function runBundle(dir: string, m: FootageManifest, log = console.log): Promise<string> {
 	const out = join(dir, m.out);
 	await rm(out, { force: true });
-	const env = { ...process.env, VF_THREADS: String(cpus().length), PYTHONUNBUFFERED: "1" };
+	const n = podVcpus();
+	const env = { ...process.env, VF_THREADS: String(n), PYTHONUNBUFFERED: "1" };
+	const limits = `vcpus ${n} (host ${cpus().length}), cpu.max "${readOr("/sys/fs/cgroup/cpu.max")}", memory.max "${readOr("/sys/fs/cgroup/memory.max")}", pids.max "${readOr("/sys/fs/cgroup/pids.max")}"`;
+	log(`footage render: ${limits}`);
+	const pin = n < availableParallelism() && process.platform === "linux" ? ["taskset", "-c", `0-${n - 1}`] : [];
+	const argv = [...pin, ...m.cmd];
 	let tail = "";
 	const code = await new Promise<number>((resolve, reject) => {
-		const p = spawn(m.cmd[0], m.cmd.slice(1), { cwd: join(dir, m.cwd), env, stdio: ["ignore", "pipe", "pipe"] });
+		const p = spawn(argv[0], argv.slice(1), { cwd: join(dir, m.cwd), env, stdio: ["ignore", "pipe", "pipe"] });
 		const on = (d: Buffer) => {
 			tail = (tail + d).slice(-8000);
 			for (const l of String(d).split("\n")) if (l.trim()) log(`[${m.skill}] ${l}`);
@@ -93,7 +118,7 @@ export async function runBundle(dir: string, m: FootageManifest, log = console.l
 		p.on("error", reject);
 		p.on("close", (c) => resolve(c ?? -1));
 	});
-	if (code !== 0) throw new Error(`${m.skill} render exited ${code}:\n${tail}`);
+	if (code !== 0) throw new Error(`${m.skill} render exited ${code} (${limits}):\n${tail}`);
 	if (!existsSync(out) || !(await stat(out)).size) throw new Error(`${m.skill} render finished but wrote no ${m.out}:\n${tail}`);
 	return out;
 }

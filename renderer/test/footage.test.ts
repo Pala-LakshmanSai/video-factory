@@ -66,7 +66,7 @@ test("fetch, verify, keep across rounds, run, preview", async () => {
 		blobs.set(sha(SCRIPT), Buffer.from("tampered"));
 		await assert.rejects(fetchBundle(mkdtempSync(join(tmpdir(), "vf-footage-")), async () => ({ manifest, links }), new Map(), () => {}), /does not match/);
 		// A failing command reports its output tail.
-		await assert.rejects(runBundle(dir, { ...manifest, cmd: ["python3", "-c", "import sys; print('boom'); sys.exit(3)"] }, () => {}), /exited 3:[\s\S]*boom/);
+		await assert.rejects(runBundle(dir, { ...manifest, cmd: ["python3", "-c", "import sys; print('boom'); sys.exit(3)"] }, () => {}), /exited 3 \(vcpus [\s\S]*boom/);
 	} finally {
 		s.close();
 	}
