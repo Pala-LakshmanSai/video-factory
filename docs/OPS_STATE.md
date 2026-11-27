@@ -39,3 +39,19 @@ secrets R2_ENDPOINT / R2_KEY_ID / R2_SECRET (token: Object Read & Write, that bu
 All 27 stored items (863 MB) copied from the GitHub release copies; each re-downloaded through the Worker's signed
 R2 link and sha256-matched (27/27). Index entries unchanged (asset "b2:<sha>" = content-addressed object). Backblaze
 bucket and B2 secrets are unused now; keep or delete. Full key-only install on R2 not re-run yet.
+
+**Footage/skill styles on RunPod (2026-11-27, branch claude/runpod-footage-styles-9e14a7):** registry style `footage`
+runs a skill's own render script on a pod (docs/KIT_WORKFLOW.md "Footage styles on RunPod"; `vf footage`). Live:
+Worker 2c3d0e34 (deployed from the branch, so **merge that PR before the next deploy from main** or the footage routes
+and the v1-DNS fix below disappear), image bdb89980… (renderer run 45964938451, qualify-image 45966641659 passed).
+Qualified with doomsday-peggy (22:20, 633 shots, bundle 5196d0da…, 171 files 1.76 GB in R2 `footage/`): job
+j_7968d4b6b6d04333 on a CPU pod (EU-RO-1, $0.96/h): download + render 7.5 min, $0.19, pod deleted (done). Against a
+local render of the identical bundle: 40222 = 40222 frames, 1340.74 vs 1340.73 s, mean SSIM 0.987, 96.5% of frames
+≥ 0.95, many bit-identical; the rest are 19 shots offset by a few frames (AV1/VP9 input seeking differs between Mac
+ffmpeg 8.1.1 and the pod's BtbN 8.1.3) and 3 glitch-fx windows (random noise by design). One local window showed a
+wrong shot (macOS concat on the external drive); the cloud one was right. Total qualification spend ≈ $0.22.
+Found live: (1) `rest.runpod.io` has no DNS record (Cloudflare 530/1016), which held every create for 15 min; v1
+530/1016 now falls back to v2 (never reached RunPod, so no duplicate risk). (2) Pods see the host's cores (192) not
+their quota: footage jobs size parallelism from cgroup `cpu.max` and pin with taskset. gta/aviation/paper-style use
+the generic `--dir/--cmd` form, not yet qualified. Text overlays (doomsday `captions`/`cards`) need `chromium`, which
+the image now provides (Playwright headless shell, --no-sandbox wrapper); not yet exercised on a pod.

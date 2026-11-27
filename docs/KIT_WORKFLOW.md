@@ -48,7 +48,7 @@ then sign in with GitHub when prompted (only the allowed login gets in).
 
 The skill styles render with their own scripts (ffmpeg/python/node) over downloaded footage, not in the Chromium
 engine. Registry style `footage` runs that same script on a pod: one GPU job per video at any length, every vCPU
-(`VF_THREADS`, which the scripts use instead of `os.cpu_count()`). Local render stays the fallback.
+(`VF_THREADS` = the pod's CPU quota from cgroup, the command pinned to that many cores; scripts use it instead of `os.cpu_count()`). Local render stays the fallback.
 
 1. Make the edit as usual (doomsday: `edit.json`; others: the part's work folder with its render command).
 2. `node scripts/vf.mjs footage <job>/edit.json --plan-out <job>/cloud/scene_plan.json` (doomsday: ships only what
