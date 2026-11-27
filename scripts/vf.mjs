@@ -12,7 +12,7 @@ import { execFileSync, execSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	chmodSync, closeSync, createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, openAsBlob, openSync,
-	readFileSync, readSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, writeFileSync,
+	readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import path, { basename, dirname, join, resolve, sep } from "node:path";
@@ -69,7 +69,7 @@ async function footageCmd() {
 	if (!(b.seconds > 0)) throw new Error("video length unknown: pass --seconds");
 	const work = join(LOCAL, "footage");
 	mkdirSync(work, { recursive: true });
-	const entries = [...b.files];
+	const entries = [...b.files].map(([rel, abs]) => [rel, realpathSync(abs)]); // job clips are often links to another job's footage
 	if (b.edit) {
 		const f = join(work, `edit-${process.pid}.json`);
 		writeFileSync(f, JSON.stringify(b.edit.json, null, 1));
@@ -79,7 +79,9 @@ async function footageCmd() {
 	let total = 0, sent = 0, sentB = 0, done = 0;
 	for (const [rel, abs] of entries) {
 		const size = statSync(abs).size;
-		files[rel] = { sha256: await shaOf(abs), size };
+		const sha256 = await shaOf(abs);
+		if (!sha256) throw new Error(`cannot read ${abs} (changed or removed while packing?); run the command again`);
+		files[rel] = { sha256, size };
 		total += size;
 	}
 	writeJson(CACHE_F, CACHE);
@@ -97,6 +99,7 @@ async function footageCmd() {
 	await uploadFootage(mf, msha);
 	const plan = footagePlan(msha, manifest.skill, b.seconds);
 	const planFile = opt("--plan-out", join(LOCAL, "footage", `scene_plan-${msha.slice(0, 12)}.json`));
+	mkdirSync(dirname(resolve(planFile)), { recursive: true });
 	writeJson(planFile, plan);
 	console.log(`bundle ${msha} (${b.seconds.toFixed(2)} s video)\nscene_plan: ${planFile}\n` +
 		`Next (MCP): acquire_gpu {style:"footage", title, voiceover:{none:true}, chat_key} -> submit_job {job_id, scene_plan: <that file>}` +
