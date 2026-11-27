@@ -1,6 +1,6 @@
 // Control-plane client: SPEC §5 Agent API with Bearer JOB_TOKEN.
 import type {
-	Cmd, DoneIn, ErrorIn, ErrorOut, HeartbeatIn, HelloIn, HelloOut, SpecOut, UploadSessionIn, UploadSessionOut,
+	BundleOut, Cmd, DoneIn, ErrorIn, ErrorOut, HeartbeatIn, HelloIn, HelloOut, SpecOut, UploadSessionIn, UploadSessionOut,
 } from "../../packages/contract/src/index.ts";
 
 export class Gone extends Error {} // job terminal or token rejected: stop and self-destruct
@@ -72,6 +72,12 @@ export class ControlPlane {
 	bench = (render_s: number) => this.post<unknown>("/bench", { render_s });
 	voiceover = () => this.req("/input/voiceover", {}, 600_000);
 	pkg = () => this.req("/input/package", {}, 600_000); // style "custom": .tar.gz of the job's style package
+	/** Style "footage": manifest + signed links (GET /input/bundle). */
+	async bundle(): Promise<BundleOut> {
+		const res = await this.req("/input/bundle");
+		if (!res.ok) throw new Error(`/input/bundle: ${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`);
+		return (await res.json()) as BundleOut;
+	}
 
 	/** Long-poll until a plan arrives. */
 	async spec(): Promise<SpecOut> {

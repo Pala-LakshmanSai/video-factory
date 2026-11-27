@@ -17,6 +17,7 @@ import { watchdog } from "./watchdog";
 import { constantTimeEqual } from "./db";
 import { uploadInput } from "./drive";
 import { putPackageBytes } from "./packages";
+import { b2 } from "./blobs";
 import { submitJob } from "./mcp";
 import { getDoc, syncRoute } from "./sync";
 import { KEY_RE, checkAccessKey } from "./access";
@@ -50,7 +51,7 @@ async function uploadRoute(req: Request, e: Env) {
 	if (!token || !constantTimeEqual(got, token)) return new Response("unauthorized", { status: 401 });
 	const q = new URL(req.url).searchParams;
 	// /upload/plan?job=<id>, body = scene_plan JSON: same as MCP submit_job, for plans too big to paste into a tool call.
-	if (new URL(req.url).pathname === "/upload/plan") return Response.json(await submitJob(e.DB, q.get("job") ?? "", await req.json(), e.OAUTH_KV));
+	if (new URL(req.url).pathname === "/upload/plan") return Response.json(await submitJob(e.DB, q.get("job") ?? "", await req.json(), e.OAUTH_KV, b2(e)));
 	// /upload/package?name=<name>, body = .tar.gz bytes: same as MCP upload_package, for packages too big to paste as base64.
 	if (new URL(req.url).pathname === "/upload/package") {
 		const name = q.get("name") ?? "";

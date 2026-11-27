@@ -239,6 +239,27 @@ describe("safety review 3", () => {
 		expect(calls.some((c) => c.method === "POST")).toBe(false);
 	});
 
+	it("v1 530 'error code: 1016' (host DNS gone) never reached RunPod: same attempt goes to v2, no hold; plain 530 holds", async () => {
+		await job("j1");
+		await gpuFirst(env.DB);
+		const calls = mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" } })) : undefined),
+			(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? new Response("error code: 1016", { status: 530 }) : undefined),
+			(u, i) => (u === "https://api.runpod.io/v2/pods" && i.method === "POST" ? json(v2pod({ id: "ok", name: JSON.parse(i.body as string).name, cost: 0.8, gpu: { id: RTX4090 } }), 201) : undefined),
+		);
+		expect(await selectAndCreate(env, env.DB, "j1")).toBe("created");
+		expect(deps.v1Denied).toBe(true);
+		expect(calls.filter((c) => c.method === "POST").map((c) => c.url)).toEqual(["https://rest.runpod.io/v1/pods", "https://api.runpod.io/v2/pods"]);
+		deps.v1Denied = false;
+		await job("j2");
+		mockFetch(
+			(u) => (u.includes("/v2/catalog/datacenters") ? json(catalogOf({ "AP-IN-1": { [RTX4090]: "HIGH" } })) : undefined),
+			(u, i) => (u === "https://rest.runpod.io/v1/pods" && i.method === "POST" ? new Response("origin down", { status: 530 }) : undefined),
+			(u) => (u.startsWith("https://api.runpod.io/v2/pods") ? json(v2list([])) : undefined),
+		);
+		expect(await selectAndCreate(env, env.DB, "j2")).toBe("held");
+	});
+
 	it("202 QueuedPod is cancelled and counts as 'not placed': next candidate, no hold", async () => {
 		await job("j1");
 		await gpuFirst(env.DB);

@@ -43,7 +43,7 @@ COPY --from=ffmpeg /ff/bin/ffmpeg /ff/bin/ffprobe /usr/local/bin/
 
 # ---- stage marker: fonts (Inter, Noto Serif, Noto Sans CJK, Noto Color Emoji, Bebas Neue)
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl fontconfig \
-      fonts-inter fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
+      fonts-inter fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji fonts-dejavu-core \
  && mkdir -p /usr/share/fonts/truetype/bebas \
  && curl -fsSL https://raw.githubusercontent.com/google/fonts/main/ofl/bebasneue/BebasNeue-Regular.ttf -o /usr/share/fonts/truetype/bebas/BebasNeue-Regular.ttf \
  && fc-cache -f && rm -rf /var/lib/apt/lists/*
@@ -60,6 +60,11 @@ RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --omit=dev --no-audit --no-fund \
 # --only-shell: chromium.launch() is headless, which uses chromium-headless-shell; the full browser was unused.
 RUN npx playwright install --with-deps --only-shell chromium \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /root/.npm /usr/share/doc/*
+# `chromium` on PATH for skill scripts run by footage jobs (doomsday render_edit.py draws text PNGs with it):
+# Playwright's headless shell, --no-sandbox because the container runs as a non-root user without user namespaces.
+RUN shell="$(find /opt/ms-playwright -type f \( -name chrome-headless-shell -o -name headless_shell \) | head -1)" \
+ && test -x "$shell" && printf '#!/bin/sh\nexec "%s" --no-sandbox "$@"\n' "$shell" > /usr/local/bin/chromium \
+ && chmod 755 /usr/local/bin/chromium
 
 # ---- stage marker: code, styles, bench plan
 COPY packages/contract /app/packages/contract

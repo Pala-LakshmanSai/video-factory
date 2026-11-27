@@ -43,3 +43,27 @@ For flat2d videos this is enforced by `engines/flat2d/tools/qa.mjs`: packing wai
 
 `claude mcp add --transport http video-factory https://video-factory.lakshmansai121.workers.dev/mcp`,
 then sign in with GitHub when prompted (only the allowed login gets in).
+
+## Footage styles on RunPod (doomsday, gta, aviation, paper-style)
+
+The skill styles render with their own scripts (ffmpeg/python/node) over downloaded footage, not in the Chromium
+engine. Registry style `footage` runs that same script on a pod: one GPU job per video at any length, every vCPU
+(`VF_THREADS` = the pod's CPU quota from cgroup, the command pinned to that many cores; scripts use it instead of `os.cpu_count()`). Local render stays the fallback.
+
+1. Make the edit as usual (doomsday: `edit.json`; others: the part's work folder with its render command).
+2. `node scripts/vf.mjs footage <job>/edit.json --plan-out <job>/cloud/scene_plan.json` (doomsday: ships only what
+   the edit uses: voice, words, the clips it cuts from plus their `.crop` caches and catalog `shots.json`, the music
+   bed, the skill's scripts/overlays/sfx; absolute paths are rewritten into the bundle).
+   Any other skill: `node scripts/vf.mjs footage --dir <folder> --cmd '["node","render.js"]' --out broll.mp4 --skill gta [--seconds N]`
+   (ships the folder without node_modules/.git; the command runs inside it and must write `--out`).
+   Files go to R2 `footage/<sha256>` through signed links; already-stored files are skipped, so after a dropped
+   connection the same command resumes. It prints the bundle sha and writes the scene_plan.
+3. MCP: `acquire_gpu {style:"footage", title, voiceover:{none:true}, chat_key}` → `submit_job {job_id, scene_plan}`
+   → `wait_job until:"preview"` (12 frames of the finished render) → `approve` → `wait_job until:"done"` → Drive link.
+   A fix: re-run `vf footage` and `revise_scene {scene:1, patch:{props:{bundle:"<new sha>"}}}`; the pod fetches only
+   the files that changed and renders again.
+
+Pod image needs for a skill: ffmpeg (BtbN static, x264 + NVENC), python3 with numpy/scipy, node 22, Chromium
+(Playwright headless shell, also on PATH as `chromium`), Noto/DejaVu fonts. A skill needing more (pip/npm packages) must install them in its command or the image.
+Bundles are not garbage-collected by `vf gc` (prefix `footage/`, separate from synced files); delete old ones in R2 by
+hand if storage grows (ponytail: add an R2 lifecycle rule on `footage/` if that happens).

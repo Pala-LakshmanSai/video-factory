@@ -2,7 +2,7 @@
 // Auth: Bearer JOB_TOKEN, SHA-256 compared in constant time; rejected after TTL or once the job is terminal.
 import { Hono } from "hono";
 import type {
-	DoneIn, ErrorCode, ErrorIn, HeartbeatIn, HelloIn, JobState, ScenePlan, SpecOut, UploadSessionIn,
+	DoneIn, ErrorCode, FootageManifest, ErrorIn, HeartbeatIn, HelloIn, JobState, ScenePlan, SpecOut, UploadSessionIn,
 } from "../../packages/contract/src/index";
 import { CONSTANTS, MAX_REUPLOADS } from "./config";
 import {
@@ -11,6 +11,7 @@ import {
 import { DriveAuthError, createSession, fileMeta, shareAnyone, streamFile } from "./drive";
 import { alert } from "./alerts";
 import { getPackage, packageSha256 } from "./packages";
+import { b2, footageLink, footageText } from "./blobs";
 import { recordBench } from "./bench";
 import { boundaryOf, parts } from "./multipart";
 import { hasFault } from "./faults";
@@ -316,6 +317,20 @@ agentApp.get("/input/package", async (c) => {
 	const bytes = id ? await getPackage(c.env.OAUTH_KV, id) : null;
 	if (!bytes) return c.json({ error: id ? `package ${id} expired` : "job has no package" }, 404);
 	return c.body(bytes, 200, { "Content-Type": "application/gzip" });
+});
+
+/** Style "footage": the bundle manifest (scene 1 props.bundle) and a signed download link per file it lists. */
+agentApp.get("/input/bundle", async (c) => {
+	const sha = (plan(c.get("job"))?.scenes[0]?.props as { bundle?: unknown } | undefined)?.bundle;
+	const s = b2(c.env);
+	if (typeof sha !== "string" || !/^[0-9a-f]{64}$/.test(sha)) return c.json({ error: "job has no footage bundle" }, 404);
+	if (!s) return c.json({ error: "file storage is not configured on this server" }, 503);
+	const text = await footageText(s, sha);
+	if (text === null) return c.json({ error: `bundle ${sha} not found; run vf footage again` }, 404);
+	const manifest = JSON.parse(text) as FootageManifest;
+	const links: Record<string, string> = {};
+	for (const f of Object.values(manifest.files ?? {})) if (/^[0-9a-f]{64}$/.test(f.sha256)) links[f.sha256] ??= await footageLink(s, f.sha256);
+	return c.json({ manifest, links });
 });
 
 /** Bench mode (env BENCH=1): the agent reports how long the 60 s test video took. */

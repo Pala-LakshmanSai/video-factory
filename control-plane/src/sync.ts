@@ -186,6 +186,8 @@ export async function syncRoute(req: Request, e: E): Promise<Response> {
 	try {
 		if (p === "/sync/info" && req.method === "GET") return Response.json({ storage: b2(e) ? "b2" : "github", user: keyUser ? `key:${keyUser.name}` : "github" });
 		if (p.startsWith("/sync/blob/")) return blobRoute(req, b2(e), p.slice("/sync/blob/".length).split("/"));
+		// Footage-job bundles (`vf footage`): same signed-link upload, own prefix, never garbage-collected with sync files.
+		if (p.startsWith("/sync/footage/")) return blobRoute(req, b2(e), p.slice("/sync/footage/".length).split("/"), "footage");
 		if (p === "/sync/blobs/gc" && req.method === "POST") {
 			if (!(await ownerOnly())) return bad("owner only", 403);
 			const s = b2(e);

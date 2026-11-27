@@ -27,22 +27,41 @@ export function b2(e: unknown): Store | null {
 	return { client: new AwsClient({ accessKeyId: v.B2_KEY_ID, secretAccessKey: v.B2_APP_KEY, service: "s3", region }), base: `https://${v.B2_ENDPOINT}/${v.B2_BUCKET}` };
 }
 
-async function link(s: Store, method: "GET" | "PUT", sha: string) {
-	const r = await s.client.sign(`${s.base}/blobs/${sha}?X-Amz-Expires=${LINK_S}`, { method, aws: { signQuery: true } });
+// "blobs": synced skill/kit files (garbage-collected against the index). "footage": footage-job bundles
+// (`vf footage`, style "footage"); gc never looks there.
+export type Prefix = "blobs" | "footage";
+
+async function link(s: Store, method: "GET" | "PUT", sha: string, prefix: Prefix = "blobs") {
+	const r = await s.client.sign(`${s.base}/${prefix}/${sha}?X-Amz-Expires=${LINK_S}`, { method, aws: { signQuery: true } });
 	return r.url;
 }
 
-/** GET /sync/blob/<sha> → 302 to a signed download link; POST /sync/blob/<sha>/upload → {exists} or {url} to PUT. */
-export async function blobRoute(req: Request, s: Store | null, parts: string[]): Promise<Response> {
+/** Signed download links for footage objects (style "footage" pods). */
+export const footageLink = (s: Store, sha: string) => link(s, "GET", sha, "footage");
+
+/** Does footage/<sha> exist? (submit_job checks a footage plan's manifest before a pod is rented for it.) */
+export async function footageExists(s: Store, sha: string) {
+	return (await s.client.fetch(`${s.base}/footage/${sha}`, { method: "HEAD" })).status === 200;
+}
+
+/** The footage object's bytes as text (the bundle manifest), or null if absent. */
+export async function footageText(s: Store, sha: string) {
+	const r = await s.client.fetch(`${s.base}/footage/${sha}`);
+	return r.status === 200 ? r.text() : null;
+}
+
+/** GET /sync/blob/<sha> → 302 to a signed download link; POST /sync/blob/<sha>/upload → {exists} or {url} to PUT.
+ *  Same under /sync/footage/ with prefix "footage". */
+export async function blobRoute(req: Request, s: Store | null, parts: string[], prefix: Prefix = "blobs"): Promise<Response> {
 	if (!s) return bad("file storage is not configured on this server", 503);
 	const [sha, action] = parts;
 	if (!SHA.test(sha ?? "")) return bad("bad sha");
-	if (!action && req.method === "GET") return new Response(null, { status: 302, headers: { Location: await link(s, "GET", sha), "Cache-Control": "no-store" } });
+	if (!action && req.method === "GET") return new Response(null, { status: 302, headers: { Location: await link(s, "GET", sha, prefix), "Cache-Control": "no-store" } });
 	if (action === "upload" && req.method === "POST") {
-		const head = await s.client.fetch(`${s.base}/blobs/${sha}`, { method: "HEAD" });
+		const head = await s.client.fetch(`${s.base}/${prefix}/${sha}`, { method: "HEAD" });
 		if (head.status === 200) return Response.json({ exists: true, asset: `b2:${sha}`, size: Number(head.headers.get("Content-Length") ?? 0) });
 		if (head.status !== 404) return bad(`storage check failed (${head.status})`, 502);
-		return Response.json({ exists: false, asset: `b2:${sha}`, url: await link(s, "PUT", sha) });
+		return Response.json({ exists: false, asset: `b2:${sha}`, url: await link(s, "PUT", sha, prefix) });
 	}
 	return bad("not found", 404);
 }
