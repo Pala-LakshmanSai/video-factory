@@ -52,8 +52,14 @@ export function doomsdayBundle(editPath, skillDir = join(homedir(), ".claude/ski
 	for (const k of ["voice", "words"]) out[k] = relOf(P(E[k]));
 	const srcdir = P(E.srcdir);
 	if (!inside(base, srcdir)) throw new Error(`srcdir must be inside the job folder (${base}), got ${srcdir}`);
+	out.srcdir = inside(base, srcdir); // absolute paths on this machine mean nothing on the pod
 	const outAbs = P(E.out);
 	if (!inside(base, outAbs)) throw new Error(`out must be inside the job folder (${base}), got ${outAbs}`);
+	out.out = inside(base, outAbs);
+	if (E.catalog) {
+		if (!inside(base, P(E.catalog))) throw new Error(`catalog must be inside the job folder (${base}), got ${P(E.catalog)}`);
+		out.catalog = inside(base, P(E.catalog));
+	}
 	const srcs = new Set([...(E.shots ?? []).flatMap((s) => [s.src, s.src2]), ...(E.inserts ?? []).map((s) => s.src)].filter(Boolean));
 	for (const s of srcs) {
 		if (isAbsolute(s)) throw new Error(`shot src must be a name inside srcdir, got ${s}`);
