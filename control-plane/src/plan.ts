@@ -23,6 +23,12 @@ export function validatePlan(p: unknown, jobStyle: string): string[] {
 	if (custom) {
 		if (typeof plan.package !== "string" || !PACKAGE_ID.test(plan.package)) errs.push('package must be a package_id from upload_package ("pk_" + 24 hex) for style custom');
 	} else if (plan.package !== undefined) errs.push(`package is only allowed with style "custom", not ${jobStyle}`);
+	if (jobStyle === "footage") {
+		const pr = plan.scenes[0]?.props as { bundle?: unknown; skill?: unknown } | undefined;
+		if (plan.scenes.length !== 1) errs.push("style footage has exactly one scene (the whole video)");
+		if (typeof pr?.bundle !== "string" || !/^[0-9a-f]{64}$/.test(pr.bundle)) errs.push("scenes[0].props.bundle must be the bundle sha256 printed by `vf footage`");
+		if (typeof pr?.skill !== "string" || !/^[a-z0-9-]{1,40}$/.test(pr.skill)) errs.push("scenes[0].props.skill must be the skill id, e.g. doomsday");
+	}
 	const templates = templatesFor(jobStyle);
 	let total = 0;
 	plan.scenes.forEach((s, i) => {

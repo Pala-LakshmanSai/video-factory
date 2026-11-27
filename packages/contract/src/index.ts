@@ -125,6 +125,23 @@ export interface ErrorOut { cmd: "retry" | "cancel" }
 
 /** GET /input/voiceover: only when voiceover is a drive_file_id; 200 audio bytes streamed from Drive. */
 
+/** Style "footage" (Extension 12): scene_plan has exactly one scene, template "bundle", props FootageProps,
+ *  duration_s = the video's length. The bundle's files live in object storage under footage/<sha256>. */
+export interface FootageProps {
+  bundle: string;            // sha256 (64 hex) of the FootageManifest JSON, uploaded by `scripts/vf.mjs footage`
+  skill: string;             // the skill whose render this is: doomsday | gta | aviation | paper-style | ...
+}
+export interface FootageManifest {
+  v: 1;
+  skill: string;
+  cwd: string;               // bundle-relative working directory for cmd
+  cmd: string[];             // argv run on the pod (no shell), e.g. ["python3", "skill/scripts/render_edit.py", "job/edit.json"]
+  out: string;               // bundle-relative path of the finished mp4
+  files: Record<string, { sha256: string; size: number }>;   // bundle-relative path -> content
+}
+/** GET /input/bundle (style "footage"): the manifest plus a signed download link per file sha256 (valid 1 h). */
+export interface BundleOut { manifest: FootageManifest; links: Record<string, string> }
+
 /** POST /bench (Extension, BENCH=1 pods only): {render_s} -> 200 {cmd:"cancel"}. */
 export interface BenchIn { render_s: number }
 /** GET https://api.runpod.io/v2/catalog/datacenters?include=GPU_AVAILABILITY (cache 60 s) */

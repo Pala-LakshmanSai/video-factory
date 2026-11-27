@@ -10,11 +10,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ScenePlan, SpecOut } from "../../packages/contract/src/index.ts";
 import { CONSTANTS } from "../../packages/contract/src/index.ts";
-import { encoderArgs, pickEncoder, run } from "../engine/ffmpeg.ts";
+import { durationOf, encoderArgs, pickEncoder, run } from "../engine/ffmpeg.ts";
 import { md5File, renderFinal, renderPreviews, TemplateError, type RenderInput } from "../engine/render.ts";
 import { prepareVoice, silence } from "../engine/voice.ts";
 import { ControlPlane, Gone, Held } from "./cp.ts";
 import { fetchPackage } from "./package.ts";
+import { fetchBundle, previewFrames, runBundle } from "./footage.ts";
 import { resumableUpload } from "./upload.ts";
 import { episodeSeconds, Scores } from "./score.ts";
 
@@ -194,6 +195,24 @@ async function main() {
 		}
 		return pkg.dir;
 	};
+	// style "footage": the skill's own render over the job's bundle, once per bundle sha (a revise that changes
+	// scene 1 props.bundle renders again; files that did not change stay downloaded).
+	const footageDir = join(WORK, "footage");
+	const haveFiles = new Map<string, string>();
+	let footage: { sha: string; file: string } | null = null;
+	const footageRender = async (s: SpecOut): Promise<string> => {
+		const sha = String((s.scenes[0]?.props as { bundle?: unknown } | undefined)?.bundle ?? "");
+		if (footage?.sha === sha) return footage.file;
+		footage = null;
+		status.stage = "footage_download";
+		const m = await fetchBundle(footageDir, () => cp.bundle(), haveFiles, log);
+		status.stage = "footage_render";
+		const t0 = performance.now();
+		const file = await runBundle(footageDir, m, log);
+		log(`footage render ${((performance.now() - t0) / 1000).toFixed(1)} s -> ${file}`);
+		footage = { sha, file };
+		return file;
+	};
 	// Previews only need the length: blockworld times against the episode (its score is exactly that long).
 	const previewAudio = (s: SpecOut) => (scores ? { path: null, seconds: episodeSeconds(s) } : voice!);
 	const input = (s: SpecOut, stylesDir: string, audio: { path: string | null; seconds: number }): RenderInput => ({
@@ -228,6 +247,12 @@ async function main() {
 	const doPreviews = (only?: number[]) =>
 		attempt("preview", async () => {
 			const scenes = only && [...new Set([...only, ...spec.scenes.map((s) => s.n).filter((n) => !previewed.has(n))])];
+			if (spec.style === "footage") {
+				const file = await footageRender(spec);
+				await cp.previews(await previewFrames(file, await durationOf(file), join(WORK, "footage-previews")));
+				previewed.add(1);
+				return;
+			}
 			scoreLater(spec);
 			await cp.previews(await renderPreviews(input(spec, await stylesFor(spec), previewAudio(spec)), scenes));
 			for (const n of scenes ?? spec.scenes.map((s) => s.n)) previewed.add(n);
@@ -235,8 +260,8 @@ async function main() {
 	let resumeReport: Promise<unknown> | null = null;
 	const doFinal = () =>
 		attempt("final_render", async () => {
-			const audio = scores ? await scores.forFinal(spec) : voice!; // throws on a stale or wrong-length score
-			const file = await renderFinal(input(spec, await stylesFor(spec), audio));
+			const file = spec.style === "footage" ? await footageRender(spec)
+				: await renderFinal(input(spec, await stylesFor(spec), scores ? await scores.forFinal(spec) : voice!)); // forFinal throws on a stale or wrong-length score
 			const { md5, size } = await md5File(file);
 			status.stage = "uploading";
 			const fileId = await resumableUpload(file, size, {

@@ -7,7 +7,7 @@
 //   GitHub release assets   file bytes of skills + style kits (content-addressed)      -> this tool
 // One credential everywhere: your GitHub login (gh auth login). No other secrets.
 //
-// Commands: setup [--no-models] [--no-sync] | pull | push | status | access add|list|remove | migrate-storage | track | untrack | resolve | repack | gc | prefs | pref add|retire | docs publish | hook session-start|stop
+// Commands: setup [--no-models] [--no-sync] | footage <edit.json> | footage --dir <d> --cmd '<argv json>' --out <mp4> --skill <id> | pull | push | status | access add|list|remove | migrate-storage | track | untrack | resolve | repack | gc | prefs | pref add|retire | docs publish | hook session-start|stop
 import { execFileSync, execSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -19,6 +19,7 @@ import path, { basename, dirname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { doomsdayBundle, folderBundle, footagePlan } from "./footage-bundle.mjs";
 
 const WIN = process.platform === "win32";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -46,6 +47,61 @@ const MAX_FILE = 1_900_000_000; // GitHub release asset limit is 2 GiB
 const PAR = 8; // parallel transfers
 const CHUNK = 100; // changes per commit (each is one row write on the server)
 mkdirSync(LOCAL, { recursive: true });
+
+// ---------------------------------------------------------------- footage jobs (style "footage", docs/KIT_WORKFLOW.md)
+// Uploads every file a skill render needs to footage/<sha256> (already-stored files are skipped, so re-running after a
+// dropped connection resumes where it stopped), then the manifest, and writes the scene_plan for submit_job.
+async function uploadFootage(abs, sha) {
+	return retry(async () => {
+		const r = await api("POST", `/sync/footage/${sha}/upload`);
+		if (r.status !== 200) throw new Error(`upload link for ${sha}: ${r.status} ${r.json.error ?? ""}`);
+		if (r.json.exists) return false;
+		const put = await fetch(r.json.url, { method: "PUT", body: await openAsBlob(abs), signal: AbortSignal.timeout(60 * 60_000) });
+		if (put.status !== 200) throw new Error(`upload ${abs}: ${put.status} ${(await put.text()).slice(0, 200)}`);
+		return true;
+	}, "upload");
+}
+async function footageCmd() {
+	const b = opt("--dir")
+		? folderBundle(opt("--dir"), { cmd: JSON.parse(opt("--cmd", "null")), out: opt("--out"), skill: opt("--skill"), seconds: opt("--seconds") })
+		: doomsdayBundle(argv[1]?.startsWith("--") ? "" : (argv[1] ?? ""), opt("--skill-dir"));
+	if (!Array.isArray(b.manifest.cmd) || !b.manifest.out || !b.manifest.skill) throw new Error(`usage: vf footage <edit.json> | vf footage --dir <folder> --cmd '["node","render.js"]' --out out.mp4 --skill gta [--seconds N]`);
+	if (!(b.seconds > 0)) throw new Error("video length unknown: pass --seconds");
+	const work = join(LOCAL, "footage");
+	mkdirSync(work, { recursive: true });
+	const entries = [...b.files];
+	if (b.edit) {
+		const f = join(work, `edit-${process.pid}.json`);
+		writeFileSync(f, JSON.stringify(b.edit.json, null, 1));
+		entries.push([b.edit.path, f]);
+	}
+	const files = {};
+	let total = 0, sent = 0, sentB = 0, done = 0;
+	for (const [rel, abs] of entries) {
+		const size = statSync(abs).size;
+		files[rel] = { sha256: await shaOf(abs), size };
+		total += size;
+	}
+	writeJson(CACHE_F, CACHE);
+	say(`footage bundle: ${entries.length} files, ${fmtB(total)}; uploading what the factory does not have yet`);
+	const bySha = new Map(entries.map(([rel, abs]) => [files[rel].sha256, [abs, files[rel].size]]));
+	const errs = await pool([...bySha], PAR, async ([sha, [abs, size]]) => {
+		if (await uploadFootage(abs, sha)) (sent++, (sentB += size));
+		if (++done % 20 === 0 || done === bySha.size) say(`  ${done}/${bySha.size} checked, ${sent} uploaded (${fmtB(sentB)})`);
+	});
+	if (errs.length) throw new Error(`${errs.length} uploads failed (run the same command again to resume): ${errs[0][1].message}`);
+	const manifest = { ...b.manifest, files };
+	const mf = join(work, `manifest-${process.pid}.json`);
+	writeFileSync(mf, JSON.stringify(manifest));
+	const msha = await hashFile(mf);
+	await uploadFootage(mf, msha);
+	const plan = footagePlan(msha, manifest.skill, b.seconds);
+	const planFile = opt("--plan-out", join(LOCAL, "footage", `scene_plan-${msha.slice(0, 12)}.json`));
+	writeJson(planFile, plan);
+	console.log(`bundle ${msha} (${b.seconds.toFixed(2)} s video)\nscene_plan: ${planFile}\n` +
+		`Next (MCP): acquire_gpu {style:"footage", title, voiceover:{none:true}, chat_key} -> submit_job {job_id, scene_plan: <that file>}` +
+		` -> wait_job until preview -> approve -> wait_job until done.`);
+}
 
 // ---------------------------------------------------------------- small helpers
 const argv = process.argv.slice(2);
@@ -1011,6 +1067,7 @@ async function main() {
 		return console.log(`retired #${argv[2]}`);
 	}
 	if (cmd === "docs" && sub === "publish") return console.log(`published ${await publishDocs()} doc(s)`);
+	if (cmd === "footage") return footageCmd();
 
 	const release = lock(!flag("--auto"));
 	if (!release) {

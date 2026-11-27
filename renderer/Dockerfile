@@ -43,7 +43,7 @@ COPY --from=ffmpeg /ff/bin/ffmpeg /ff/bin/ffprobe /usr/local/bin/
 
 # ---- stage marker: fonts (Inter, Noto Serif, Noto Sans CJK, Noto Color Emoji, Bebas Neue)
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl fontconfig \
-      fonts-inter fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
+      fonts-inter fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji fonts-dejavu-core \
  && mkdir -p /usr/share/fonts/truetype/bebas \
  && curl -fsSL https://raw.githubusercontent.com/google/fonts/main/ofl/bebasneue/BebasNeue-Regular.ttf -o /usr/share/fonts/truetype/bebas/BebasNeue-Regular.ttf \
  && fc-cache -f && rm -rf /var/lib/apt/lists/*
