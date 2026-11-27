@@ -4,6 +4,7 @@
 //   v1 400 retries the same attempt through POST api.runpod.io/v2/pods (one gpu.id per call).
 // - Scoped API keys may be refused by v1 REST entirely (401/403) while v2 works. Any v1 401/403 sends that
 //   call to v2, and creates skip v1 for the rest of this isolate's life.
+// - v1 answering Cloudflare 530/1016 (its DNS gone) never reached RunPod: same as a refused key, use v2.
 // - Create is not idempotent: a 5xx, a network error or an unreadable 2xx may still have made a pod. Such a
 //   create is never replayed and never followed by another candidate. The pod is looked up by its name
 //   (vf-{job_id}); found -> adopted, anything else -> "uncertain": the selector holds the job (no replacement)
@@ -123,6 +124,13 @@ async function createNoReplay(env: Env, url: string, payload: unknown, name: str
 	} catch (e) {
 		return ambiguous(env, name, exclude, 0, `network error: ${redact((e as Error).message).slice(0, 120)}`);
 	}
+	// Cloudflare 530 "error code: 1016" = origin DNS failure: the request never reached RunPod, so nothing was
+	// created and it is safe to try elsewhere (found live 2026-11-27: rest.runpod.io lost its DNS record).
+	if (res.status === 530) {
+		const text = await res.text();
+		if (/error code: 1016/.test(text)) return { ok: false, status: 530, body: "origin DNS failure (Cloudflare 1016): not reached" };
+		return ambiguous(env, name, exclude, 530, safeDetail(text));
+	}
 	if (res.status === 202) return cancelQueued(env, name, exclude, await res.json().catch(() => null));
 	if (res.status === 200 || res.status === 201) {
 		const pod = parse(await res.json().catch(() => null));
@@ -166,7 +174,7 @@ export async function createPod(env: Env, body: Body, exclude: string[] = [], fe
 	if (!deps.v1Denied) {
 		const r = await createNoReplay(env, `${REST}/pods`, body, body.name, exclude, parseV1, fence);
 		if (r.ok || r.uncertain || r.fenced) return r;
-		if (denied(r.status)) deps.v1Denied = true;
+		if (denied(r.status) || r.status === 530) deps.v1Denied = true; // refused key, or v1 host unreachable (1016)
 		else if (r.status !== 400) return r;
 	}
 	return createPodV2(env, body, exclude, fence);
